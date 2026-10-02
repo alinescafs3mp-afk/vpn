@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _refresh;
     private bool _exit;
     private bool _ready;
+    private bool _connectPending;
 
     public MainWindow()
     {
@@ -134,10 +135,9 @@ public partial class MainWindow : Window
 
     private async void ConnectClick(object sender, RoutedEventArgs e)
     {
-        ConnectButton.IsEnabled = false;
         try
         {
-            if (_session.SafetyDisconnectAvailable)
+            if (_connectPending || _session.SafetyDisconnectAvailable)
             {
                 await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
                 return;
@@ -149,11 +149,14 @@ public partial class MainWindow : Window
                 return;
             }
 
+            _connectPending = true;
+
+            var now = DateTimeOffset.UtcNow;
             var eligible = _catalogue.Eligible(new EligibilityContext
             {
-                NowUtc = DateTimeOffset.UtcNow,
+                NowUtc = now,
                 NetworkEpoch = _catalogue.NetworkEpoch,
-                AllowedAge = TimeSpan.FromSeconds(ProductLimits.PreConnectFreshnessSeconds),
+                AllowedAge = TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes),
                 Purpose = SelectionPurpose.PreConnect,
                 AllowInsecureCertificates = _catalogue.Settings.AllowInsecureCertificates,
             });
@@ -164,6 +167,43 @@ public partial class MainWindow : Window
             }
 
             var selected = eligible[0];
+            if (ProbeCoordinator.NeedsOnDemandAdmission(selected, now, _catalogue.NetworkEpoch))
+            {
+                Uri? target = null;
+                try
+                {
+                    var registry = ReviewedRegistryLoader.Load(ConfigDirectory());
+                    target = registry.ProbeTargets.FirstOrDefault();
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException)
+                {
+                    target = null;
+                }
+
+                if (target is not null)
+                {
+                    var transport = new NonTunCoreProbeTransport(Environment.GetEnvironmentVariable("AUTOVPN_MIHOMO_PATH"), ExpectedCoreHash());
+                    await ProbeCoordinator.AdmitIfStaleAsync(_catalogue, transport, target, selected.NodeId, now, CancellationToken.None).ConfigureAwait(true);
+                }
+
+                var fresh = _catalogue.Eligible(new EligibilityContext
+                {
+                    NowUtc = DateTimeOffset.UtcNow,
+                    NetworkEpoch = _catalogue.NetworkEpoch,
+                    AllowedAge = TimeSpan.FromSeconds(ProductLimits.PreConnectFreshnessSeconds),
+                    Purpose = SelectionPurpose.PreConnect,
+                    AllowInsecureCertificates = _catalogue.Settings.AllowInsecureCertificates,
+                });
+                var admitted = fresh.FirstOrDefault(node => node.NodeId == selected.NodeId);
+                if (admitted is null)
+                {
+                    DetailText.Text = Ru.NoServer;
+                    return;
+                }
+
+                selected = admitted;
+            }
+
             await SendAsync(IpcOperations.Connect, new ConnectPayload
             {
                 NodeId = selected.NodeId,
@@ -176,7 +216,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            ConnectButton.IsEnabled = true;
+            _connectPending = false;
         }
     }
 

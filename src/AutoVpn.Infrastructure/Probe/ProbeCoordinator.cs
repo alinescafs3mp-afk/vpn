@@ -4,7 +4,26 @@ using AutoVpn.Domain;
 
 namespace AutoVpn.Infrastructure.Probe;
 
-public sealed record ProbeObservation(bool Success, int? LatencyMs, bool UplinkOffline, string? ReasonCode, int PayloadBytes = 0);
+public enum ProbeClass
+{
+    CandidateFailure = 0,
+    Success = 1,
+    Canceled = 2,
+    Environment = 3,
+    CoreFailure = 4,
+    Unsupported = 5,
+}
+
+public sealed record ProbeObservation(
+    bool Success,
+    int? LatencyMs,
+    bool UplinkOffline,
+    string? ReasonCode,
+    int PayloadBytes = 0,
+    ProbeClass Class = ProbeClass.CandidateFailure,
+    string? TargetUri = null,
+    string? CandidateDigest = null,
+    string? WorkerId = null);
 
 public interface IProbeTransport
 {
@@ -103,7 +122,18 @@ public static class ProbeCoordinator
                 continue;
             }
 
-            if (observation.UplinkOffline)
+            if (observation.Class == ProbeClass.Canceled || observation.ReasonCode == ReasonCodes.Canceled)
+            {
+                attempted--;
+                break;
+            }
+
+            if (observation.Class is ProbeClass.CoreFailure or ProbeClass.Unsupported)
+            {
+                return new ProbeReport(attempted, succeeded, failed, false);
+            }
+
+            if (observation.UplinkOffline || observation.Class == ProbeClass.Environment)
             {
                 TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
                 {
@@ -167,7 +197,81 @@ public static class ProbeCoordinator
             return true;
         }
 
-        return nowUtc - success > TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes);
+        return TimePolicy.ConservativeAge(success, nowUtc) > TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes);
+    }
+
+    public static bool NeedsOnDemandAdmission(CatalogueNode node, DateTimeOffset nowUtc, long epoch)
+    {
+        if (node.PolicyReason is not null)
+        {
+            return false;
+        }
+
+        var assessment = node.Assessment;
+        if (assessment is null || assessment.Health is not (HealthState.Healthy or HealthState.Degraded))
+        {
+            return false;
+        }
+
+        if (assessment.NetworkEpoch != epoch || assessment.LastSuccessUtc is not DateTimeOffset success)
+        {
+            return true;
+        }
+
+        return TimePolicy.ConservativeAge(success, nowUtc) > TimeSpan.FromSeconds(ProductLimits.PreConnectFreshnessSeconds);
+    }
+
+    public static async Task<bool> AdmitIfStaleAsync(
+        ICatalogue catalogue,
+        IProbeTransport transport,
+        Uri target,
+        string nodeId,
+        DateTimeOffset nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var node = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
+        if (node is null || !NeedsOnDemandAdmission(node, nowUtc, catalogue.NetworkEpoch))
+        {
+            return false;
+        }
+
+        var epoch = catalogue.NetworkEpoch;
+        var digest = node.Digest;
+        ProbeObservation observation;
+        try
+        {
+            observation = await transport.ProbeAsync(node.Semantics, target, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+
+        if (observation.Class == ProbeClass.Canceled || observation.ReasonCode == ReasonCodes.Canceled)
+        {
+            return false;
+        }
+
+        if (!observation.Success || observation.LatencyMs is not int latency || latency < 0)
+        {
+            return false;
+        }
+
+        if (catalogue.NetworkEpoch != epoch)
+        {
+            return false;
+        }
+
+        catalogue.ApplyAssessment(nodeId, new AssessmentSnapshot
+        {
+            Digest = digest,
+            NetworkEpoch = epoch,
+            Health = HealthState.Healthy,
+            LastSuccessUtc = nowUtc,
+            MedianLatencyMs = latency,
+            ConsecutiveFailures = 0,
+        });
+        return true;
     }
 
     private static void TryApply(ICatalogue catalogue, string nodeId, string digest, long epoch, AssessmentSnapshot assessment)

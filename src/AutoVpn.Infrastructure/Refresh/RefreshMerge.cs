@@ -22,6 +22,7 @@ public sealed record IngestReport
     public bool AnyFetchFailed { get; init; }
     public bool Balanced { get; init; }
     public bool RefetchRequired { get; init; }
+    public bool Committed { get; init; }
 }
 
 public static class RefreshMerge
@@ -34,6 +35,7 @@ public static class RefreshMerge
         var failed = false;
         var balanced = true;
         var refetch = false;
+        var committed = false;
         foreach (var artifact in artifacts)
         {
             if (!artifact.Enabled)
@@ -89,6 +91,7 @@ public static class RefreshMerge
                 NowUtc = nowUtc,
                 Nodes = nodes,
             });
+            committed = true;
             retained += before.Count(digest => catalogue.Nodes.All(node => node.Digest != digest || !node.CurrentFamilies.Contains(artifact.FamilyId)));
             pending += nodes.Count(node => !node.PolicyBlocked);
         }
@@ -101,6 +104,7 @@ public static class RefreshMerge
             AnyFetchFailed = failed,
             Balanced = balanced,
             RefetchRequired = refetch,
+            Committed = committed,
         };
     }
 }

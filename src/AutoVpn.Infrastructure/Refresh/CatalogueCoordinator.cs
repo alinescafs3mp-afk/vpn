@@ -102,10 +102,28 @@ public sealed class CatalogueCoordinator
 
         if (fetch.NotModified)
         {
-            return new DiscoveryOutcome(false, null, [], ReasonCodes.NotModified, 0);
+            var cached = _ledger.DiscoveryJsonFor(registry.TreeApi.AbsoluteUri);
+            var reused = string.IsNullOrWhiteSpace(cached) ? null : GithubTreeParser.Parse(cached);
+            if (reused is { Complete: true })
+            {
+                return BuildDiscovery(registry, reused);
+            }
+
+            fetch = await _fetcher.GetAsync(
+                registry.TreeApi,
+                null,
+                ProductLimits.MaxArtifactBytes,
+                cancellationToken,
+                attemptTimeout,
+                maxRetries: 0).ConfigureAwait(false);
         }
 
-        if (fetch.Body is null || fetch.ReasonCode is not null)
+        if (fetch.ReasonCode == ReasonCodes.Canceled)
+        {
+            return new DiscoveryOutcome(false, null, [], ReasonCodes.Canceled, 0);
+        }
+
+        if (fetch.NotModified || fetch.Body is null || fetch.ReasonCode is not null)
         {
             return new DiscoveryOutcome(false, null, [], fetch.ReasonCode ?? ReasonCodes.FetchFailed, 0);
         }
@@ -116,11 +134,12 @@ public sealed class CatalogueCoordinator
             return new DiscoveryOutcome(false, parsed.CommitSha, [], parsed.ReasonCode ?? "DISCOVERY_INCOMPLETE", 0);
         }
 
-        if (!string.IsNullOrEmpty(fetch.Etag))
-        {
-            _ledger.Remember(registry.TreeApi.AbsoluteUri, fetch.Etag, fetch.ContentHash, DateTimeOffset.UtcNow, null);
-        }
+        _ledger.RememberDiscovery(registry.TreeApi.AbsoluteUri, fetch.Etag, fetch.Body, DateTimeOffset.UtcNow);
+        return BuildDiscovery(registry, parsed);
+    }
 
+    private static DiscoveryOutcome BuildDiscovery(ReviewedRegistry registry, TreeDiscovery parsed)
+    {
         var items = new List<RefreshWorkItem>();
         var unmatched = 0;
         foreach (var path in parsed.Paths)
@@ -136,7 +155,7 @@ public sealed class CatalogueCoordinator
                 continue;
             }
 
-            var urls = ReviewedRegistryLoader.ContentUrls(registry, path.Path);
+            var urls = ReviewedRegistryLoader.ContentUrls(registry, path.Path, parsed.CommitSha);
             if (urls.Count == 0)
             {
                 unmatched++;
@@ -186,11 +205,6 @@ public sealed class CatalogueCoordinator
         var failed = false;
         foreach (var download in finished)
         {
-            if (download.RememberUrl is not null)
-            {
-                _ledger.Remember(download.RememberUrl, download.Etag, download.ContentHash, nowUtc, null);
-            }
-
             if (download.Cancelled)
             {
                 cancelled = true;
@@ -213,8 +227,21 @@ public sealed class CatalogueCoordinator
 
             var report = RefreshMerge.Ingest(_catalogue, [download.Result], nowUtc, _catalogue.Settings.AllowInsecureCertificates);
             pending += report.PublishedPending;
-            failed |= report.AnyFetchFailed;
-            reasons.Add(download.Item.ArtifactId + ":" + (download.Result.NotModified ? ReasonCodes.NotModified : "PUBLISHED"));
+            var published = report.Committed && !download.Result.NotModified;
+            failed |= report.AnyFetchFailed || (!download.Result.NotModified && !report.Committed);
+            if (published && download.RememberUrl is not null)
+            {
+                _ledger.Remember(download.RememberUrl, download.Etag, download.ContentHash, nowUtc, null);
+            }
+            else if (!download.Result.NotModified && !report.Committed && download.RememberUrl is not null)
+            {
+                _ledger.RememberRejected(download.RememberUrl, download.Etag);
+            }
+
+            var label = download.Result.NotModified
+                ? ReasonCodes.NotModified
+                : published ? "PUBLISHED" : "REJECTED";
+            reasons.Add(download.Item.ArtifactId + ":" + label);
         }
 
         return new RefreshOutcome

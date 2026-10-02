@@ -176,16 +176,20 @@ public sealed class MemoryCatalogue : ICatalogue
 
     public static bool ReconcileStoredDigest(CatalogueNode node)
     {
+        var currentJson = CanonicalIdentity.CanonicalJson(node.Semantics);
         var current = CanonicalIdentity.Digest(node.Semantics);
         if (node.Digest == current && (node.Assessment is null || node.Assessment.Digest == current))
         {
             return false;
         }
 
-        var previous = CanonicalIdentity.Digest(node.Semantics, ProductLimits.CanonicalizerVersion - 1);
+        var previousVersion = ProductLimits.CanonicalizerVersion - 1;
+        var previousJson = CanonicalIdentity.CanonicalJson(node.Semantics, previousVersion);
+        var previous = CanonicalIdentity.Digest(node.Semantics, previousVersion);
+        var sameEffective = string.Equals(currentJson, previousJson, StringComparison.Ordinal);
         var sameBytes = node.Digest == previous;
         node.Digest = current;
-        if (sameBytes && node.Assessment is { } assessment && assessment.Digest == previous)
+        if (sameBytes && sameEffective && node.Assessment is { } assessment && assessment.Digest == previous)
         {
             node.Assessment = assessment with { Digest = current };
         }

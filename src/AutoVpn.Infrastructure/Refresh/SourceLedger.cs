@@ -2,7 +2,14 @@ using System.Text.Json;
 
 namespace AutoVpn.Infrastructure.Refresh;
 
-public sealed record SourceEntry(string Url, string? Etag, string? ContentHash, DateTimeOffset? LastSuccessUtc, string? LastReason);
+public sealed record SourceEntry(
+    string Url,
+    string? Etag,
+    string? ContentHash,
+    DateTimeOffset? LastSuccessUtc,
+    string? LastReason,
+    string? DiscoveryJson = null,
+    string? RejectedEtag = null);
 
 public sealed class SourceLedger
 {
@@ -17,7 +24,31 @@ public sealed class SourceLedger
 
     public void Remember(string url, string? etag, string? contentHash, DateTimeOffset nowUtc, string? reason)
     {
-        _entries[url] = new SourceEntry(url, etag, contentHash, nowUtc, reason);
+        _entries.TryGetValue(url, out var existing);
+        _entries[url] = new SourceEntry(url, etag, contentHash, nowUtc, reason, existing?.DiscoveryJson, null);
+    }
+
+    public void RememberDiscovery(string url, string? etag, string body, DateTimeOffset nowUtc)
+    {
+        _entries.TryGetValue(url, out var existing);
+        _entries[url] = new SourceEntry(url, etag, existing?.ContentHash, nowUtc, null, body, existing?.RejectedEtag);
+    }
+
+    public void RememberRejected(string url, string? etag)
+    {
+        _entries.TryGetValue(url, out var existing);
+        if (existing is null)
+        {
+            _entries[url] = new SourceEntry(url, null, null, null, "REJECTED", null, etag);
+            return;
+        }
+
+        _entries[url] = existing with { RejectedEtag = etag };
+    }
+
+    public string? DiscoveryJsonFor(string url)
+    {
+        return _entries.TryGetValue(url, out var entry) ? entry.DiscoveryJson : null;
     }
 
     public void ClearEtag(string url)
@@ -55,7 +86,7 @@ public sealed class SourceLedger
             var entries = JsonSerializer.Deserialize<SourceEntry[]>(File.ReadAllText(path)) ?? [];
             foreach (var entry in entries)
             {
-                if (!string.IsNullOrWhiteSpace(entry.Url))
+                if (entry is not null && !string.IsNullOrWhiteSpace(entry.Url))
                 {
                     ledger._entries[entry.Url] = entry;
                 }

@@ -501,17 +501,16 @@ public class AuditRegressionTests
                 Assert.Equal(" /x ", node.Semantics.Path);
                 Assert.True(node.Favorite);
                 Assert.Equal(CanonicalIdentity.Digest(node.Semantics), node.Digest);
-                Assert.NotNull(node.Assessment);
-                Assert.Equal(node.Digest, node.Assessment!.Digest);
-                Assert.Equal(HealthState.Healthy, node.Assessment.Health);
+                Assert.Null(node.Assessment);
                 kept.SetNetworkEpoch(2);
             }
 
             using (var again = SqliteCatalogue.Open(proven, new PassthroughSecretProtector()))
             {
                 Assert.True(again.Nodes[0].Favorite);
-                Assert.Equal(HealthState.Healthy, again.Nodes[0].Assessment!.Health);
-                Assert.Equal(CanonicalIdentity.Digest(again.Nodes[0].Semantics), again.Nodes[0].Assessment!.Digest);
+                Assert.Equal(" /x ", again.Nodes[0].Semantics.Path);
+                Assert.Null(again.Nodes[0].Assessment);
+                Assert.Equal(CanonicalIdentity.Digest(again.Nodes[0].Semantics), again.Nodes[0].Digest);
             }
 
             using (var lost = SqliteCatalogue.Open(dropped, new PassthroughSecretProtector()))

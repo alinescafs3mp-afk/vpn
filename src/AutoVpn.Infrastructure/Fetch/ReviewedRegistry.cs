@@ -120,13 +120,16 @@ public static class ReviewedRegistryLoader
         };
     }
 
-    public static IReadOnlyList<Uri> ContentUrls(ReviewedRegistry registry, string relativePath)
+    public static IReadOnlyList<Uri> ContentUrls(ReviewedRegistry registry, string relativePath, string? commit = null)
     {
         if (!IsSafeRelativePath(relativePath))
         {
             return [];
         }
 
+        var pin = commit is not null && commit.Length == 40 && commit.All(char.IsAsciiHexDigit)
+            ? commit
+            : registry.PinnedCommit;
         var encoded = string.Join('/', relativePath.Split('/').Select(Uri.EscapeDataString));
         var urls = new List<Uri>();
         foreach (var host in PreferredHosts(registry))
@@ -139,7 +142,7 @@ public static class ReviewedRegistryLoader
             var text = template
                 .Replace("{owner}", Uri.EscapeDataString(registry.Owner), StringComparison.Ordinal)
                 .Replace("{repo}", Uri.EscapeDataString(registry.Repository), StringComparison.Ordinal)
-                .Replace("{commit}", Uri.EscapeDataString(registry.PinnedCommit), StringComparison.Ordinal)
+                .Replace("{commit}", Uri.EscapeDataString(pin), StringComparison.Ordinal)
                 .Replace("{path}", encoded, StringComparison.Ordinal);
             var url = new Uri(text, UriKind.Absolute);
             if (registry.FetchOrigins.Any(origin => origin.Matches(url)))

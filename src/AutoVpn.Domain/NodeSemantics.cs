@@ -244,7 +244,11 @@ public static class CanonicalIdentity
             Write(writer, "headerType", node.HeaderType);
             Write(writer, "plugin", node.Plugin);
             Write(writer, "pluginOpts", node.PluginOpts);
-            if (node.Udp is false)
+            if (version >= 3)
+            {
+                writer.WriteBoolean("udp", node.Udp ?? false);
+            }
+            else if (node.Udp is false)
             {
                 writer.WriteBoolean("udp", false);
             }

@@ -6,7 +6,7 @@ namespace AutoVpn.Domain;
 /// </summary>
 public static class ProductLimits
 {
-    public const int CanonicalizerVersion = 2;
+    public const int CanonicalizerVersion = 3;
     public const int SettingsSchemaVersion = 1;
     public const int IpcProtocolVersion = 1;
     public const int MaxIpcFrameBytes = 256 * 1024;

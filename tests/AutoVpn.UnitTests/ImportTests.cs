@@ -20,7 +20,7 @@ public class ImportTests
                 server: 203.0.113.10
                 port: 443
                 uuid: 11111111-1111-4111-8111-111111111111
-                udp: true
+                udp: false
                 flow: xtls-rprx-vision
                 tls: true
                 servername: www.example.com
@@ -31,16 +31,19 @@ public class ImportTests
                   short-id: abcd
             """;
         var otherFingerprint = yaml.Replace("chrome", "firefox", StringComparison.Ordinal);
+        var udpEnabled = yaml.Replace("udp: false", "udp: true", StringComparison.Ordinal);
         var direct = SubscriptionImporter.Import(uri);
         var encoded = SubscriptionImporter.Import(wrapped);
         var fromYaml = SubscriptionImporter.Import(yaml);
         var variant = SubscriptionImporter.Import(otherFingerprint);
+        var withUdp = SubscriptionImporter.Import(udpEnabled);
 
         Assert.True(direct.Balanced);
         Assert.Equal(RecordDisposition.Pending, direct.Records[0].Disposition);
         Assert.Equal(direct.Records[0].Digest, encoded.Records[0].Digest);
         Assert.Equal(direct.Records[0].Digest, fromYaml.Records[0].Digest);
         Assert.NotEqual(direct.Records[0].Digest, variant.Records[0].Digest);
+        Assert.NotEqual(direct.Records[0].Digest, withUdp.Records[0].Digest);
         Assert.Equal("Германия", direct.Records[0].AdvertisedCountry);
     }
 

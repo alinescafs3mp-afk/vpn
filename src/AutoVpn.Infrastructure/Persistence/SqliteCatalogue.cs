@@ -20,6 +20,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
     private readonly ISecretProtector _protector;
     private MemoryCatalogue _memory = new();
     private readonly object _gate = new();
+    private long _revision;
 
     public string? QuarantinedFrom { get; }
 
@@ -220,6 +221,10 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
                 {
                     epoch = parsed;
                 }
+                else if (key == "catalogue_revision" && long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var revision))
+                {
+                    _revision = revision;
+                }
                 else if (key == "settings")
                 {
                     settings = JsonSerializer.Deserialize<ProductSettings>(value, StoredJson.Options) ?? new ProductSettings();
@@ -299,7 +304,24 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
     private void Save(MemoryCatalogue source)
     {
-        using var transaction = _connection.BeginTransaction();
+        using var transaction = _connection.BeginTransaction(System.Data.IsolationLevel.Serializable);
+        long stored = 0;
+        using (var read = _connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT value FROM meta WHERE key='catalogue_revision';";
+            var current = read.ExecuteScalar() as string;
+            if (current is not null && long.TryParse(current, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                stored = parsed;
+            }
+        }
+
+        if (stored != _revision)
+        {
+            throw new CatalogueStoreException("CATALOGUE_CONFLICT");
+        }
+
         using (var clear = _connection.CreateCommand())
         {
             clear.Transaction = transaction;
@@ -325,6 +347,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
             }
 
             Put("schema_version", SchemaVersion.ToString(CultureInfo.InvariantCulture));
+            Put("catalogue_revision", (_revision + 1).ToString(CultureInfo.InvariantCulture));
             Put("network_epoch", source.NetworkEpoch.ToString(CultureInfo.InvariantCulture));
             Put("protector", _protector.ProtectorId);
             Put("settings", JsonSerializer.Serialize(source.Settings, StoredJson.Options));
@@ -389,6 +412,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
         }
 
         transaction.Commit();
+        _revision++;
     }
 
     private static string? InspectExisting(string path)

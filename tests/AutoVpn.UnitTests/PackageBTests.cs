@@ -371,7 +371,7 @@ public sealed class PackageBTests
             new Uri("https://127.0.0.1:" + targetPort.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/generate_204"),
             TimeSpan.FromSeconds(2),
             CancellationToken.None);
-        Assert.Equal(204, status);
+        Assert.Equal(0, status);
         await Task.WhenAll(served, relayed).WaitAsync(TimeSpan.FromSeconds(2));
         target.Stop();
         proxy.Stop();

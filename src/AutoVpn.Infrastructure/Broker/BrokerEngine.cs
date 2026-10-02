@@ -5,6 +5,7 @@ using AutoVpn.Contracts;
 using AutoVpn.Domain;
 using AutoVpn.Infrastructure.Core;
 using AutoVpn.Infrastructure.Persistence;
+using AutoVpn.Infrastructure.Probe;
 
 namespace AutoVpn.Infrastructure.Broker;
 
@@ -14,6 +15,9 @@ public sealed class BrokerEngine
     private readonly INetworkGuard _guard;
     private readonly ICoreController _core;
     private readonly EffectJournal? _journal;
+    private readonly IClock? _clock;
+    private readonly IProbeTransport? _admission;
+    private readonly Uri? _admissionTarget;
     private readonly object _gate = new();
     private TunnelState _state = TunnelState.Initial;
     private long _sequence;
@@ -28,12 +32,27 @@ public sealed class BrokerEngine
 
     public string BootId { get; } = Guid.NewGuid().ToString("N");
 
-    public BrokerEngine(ICatalogue catalogue, INetworkGuard guard, ICoreController core, EffectJournal? journal = null)
+    public BrokerEngine(
+        ICatalogue catalogue,
+        INetworkGuard guard,
+        ICoreController core,
+        EffectJournal? journal = null,
+        IClock? clock = null,
+        IProbeTransport? admission = null,
+        Uri? admissionTarget = null)
     {
         _catalogue = catalogue;
         _guard = guard;
         _core = core;
         _journal = journal;
+        _clock = clock;
+        _admission = admission;
+        _admissionTarget = admissionTarget;
+    }
+
+    private DateTimeOffset NowUtc()
+    {
+        return _clock?.UtcNow ?? DateTimeOffset.UtcNow;
     }
 
     public TunnelState State
@@ -126,8 +145,8 @@ public sealed class BrokerEngine
             return Fail(request, ReasonCodes.StaleRevision, "Сеть изменилась. Нужна новая проверка серверов.");
         }
 
-        var now = DateTimeOffset.UtcNow;
-        var selected = Select(payload, now);
+        var now = NowUtc();
+        var selected = await SelectReadyAsync(payload, now, cancellationToken).ConfigureAwait(false);
         if (selected is null)
         {
             return Fail(request, ReasonCodes.NoEligibleServer, Ru.NoServer);
@@ -214,16 +233,20 @@ public sealed class BrokerEngine
         string? startRefusal = null;
         lock (_gate)
         {
-            abandon = _state.Generation != armedGeneration || _state.DisconnectCommitted;
-            if (abandon)
+            var owned = _operationId == operationId &&
+                        _operationGeneration == armedGeneration &&
+                        _state.Generation == armedGeneration &&
+                        !_state.DisconnectCommitted;
+            if (!owned)
             {
-                _coreRunning = false;
+                abandon = true;
             }
             else if (!started.Started)
             {
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.VerifyFailed, _state.Generation, selected.NodeId, started.ReasonCode));
                 _sequence++;
                 _coreRunning = false;
+                _operationId = null;
                 startRefusal = started.ReasonCode ?? ReasonCodes.CoreConfigRejected;
             }
             else
@@ -241,18 +264,33 @@ public sealed class BrokerEngine
 
         if (startRefusal is not null)
         {
-            _catalogue.SetActiveNode(null);
+            if (Owns(operationId, armedGeneration))
+            {
+                _catalogue.SetActiveNode(null);
+            }
+
             return Fail(request, startRefusal, "Ядро не запущено. Защита остаётся включённой до подтверждённого отключения.");
         }
 
-        if (abandon)
+        if (abandon || !Owns(operationId, armedGeneration))
         {
-            _catalogue.SetActiveNode(null);
             return Fail(request, ReasonCodes.Canceled, "Подключение отменено. Ядро остановлено.");
         }
 
         _catalogue.SetActiveNode(selected.NodeId);
         return Ok(request, Snapshot(), "Ядро запущено. Канал ещё не подтверждён, состояние не «подключён».");
+    }
+
+    private bool Owns(string operationId, long generation)
+    {
+        lock (_gate)
+        {
+            return _operationId == operationId &&
+                   _operationGeneration == generation &&
+                   _state.Generation == generation &&
+                   !_state.DisconnectCommitted &&
+                   _coreRunning;
+        }
     }
 
     /// <summary>
@@ -270,6 +308,7 @@ public sealed class BrokerEngine
                 !string.Equals(nodeId, _state.ActiveNodeId, StringComparison.Ordinal) ||
                 networkEpoch != _operationEpoch ||
                 networkEpoch != _catalogue.NetworkEpoch ||
+                !_coreRunning ||
                 _state.Phase is not (TunnelPhase.Connecting or TunnelPhase.Reconnecting))
             {
                 return;
@@ -352,7 +391,7 @@ public sealed class BrokerEngine
             return Fail(request, "MALFORMED", "Неизвестный тип сбоя.");
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = NowUtc();
         var stayed = false;
         CatalogueNode? switchTarget = null;
         long switchGeneration = 0;
@@ -385,6 +424,8 @@ public sealed class BrokerEngine
                 {
                     _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.CoreExited, _state.Generation, _state.ActiveNodeId, decision.ReasonCode));
                     _sequence++;
+                    _coreRunning = false;
+                    _operationId = null;
                     _cooldownUntil ??= now.AddSeconds(ProductLimits.SwitchCooldownSeconds);
                 }
                 else if (decision.Action is FailoverAction.Stay or FailoverAction.IgnoreStale or FailoverAction.WaitCooldown or FailoverAction.DiagnoseTargets)
@@ -400,7 +441,11 @@ public sealed class BrokerEngine
                     _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.UplinkLost, _state.Generation, _state.ActiveNodeId));
                     _sequence++;
                 }
-                else if (decision.Action == FailoverAction.Switch && decision.NodeId is not null && _state.Phase == TunnelPhase.Connected && !_switchBusy)
+                else if (_switchBusy)
+                {
+                    stayed = true;
+                }
+                else if (decision.Action == FailoverAction.Switch && decision.NodeId is not null && _state.Phase is TunnelPhase.Connected or TunnelPhase.Reconnecting)
                 {
                     var candidate = _catalogue.Nodes.FirstOrDefault(node => node.NodeId == decision.NodeId);
                     if (candidate is null || !IsCurrentlyEligible(candidate, now))
@@ -423,6 +468,11 @@ public sealed class BrokerEngine
                 {
                     _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, decision.ReasonCode));
                     _sequence++;
+                    if (failure == FailureKind.CoreExit)
+                    {
+                        _coreRunning = false;
+                        _operationId = null;
+                    }
                 }
             }
         }
@@ -451,10 +501,14 @@ public sealed class BrokerEngine
                 var abandon = false;
                 lock (_gate)
                 {
-                    abandon = _state.Generation != switchGeneration || _state.DisconnectCommitted || _state.Phase != TunnelPhase.Connected;
+                    abandon = _state.Generation != switchGeneration || _state.DisconnectCommitted || _state.Phase is not (TunnelPhase.Connected or TunnelPhase.Reconnecting);
                     if (!abandon && started.Started)
                     {
-                        _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.HealthFailed, _state.Generation, _state.ActiveNodeId));
+                        if (_state.Phase == TunnelPhase.Connected)
+                        {
+                            _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.HealthFailed, _state.Generation, _state.ActiveNodeId));
+                        }
+
                         _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.SwitchCommitted, _state.Generation, switchTarget.NodeId));
                         _switchTimes.Enqueue(now);
                         if (_switchTimes.Count >= ProductLimits.MaxSwitchesPerMinute)
@@ -522,7 +576,7 @@ public sealed class BrokerEngine
             return Fail(request, "MALFORMED", "Список запасных серверов повреждён.");
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = NowUtc();
         var accepted = new List<StandbyCandidate>();
         foreach (var item in standbys)
         {
@@ -610,6 +664,61 @@ public sealed class BrokerEngine
         return Ok(request, Snapshot(), recovery.OpenEffects == 0
             ? "Своих сетевых правил нет. Восстанавливать нечего."
             : "Свои правила сняты.");
+    }
+
+    private async Task<CatalogueNode?> SelectReadyAsync(ConnectPayload payload, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var selected = Select(payload, now);
+        if (selected is not null || _admission is null || _admissionTarget is null)
+        {
+            return selected;
+        }
+
+        var candidate = AdmissionCandidate(payload, now);
+        if (candidate is null)
+        {
+            return null;
+        }
+
+        var admitted = await ProbeCoordinator.AdmitIfStaleAsync(
+            _catalogue,
+            _admission,
+            _admissionTarget,
+            candidate.NodeId,
+            now,
+            cancellationToken).ConfigureAwait(false);
+        return admitted ? Select(payload, now) : null;
+    }
+
+    private CatalogueNode? AdmissionCandidate(ConnectPayload payload, DateTimeOffset now)
+    {
+        var settings = _catalogue.Settings;
+        var context = new EligibilityContext
+        {
+            NowUtc = now,
+            NetworkEpoch = _catalogue.NetworkEpoch,
+            AllowInsecureCertificates = settings.AllowInsecureCertificates,
+            Purpose = string.IsNullOrWhiteSpace(payload.NodeId) ? SelectionPurpose.Automatic : SelectionPurpose.Manual,
+            AllowedAge = TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes),
+            MaxAcceptableLatencyMs = settings.MaxAcceptableLatencyMs,
+            DisabledFamilies = settings.DisabledFamilyIds.ToHashSet(StringComparer.Ordinal),
+        };
+        if (!string.IsNullOrWhiteSpace(payload.NodeId))
+        {
+            var node = _catalogue.Nodes.FirstOrDefault(item => item.NodeId == payload.NodeId && item.Digest == payload.Digest);
+            if (node is null || !CountryAllows(node) || !MemoryCatalogue.IsEligible(node, context))
+            {
+                return null;
+            }
+
+            return ProbeCoordinator.NeedsOnDemandAdmission(node, now, _catalogue.NetworkEpoch) ? node : null;
+        }
+
+        return _catalogue.Eligible(context)
+            .Where(node => CountryAllows(node) && ProbeCoordinator.NeedsOnDemandAdmission(node, now, _catalogue.NetworkEpoch))
+            .OrderBy(node => Ranker.Cost(Rank(node)))
+            .ThenBy(node => node.NodeId, StringComparer.Ordinal)
+            .FirstOrDefault();
     }
 
     private CatalogueNode? Select(ConnectPayload payload, DateTimeOffset now)

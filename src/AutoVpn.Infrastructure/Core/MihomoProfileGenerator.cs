@@ -18,6 +18,8 @@ public sealed record ProfileBuildRequest
     public int Mtu { get; init; } = 1500;
     public string Stack { get; init; } = "mixed";
     public bool AllowInsecureCertificates { get; init; }
+    public bool ExternalController { get; init; } = true;
+    public IReadOnlyDictionary<string, string>? LoopbackHosts { get; init; }
     public required IReadOnlyList<NodeWire> Nodes { get; init; }
     public string? SelectedNodeId { get; init; }
 }
@@ -26,7 +28,7 @@ public static class MihomoProfileGenerator
 {
     public static string Build(ProfileBuildRequest request)
     {
-        if (request.Secret.Length < 16)
+        if (request.ExternalController && request.Secret.Length < 16)
         {
             throw new InvalidOperationException("Controller secret is too short.");
         }
@@ -41,10 +43,15 @@ public static class MihomoProfileGenerator
         builder.AppendLine("bind-address: 127.0.0.1");
         builder.AppendLine("mode: rule");
         builder.AppendLine("log-level: info");
-        builder.AppendLine("ipv6: true");
+        var loopbackFixture = request.LoopbackHosts is { Count: > 0 };
+        builder.AppendLine(loopbackFixture ? "ipv6: false" : "ipv6: true");
         builder.AppendLine("find-process-mode: 'off'");
-        builder.AppendLine($"external-controller: '127.0.0.1:{request.ControllerPort.ToString(CultureInfo.InvariantCulture)}'");
-        builder.AppendLine($"secret: '{Yaml(request.Secret)}'");
+        if (request.ExternalController)
+        {
+            builder.AppendLine($"external-controller: '127.0.0.1:{request.ControllerPort.ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"secret: '{Yaml(request.Secret)}'");
+        }
+
         builder.AppendLine("external-ui: ''");
         builder.AppendLine("profile:");
         builder.AppendLine("  store-selected: false");
@@ -74,16 +81,36 @@ public static class MihomoProfileGenerator
             builder.AppendLine("    - tcp://any:53");
         }
 
-        builder.AppendLine("dns:");
-        builder.AppendLine("  enable: true");
-        builder.AppendLine("  ipv6: true");
-        builder.AppendLine("  enhanced-mode: redir-host");
-        builder.AppendLine("  nameserver:");
-        builder.AppendLine("    - https://1.1.1.1/dns-query");
-        builder.AppendLine("    - https://8.8.8.8/dns-query");
-        builder.AppendLine("  proxy-server-nameserver:");
-        builder.AppendLine("    - 1.1.1.1");
-        builder.AppendLine("    - 8.8.8.8");
+        if (loopbackFixture)
+        {
+            builder.AppendLine("hosts:");
+            foreach (var pair in request.LoopbackHosts!.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                if (!IsLoopbackLiteral(pair.Value))
+                {
+                    throw new InvalidOperationException(ReasonCodes.NonPublicEndpoint);
+                }
+
+                builder.AppendLine($"  '{Yaml(pair.Key)}': '{Yaml(pair.Value)}'");
+            }
+
+            builder.AppendLine("dns:");
+            builder.AppendLine("  enable: false");
+        }
+        else
+        {
+            builder.AppendLine("dns:");
+            builder.AppendLine("  enable: true");
+            builder.AppendLine("  ipv6: true");
+            builder.AppendLine("  enhanced-mode: redir-host");
+            builder.AppendLine("  nameserver:");
+            builder.AppendLine("    - https://1.1.1.1/dns-query");
+            builder.AppendLine("    - https://8.8.8.8/dns-query");
+            builder.AppendLine("  proxy-server-nameserver:");
+            builder.AppendLine("    - 1.1.1.1");
+            builder.AppendLine("    - 8.8.8.8");
+        }
+
         builder.AppendLine("proxies:");
         if (request.Nodes.Count == 0)
         {
@@ -178,7 +205,13 @@ public static class MihomoProfileGenerator
             throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
         }
 
-        if (!AcceptedSecurity(type, node.Security))
+        var security = node.Security?.Trim().ToLowerInvariant();
+        if (security is "")
+        {
+            security = null;
+        }
+
+        if (!AcceptedSecurity(type, security))
         {
             throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
         }
@@ -196,13 +229,11 @@ public static class MihomoProfileGenerator
             builder.AppendLine($"    alterId: {alter.ToString(CultureInfo.InvariantCulture)}");
         }
 
-        if (node.Udp is bool udp)
-        {
-            builder.AppendLine($"    udp: {(udp ? "true" : "false")}");
-        }
+        var udp = node.Udp ?? false;
+        builder.AppendLine($"    udp: {(udp ? "true" : "false")}");
 
         Write(builder, "flow", node.Flow);
-        if (node.Security is "tls" or "reality")
+        if (security is "tls" or "reality")
         {
             builder.AppendLine("    tls: true");
         }
@@ -214,7 +245,8 @@ public static class MihomoProfileGenerator
 
         Write(builder, SniKey(type), node.Sni);
         Write(builder, "client-fingerprint", node.Fingerprint);
-        Write(builder, "network", node.Transport);
+        var transport = CanonicalTransport(node.Transport);
+        Write(builder, "network", transport);
         Write(builder, "packet-encoding", node.PacketEncoding);
         Write(builder, "up", node.Up);
         Write(builder, "down", node.Down);
@@ -246,7 +278,7 @@ public static class MihomoProfileGenerator
             }
         }
 
-        AppendTransport(builder, node);
+        AppendTransport(builder, node, transport);
 
         Write(builder, "plugin", node.Plugin);
         if (!string.IsNullOrEmpty(node.PluginOpts))
@@ -277,9 +309,24 @@ public static class MihomoProfileGenerator
         return type is "trojan" or "hysteria2" or "tuic" ? "sni" : "servername";
     }
 
-    private static void AppendTransport(StringBuilder builder, NodeWire node)
+    private static string? CanonicalTransport(string? transport)
     {
-        var transport = node.Transport?.Trim().ToLowerInvariant();
+        var value = transport?.Trim().ToLowerInvariant();
+        return value switch
+        {
+            null or "" or "tcp" or "raw" => null,
+            "websocket" => "ws",
+            _ => value,
+        };
+    }
+
+    private static bool IsLoopbackLiteral(string value)
+    {
+        return value is "127.0.0.1" or "::1";
+    }
+
+    private static void AppendTransport(StringBuilder builder, NodeWire node, string? transport)
+    {
         if (node.HeaderType is not null && transport is not ("http" or "h2"))
         {
             throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
@@ -287,7 +334,7 @@ public static class MihomoProfileGenerator
 
         var hasPath = node.Path is not null || node.HostHeader is not null;
         var hasGrpc = node.ServiceName is not null;
-        if (transport is "ws" or "websocket")
+        if (transport == "ws")
         {
             if (hasGrpc)
             {
@@ -314,7 +361,7 @@ public static class MihomoProfileGenerator
             return;
         }
 
-        if (transport is "http" or "h2")
+        if (transport == "http")
         {
             if (hasGrpc)
             {
@@ -325,9 +372,40 @@ public static class MihomoProfileGenerator
             return;
         }
 
-        if (hasPath || hasGrpc)
+        if (transport == "h2")
+        {
+            if (hasGrpc)
+            {
+                throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+            }
+
+            AppendH2(builder, node);
+            return;
+        }
+
+        if (transport is not null || hasPath || hasGrpc)
         {
             throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+        }
+    }
+
+    private static void AppendH2(StringBuilder builder, NodeWire node)
+    {
+        if (node.Path is null && node.HostHeader is null)
+        {
+            return;
+        }
+
+        builder.AppendLine("    h2-opts:");
+        if (node.Path is not null)
+        {
+            builder.AppendLine($"      path: '{Yaml(node.Path)}'");
+        }
+
+        if (node.HostHeader is not null)
+        {
+            builder.AppendLine("      host:");
+            builder.AppendLine($"        - '{Yaml(node.HostHeader)}'");
         }
     }
 
