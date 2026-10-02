@@ -260,6 +260,72 @@ public sealed class Round2SliceBTests
         }
     }
 
+    [Fact]
+    public void DuplicateRemovalIdsDoNotCompleteJournalRecovery()
+    {
+        var directory = Directory.CreateTempSubdirectory("autovpn-rt22-dup-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "effects.sqlite");
+            using var journal = EffectJournal.Open(path);
+            journal.Record(new OwnedEffect("one", "route", "synthetic"));
+            journal.Record(new OwnedEffect("two", "route", "synthetic"));
+            var recovery = journal.Recover(new RepeatingGuard("one"));
+            Assert.False(recovery.Completed);
+            Assert.Equal(1, recovery.RemovedEffects);
+            Assert.Equal(1, recovery.OpenEffects);
+            Assert.Equal("two", Assert.Single(journal.OpenEffects()).Id);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MissingJournalAfterOpenRequiresReconciliation()
+    {
+        var directory = Directory.CreateTempSubdirectory("autovpn-rt22-missing-");
+        try
+        {
+            var unseen = Path.Combine(directory.FullName, "never.sqlite");
+            Assert.False(EffectJournal.RequiresReconciliation(unseen));
+            var path = Path.Combine(directory.FullName, "effects.sqlite");
+            using (var journal = EffectJournal.Open(path))
+            {
+                journal.Record(new OwnedEffect("owned-route", "route", "synthetic"));
+            }
+
+            File.Delete(path);
+            Assert.True(EffectJournal.RequiresReconciliation(path));
+            Assert.True(File.Exists(EffectJournal.PresenceMarkerPath(path)));
+            Assert.False(EffectJournal.HasUnknownMarker(path));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void QuarantineResidueWithoutAJournalRequiresReconciliation()
+    {
+        var directory = Directory.CreateTempSubdirectory("autovpn-rt22-residue-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "effects.sqlite");
+            File.WriteAllText(path + ".quarantine-20261003010101000", "old");
+            Assert.True(EffectJournal.RequiresReconciliation(path));
+            File.Delete(path + ".quarantine-20261003010101000");
+            File.WriteAllText(path + "-wal", "wal");
+            Assert.True(EffectJournal.RequiresReconciliation(path));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     private static RefreshWorkItem Item(string artifact, Uri url)
     {
         return new RefreshWorkItem { ArtifactId = artifact, FamilyId = "black-vless", Urls = [url] };
@@ -306,6 +372,27 @@ public sealed class Round2SliceBTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             return next(request);
+        }
+    }
+
+    private sealed class RepeatingGuard(string id) : INetworkGuard
+    {
+        public GuardResult Arm(GuardRequest request)
+        {
+            _ = request;
+            return new GuardResult(false, false, null, []);
+        }
+
+        public GuardResult Disarm(long generation)
+        {
+            _ = generation;
+            return new GuardResult(true, false, null, []);
+        }
+
+        public GuardResult Recover(IReadOnlyList<OwnedEffect> effects)
+        {
+            _ = effects;
+            return new GuardResult(true, false, null, [id, id]);
         }
     }
 

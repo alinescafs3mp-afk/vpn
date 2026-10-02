@@ -32,8 +32,56 @@ public sealed class EffectJournal : IDisposable
         return File.Exists(UnknownMarkerPath(path));
     }
 
+    public static string PresenceMarkerPath(string path)
+    {
+        return path + ".journal-seen";
+    }
+
+    public static bool RequiresReconciliation(string path)
+    {
+        if (File.Exists(path))
+        {
+            return false;
+        }
+
+        if (HasUnknownMarker(path) || File.Exists(PresenceMarkerPath(path)))
+        {
+            return true;
+        }
+
+        if (File.Exists(path + "-wal") || File.Exists(path + "-shm") || File.Exists(path + "-journal"))
+        {
+            return true;
+        }
+
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(directory))
+        {
+            directory = ".";
+        }
+
+        if (!Directory.Exists(directory))
+        {
+            return false;
+        }
+
+        return Directory.EnumerateFiles(directory, Path.GetFileName(path) + ".quarantine-*").Any();
+    }
+
     public static EffectJournal Open(string path)
     {
+        var presence = PresenceMarkerPath(path);
+        if (!File.Exists(presence))
+        {
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            File.WriteAllText(presence, DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+        }
+
         string? quarantined = null;
         var marker = UnknownMarkerPath(path);
         if (File.Exists(marker))
@@ -132,18 +180,18 @@ public sealed class EffectJournal : IDisposable
         }
 
         var result = guard.Recover(open);
-        var removed = 0;
+        var pending = open.Select(effect => effect.Id).ToHashSet(StringComparer.Ordinal);
+        var removedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var id in result.RemovedIds)
         {
-            if (open.Any(effect => effect.Id == id))
+            if (pending.Contains(id) && removedIds.Add(id))
             {
                 MarkRemoved(id);
-                removed++;
             }
         }
 
-        var completed = result.Completed && removed == open.Count;
-        return new JournalRecovery(completed, result.ReasonCode, null, open.Count - removed, removed);
+        var completed = result.Completed && removedIds.Count == pending.Count;
+        return new JournalRecovery(completed, result.ReasonCode, null, pending.Count - removedIds.Count, removedIds.Count);
     }
 
     public void Dispose()
@@ -153,59 +201,76 @@ public sealed class EffectJournal : IDisposable
 
     private static void Inspect(string path)
     {
-        Span<byte> header = stackalloc byte[16];
-        using (var stream = File.OpenRead(path))
+        if (!HasSqliteHeader(path))
         {
-            if (stream.Read(header) != 16 || !header.SequenceEqual("SQLite format 3\0"u8))
-            {
-                throw new CatalogueStoreException("Effect journal is not a SQLite file.", MoveAside(path));
-            }
+            throw new CatalogueStoreException("Effect journal is not a SQLite file.", MoveAside(path));
         }
 
-        using var probe = new SqliteConnection(new SqliteConnectionStringBuilder
+        var probe = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = path,
             Mode = SqliteOpenMode.ReadOnly,
             Pooling = false,
         }.ToString());
-        probe.Open();
-        using var version = probe.CreateCommand();
-        version.CommandText = "SELECT value FROM meta WHERE key='schema_version';";
+        string? quarantineReason = null;
         try
         {
-            var value = version.ExecuteScalar() as string;
-            if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var schema) || schema != SchemaVersion)
+            probe.Open();
+            using (var version = probe.CreateCommand())
             {
-                var newer = schema > SchemaVersion;
-                throw new CatalogueStoreException(newer
-                    ? "Effect journal was written by a newer AutoVPN. It was left untouched."
-                    : "Effect journal schema is not supported. It was left untouched.");
+                version.CommandText = "SELECT value FROM meta WHERE key='schema_version';";
+                var value = version.ExecuteScalar() as string;
+                if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var schema) || schema != SchemaVersion)
+                {
+                    var newer = schema > SchemaVersion;
+                    throw new CatalogueStoreException(newer
+                        ? "Effect journal was written by a newer AutoVPN. It was left untouched."
+                        : "Effect journal schema is not supported. It was left untouched.");
+                }
+            }
+
+            using var integrity = probe.CreateCommand();
+            integrity.CommandText = "PRAGMA integrity_check;";
+            var status = integrity.ExecuteScalar() as string;
+            if (!string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase))
+            {
+                quarantineReason = "Effect journal failed integrity_check.";
             }
         }
         catch (SqliteException)
         {
-            probe.Close();
-            throw new CatalogueStoreException("Effect journal could not be read.", MoveAside(path));
+            quarantineReason = "Effect journal could not be read.";
+        }
+        finally
+        {
+            probe.Dispose();
         }
 
-        using var integrity = probe.CreateCommand();
-        integrity.CommandText = "PRAGMA integrity_check;";
-        var status = integrity.ExecuteScalar() as string;
-        if (!string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase))
+        if (quarantineReason is not null)
         {
-            probe.Close();
-            throw new CatalogueStoreException("Effect journal failed integrity_check.", MoveAside(path));
+            throw new CatalogueStoreException(quarantineReason, MoveAside(path));
         }
+    }
+
+    private static bool HasSqliteHeader(string path)
+    {
+        Span<byte> header = stackalloc byte[16];
+        using var stream = File.OpenRead(path);
+        return stream.Read(header) == 16 && header.SequenceEqual("SQLite format 3\0"u8);
     }
 
     private static string MoveAside(string path)
     {
         var destination = path + ".quarantine-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfff", CultureInfo.InvariantCulture);
+        File.WriteAllText(UnknownMarkerPath(path), destination);
         MoveIfExists(path + "-wal", destination + "-wal");
         MoveIfExists(path + "-shm", destination + "-shm");
         MoveIfExists(path + "-journal", destination + "-journal");
-        File.Move(path, destination);
-        File.WriteAllText(UnknownMarkerPath(path), destination);
+        if (File.Exists(path))
+        {
+            File.Move(path, destination);
+        }
+
         return destination;
     }
 

@@ -14,6 +14,13 @@ if (!File.Exists(path))
         return 2;
     }
 
+    if (EffectJournal.RequiresReconciliation(path))
+    {
+        Console.WriteLine("Журнал отсутствует, но путь уже открывался или рядом остались файлы карантина: " + path);
+        Console.WriteLine("Правила не считаются снятыми. Сеть не изменялась.");
+        return 2;
+    }
+
     Console.WriteLine("Журнал эффектов не найден. Снимать нечего. Системная сеть не изменялась.");
     return 0;
 }
