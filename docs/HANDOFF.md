@@ -2,13 +2,13 @@
 
 ## Для владельца
 
-Срез 0.1.0 лежит в этом дереве. Выпуска нет. Установщика нет. Туннель Windows не проверялся. Публичные узлы не измерялись. Архив и его сумма описаны в `docs/IMPLEMENTATION_STATUS.md`. Идентификатор коммита после отправки — в отчёте и, следующим коммитом, в поле `gitCommit` манифеста.
+Срез 0.1.0 лежит в этом дереве. Выпуска нет. Установщика нет. Туннель Windows не проверялся. Публичные узлы не измерялись. Архив и его сумма описаны в `docs/IMPLEMENTATION_STATUS.md`. Коммит реализации: `9258f6c0eef8f7e7ad5ea6b2eaa8355abd7e95cd`. Следующий коммит только записывает этот SHA. `origin/main` после отправки — тот записывающий коммит.
 
 ## Last verified commit
 
-`FILL_AFTER_COMMIT`
+Implementation commit: `9258f6c0eef8f7e7ad5ea6b2eaa8355abd7e95cd`
 
-That value is the implementation commit. A later docs-only commit may record it. `origin/main` after the push is the commit to verify with:
+This handoff edit is a child of that commit. `origin/main` after the push is the child. Verify with:
 
 ```bash
 git fetch origin

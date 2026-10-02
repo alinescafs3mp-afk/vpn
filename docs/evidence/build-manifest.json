@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "applicationVersion": "0.1.0",
-  "gitCommit": "FILL_AFTER_COMMIT",
-  "workingTreeClean": false,
+  "gitCommit": "9258f6c0eef8f7e7ad5ea6b2eaa8355abd7e95cd",
+  "workingTreeClean": true,
   "builtUtc": "2026-10-02T19:44:00Z",
   "build": {
     "sdk": "10.0.112",
@@ -45,7 +45,7 @@
       "exitCode": 0,
       "warnings": 0,
       "errors": 0,
-      "note": "Includes Desktop (net10.0-windows), Service, Recovery, and Inventory. Desktop was not executed."
+      "note": "Includes Desktop (net10.0-windows), Service, Recovery, and Inventory. Desktop was not executed. gitCommit above is the implementation commit; this manifest file is amended in the following docs-only commit."
     },
     {
       "command": "AUTOVPN_MIHOMO_PATH=<pinned linux binary> dotnet test tests/AutoVpn.UnitTests -c Release --filter FullyQualifiedName~PinnedLinuxCore",
