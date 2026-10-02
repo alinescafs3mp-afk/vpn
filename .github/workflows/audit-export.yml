@@ -1,0 +1,35 @@
+name: independent-round3-source-export
+on:
+  push:
+    branches: ['audit/round3-e7797c7-independent']
+    paths: ['.github/workflows/audit-export.yml']
+permissions:
+  contents: read
+jobs:
+  source-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export only tracked repository source and synthetic audit fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir audit-export
+          BASE=e7797c7d24e4f20befb7e43bfb8e72d5efd436f1
+          git rev-parse "$BASE^{tree}" | tee audit-export/production-tree.txt
+          git archive --format=zip "$BASE" > audit-export/production-e7797c7.zip
+          git archive --format=zip HEAD tests/AutoVpn.UnitTests/IndependentRound3Tests.cs tests/AutoVpn.UnitTests/IndependentRound3Tests_BrokerTls.cs tests/AutoVpn.AuditWpfSmoke .github/workflows/audit-round3.yml .github/workflows/audit-wpf-smoke.yml > audit-export/independent-fixtures.zip
+          git ls-tree -r "$BASE" > audit-export/source-inventory.txt
+          git log "$BASE" --format='%H %aI %s' > audit-export/history-inventory.txt
+          git diff --name-status "$BASE" HEAD > audit-export/audit-only-changes.txt
+          sha256sum audit-export/*.zip | tee audit-export/SHA256SUMS
+          echo 'Tracked source only. No .git credentials, local databases, live captures, or untracked runtime files.'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: independent-round3-source-export
+          path: audit-export/
+          retention-days: 14
