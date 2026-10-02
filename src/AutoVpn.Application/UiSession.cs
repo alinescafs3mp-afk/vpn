@@ -1,0 +1,165 @@
+using AutoVpn.Contracts;
+using AutoVpn.Domain;
+
+namespace AutoVpn.Application;
+
+public sealed record UiSession
+{
+    public string PhaseCode { get; init; } = "Unknown";
+    public string PhaseLabel { get; init; } = "Состояние неизвестно";
+    public string Detail { get; init; } = "Служба ещё не вызывалась. Доступность серверов не измерялась.";
+    public bool LastKnownProtectionArmed { get; init; }
+    public bool BrokerReachable { get; init; }
+    public bool ClaimsVerifiedDisconnect { get; init; }
+    public bool DisclosureAccepted { get; init; }
+    public bool SafetyDisconnectAvailable { get; init; }
+    public string PrimaryAction { get; init; } = Ru.Connect;
+}
+
+public readonly record struct ExitDecision(bool CanClose, string? Reason);
+
+public static class UiSessionReducer
+{
+    public static UiSession Initial()
+    {
+        return new UiSession();
+    }
+
+    public static UiSession BrokerUnreachable(UiSession previous)
+    {
+        var armed = previous.LastKnownProtectionArmed;
+        var safety = armed || SessionText.OffersDisconnect(previous.PhaseCode, protectionArmed: false);
+        var detail = armed
+            ? "Брокер недоступен. Последний известный признак защиты: включена. Отключение не подтверждено."
+            : "Брокер недоступен. Последний известный признак защиты: не включена. Отключение не подтверждено.";
+        return previous with
+        {
+            PhaseCode = "Unknown",
+            PhaseLabel = "Состояние неизвестно",
+            Detail = detail,
+            BrokerReachable = false,
+            ClaimsVerifiedDisconnect = false,
+            SafetyDisconnectAvailable = safety,
+            PrimaryAction = safety ? Ru.Disconnect : Ru.Connect,
+        };
+    }
+
+    public static UiSession FromSnapshot(UiSession previous, BrokerSnapshot snapshot, string? message, bool disclosureAccepted)
+    {
+        var safety = SessionText.OffersDisconnect(snapshot.Phase, snapshot.ProtectionArmed);
+        var verifiedDisconnect = snapshot.Phase == nameof(TunnelPhase.Disconnected) && !snapshot.ProtectionArmed;
+        return previous with
+        {
+            PhaseCode = snapshot.Phase,
+            PhaseLabel = SessionText.Phase(snapshot.Phase),
+            Detail = message ?? previous.Detail,
+            LastKnownProtectionArmed = snapshot.ProtectionArmed,
+            BrokerReachable = true,
+            ClaimsVerifiedDisconnect = verifiedDisconnect,
+            DisclosureAccepted = disclosureAccepted,
+            SafetyDisconnectAvailable = safety,
+            PrimaryAction = safety ? Ru.Disconnect : Ru.Connect,
+        };
+    }
+
+    public static bool ConnectAllowed(bool disclosureAccepted, bool hasMeasuredEligible)
+    {
+        return disclosureAccepted && hasMeasuredEligible;
+    }
+
+    public static ExitDecision PlanExit(UiSession session)
+    {
+        if (session.ClaimsVerifiedDisconnect)
+        {
+            return new ExitDecision(true, null);
+        }
+
+        if (!session.BrokerReachable && (session.LastKnownProtectionArmed || session.SafetyDisconnectAvailable))
+        {
+            return new ExitDecision(false, "Выход остановлен: брокер не подтвердил отключение.");
+        }
+
+        if (session.SafetyDisconnectAvailable)
+        {
+            return new ExitDecision(false, "Выход остановлен: сначала нужно подтверждённое отключение.");
+        }
+
+        if (!session.BrokerReachable && session.PhaseCode == "Unknown" && !session.LastKnownProtectionArmed)
+        {
+            return new ExitDecision(true, null);
+        }
+
+        return new ExitDecision(true, null);
+    }
+}
+
+public static class Consent
+{
+    public static void AcceptDisclosure(ICatalogue catalogue)
+    {
+        if (catalogue.Settings.DisclosureAccepted)
+        {
+            return;
+        }
+
+        catalogue.Settings = catalogue.Settings with
+        {
+            DisclosureAccepted = true,
+            Revision = catalogue.Settings.Revision + 1,
+        };
+    }
+}
+
+public static class CataloguePresentation
+{
+    public static string Servers(ICatalogue catalogue, string filter, DateTimeOffset nowUtc)
+    {
+        var nodes = catalogue.Nodes.Where(node => Match(catalogue, node, filter, nowUtc)).OrderBy(node => node.Label, StringComparer.Ordinal).ToArray();
+        if (nodes.Length == 0)
+        {
+            return filter switch
+            {
+                "working" => "Рабочих серверов нет. Проверка не отмечала их как доступные.",
+                "favorites" => "Избранное пусто.",
+                _ => "Каталог пуст. Названия и страны из подписки не считаются доказательством доступности.",
+            };
+        }
+
+        return string.Join('\n', nodes.Select(Format));
+    }
+
+    public static string Format(CatalogueNode node)
+    {
+        var latency = node.Assessment?.MedianLatencyMs is int ms ? ms.ToString(System.Globalization.CultureInfo.InvariantCulture) + " мс" : "не измерялась";
+        var country = string.IsNullOrWhiteSpace(node.AdvertisedCountry) ? "не указана" : node.AdvertisedCountry;
+        var health = node.Assessment?.Health switch
+        {
+            HealthState.Healthy => Ru.Working,
+            HealthState.Degraded => Ru.Working,
+            HealthState.Failed => Ru.Unavailable,
+            HealthState.EnvironmentUnknown => "Среда проверки не подтвердила сервер",
+            _ => Ru.NeedsCheck,
+        };
+        return node.Label + " — " + health + ". Задержка: " + latency + ". Страна по подписке: " + country + ".";
+    }
+
+    private static bool Match(ICatalogue catalogue, CatalogueNode node, string filter, DateTimeOffset nowUtc)
+    {
+        if (filter == "favorites")
+        {
+            return node.Favorite;
+        }
+
+        if (filter == "working")
+        {
+            return catalogue.Eligible(new EligibilityContext
+            {
+                NowUtc = nowUtc,
+                NetworkEpoch = catalogue.NetworkEpoch,
+                AllowInsecureCertificates = catalogue.Settings.AllowInsecureCertificates,
+            }).Any(item => item.NodeId == node.NodeId);
+        }
+
+        return true;
+    }
+}

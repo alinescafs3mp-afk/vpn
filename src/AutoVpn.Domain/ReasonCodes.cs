@@ -23,6 +23,8 @@ public static class ReasonCodes
     public const string EmptyValidSource = "EMPTY_VALID_SOURCE";
     public const string NotModified = "NOT_MODIFIED";
     public const string FetchFailed = "FETCH_FAILED";
+    public const string FetchTimeout = "FETCH_TIMEOUT";
+    public const string RateLimited = "RATE_LIMITED";
     public const string Canceled = "CANCELED";
     public const string OffRegistryRedirect = "OFF_REGISTRY_REDIRECT";
     public const string TargetUnhealthy = "TARGET_UNHEALTHY";

@@ -4,15 +4,20 @@ public static class RefreshSchedule
 {
     public static TimeSpan Interval(int minutes, int jitterMinutes, int seed)
     {
-        var bounded = Math.Max(minutes, ProductLimits.MinimumRefreshIntervalMinutes);
-        var jitter = Math.Min(Math.Abs(jitterMinutes), bounded / 2);
+        var bounded = Math.Clamp(minutes, ProductLimits.MinimumRefreshIntervalMinutes, 7 * 24 * 60);
+        var jitterAbs = jitterMinutes == int.MinValue ? int.MaxValue : Math.Abs(jitterMinutes);
+        var jitter = Math.Min(jitterAbs, bounded / 2);
         if (jitter == 0)
         {
             return TimeSpan.FromMinutes(bounded);
         }
 
-        var offset = (seed % ((jitter * 2) + 1)) - jitter;
-        return TimeSpan.FromMinutes(bounded + offset);
+        var span = (jitter * 2) + 1;
+        var seedAbs = seed == int.MinValue ? 0 : Math.Abs(seed);
+        var offset = (seedAbs % span) - jitter;
+        var lower = Math.Max(ProductLimits.MinimumRefreshIntervalMinutes, bounded - jitter);
+        var upper = bounded + jitter;
+        return TimeSpan.FromMinutes(Math.Clamp(bounded + offset, lower, upper));
     }
 
     public static bool IsDue(DateTimeOffset? lastSuccessUtc, DateTimeOffset nowUtc, TimeSpan interval)

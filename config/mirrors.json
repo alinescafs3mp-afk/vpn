@@ -3,7 +3,7 @@
   "observedUtc": "2026-10-02T19:42:10Z",
   "pinnedCommit": "20c38289c29e4dba6b8f01ddd3273ec9ec169b46",
   "probedPath": "LICENSE",
-  "runtimeLoadsThisFile": false,
+  "runtimeLoadsThisFile": true,
   "approved": [
     {
       "host": "raw.githubusercontent.com",

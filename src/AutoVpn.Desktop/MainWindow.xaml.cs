@@ -1,22 +1,37 @@
 using System.IO;
+using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Forms;
+using AutoVpn.Application;
 using AutoVpn.Contracts;
 using AutoVpn.Domain;
 using AutoVpn.Infrastructure.Broker;
+using AutoVpn.Infrastructure.Fetch;
+using AutoVpn.Infrastructure.Persistence;
+using AutoVpn.Infrastructure.Probe;
+using AutoVpn.Infrastructure.Refresh;
 
 namespace AutoVpn.Desktop;
 
 public partial class MainWindow : Window
 {
     private readonly NotifyIcon _tray;
+    private readonly ICatalogue _catalogue;
+    private readonly SourceLedger _ledger;
+    private readonly string _root;
+    private UiSession _session = UiSessionReducer.Initial();
+    private CancellationTokenSource? _refresh;
     private bool _exit;
-    private bool _protectionArmed;
+    private bool _ready;
 
     public MainWindow()
     {
         InitializeComponent();
+        _root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AutoVPN");
+        Directory.CreateDirectory(_root);
+        _catalogue = OpenCatalogue(_root);
+        _ledger = SourceLedger.Load(Path.Combine(_root, "sources.json"));
         _tray = new NotifyIcon
         {
             Text = "AutoVPN",
@@ -29,11 +44,33 @@ public partial class MainWindow : Window
         _tray.ContextMenuStrip = menu;
         _tray.DoubleClick += (_, _) => RestoreWindow();
         Closing += OnClosing;
+        Loaded += OnLoaded;
+        DisclosureBox.IsChecked = _catalogue.Settings.DisclosureAccepted;
+        ProtectionBox.IsChecked = _catalogue.Settings.ProtectionOnConnect;
+        LanBox.IsChecked = _catalogue.Settings.LanAccess;
+        InsecureBox.IsChecked = _catalogue.Settings.AllowInsecureCertificates;
+        _session = _session with { DisclosureAccepted = _catalogue.Settings.DisclosureAccepted };
+        ShowSession();
+        _ready = true;
+    }
+
+    private static ICatalogue OpenCatalogue(string root)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return new MemoryCatalogue();
+        }
+
+        return SqliteCatalogue.Open(Path.Combine(root, "catalogue.sqlite"), SecretProtectors.ForProductionHost());
     }
 
     private void ShowConnection(object sender, RoutedEventArgs e) => ShowPage(ConnectionPage);
 
-    private void ShowServers(object sender, RoutedEventArgs e) => ShowPage(ServersPage);
+    private void ShowServers(object sender, RoutedEventArgs e)
+    {
+        ShowPage(ServersPage);
+        ShowWorking(sender, e);
+    }
 
     private void ShowSubscriptions(object sender, RoutedEventArgs e) => ShowPage(SubscriptionsPage);
 
@@ -41,17 +78,58 @@ public partial class MainWindow : Window
 
     private void ShowWorking(object sender, RoutedEventArgs e)
     {
-        ServerList.Text = "Рабочие серверы появятся после успешной локальной проверки. Сейчас таких записей нет.";
+        ServerList.Text = CataloguePresentation.Servers(_catalogue, "working", DateTimeOffset.UtcNow);
     }
 
     private void ShowFavorites(object sender, RoutedEventArgs e)
     {
-        ServerList.Text = "Избранное пусто.";
+        ServerList.Text = CataloguePresentation.Servers(_catalogue, "favorites", DateTimeOffset.UtcNow);
     }
 
     private void ShowAll(object sender, RoutedEventArgs e)
     {
-        ServerList.Text = "Каталог ещё не загружен. Названия и страны из подписки не считаются доказательством доступности.";
+        ServerList.Text = CataloguePresentation.Servers(_catalogue, "all", DateTimeOffset.UtcNow);
+    }
+
+    private void DisclosureChanged(object sender, RoutedEventArgs e)
+    {
+        if (!_ready || DisclosureBox.IsChecked != true)
+        {
+            return;
+        }
+
+        try
+        {
+            Consent.AcceptDisclosure(_catalogue);
+            _session = _session with { DisclosureAccepted = true };
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or CatalogueStoreException)
+        {
+            DetailText.Text = ex.Message;
+        }
+    }
+
+    private void SettingsChanged(object sender, RoutedEventArgs e)
+    {
+        if (!_ready)
+        {
+            return;
+        }
+
+        try
+        {
+            _catalogue.Settings = _catalogue.Settings with
+            {
+                ProtectionOnConnect = ProtectionBox.IsChecked == true,
+                LanAccess = LanBox.IsChecked == true,
+                AllowInsecureCertificates = InsecureBox.IsChecked == true,
+                Revision = _catalogue.Settings.Revision + 1,
+            };
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or CatalogueStoreException)
+        {
+            DetailText.Text = ex.Message;
+        }
     }
 
     private async void ConnectClick(object sender, RoutedEventArgs e)
@@ -59,31 +137,123 @@ public partial class MainWindow : Window
         ConnectButton.IsEnabled = false;
         try
         {
-            if (DisclosureBox.IsChecked != true)
-            {
-                DetailText.Text = "Сначала подтвердите предупреждение о публичных серверах.";
-                return;
-            }
-
-            if (SessionText.OffersDisconnect(PhaseText.Tag as string, _protectionArmed))
+            if (_session.SafetyDisconnectAvailable)
             {
                 await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
                 return;
             }
 
+            if (!_catalogue.Settings.DisclosureAccepted)
+            {
+                DetailText.Text = "Сначала подтвердите предупреждение о публичных серверах.";
+                return;
+            }
+
+            var eligible = _catalogue.Eligible(new EligibilityContext
+            {
+                NowUtc = DateTimeOffset.UtcNow,
+                NetworkEpoch = _catalogue.NetworkEpoch,
+                AllowedAge = TimeSpan.FromSeconds(ProductLimits.PreConnectFreshnessSeconds),
+                Purpose = SelectionPurpose.PreConnect,
+                AllowInsecureCertificates = _catalogue.Settings.AllowInsecureCertificates,
+            });
+            if (!UiSessionReducer.ConnectAllowed(_catalogue.Settings.DisclosureAccepted, eligible.Count > 0))
+            {
+                DetailText.Text = Ru.NoServer;
+                return;
+            }
+
+            var selected = eligible[0];
             await SendAsync(IpcOperations.Connect, new ConnectPayload
             {
-                NodeId = "",
-                Digest = "",
-                NetworkEpoch = 0,
-                ProtectionRequired = ProtectionBox.IsChecked == true,
-                LanAccess = LanBox.IsChecked == true,
+                NodeId = selected.NodeId,
+                Digest = selected.Digest,
+                NetworkEpoch = _catalogue.NetworkEpoch,
+                ProtectionRequired = _catalogue.Settings.ProtectionOnConnect,
+                LanAccess = _catalogue.Settings.LanAccess,
+                Node = NodeWireFactory.FromCatalogue(selected),
             }).ConfigureAwait(true);
         }
         finally
         {
             ConnectButton.IsEnabled = true;
         }
+    }
+
+    private async void RefreshClick(object sender, RoutedEventArgs e)
+    {
+        _refresh?.Cancel();
+        _refresh?.Dispose();
+        _refresh = new CancellationTokenSource();
+        var token = _refresh.Token;
+        try
+        {
+            SubscriptionStatus.Text = "Обновление подписок…";
+            var registry = ReviewedRegistryLoader.Load(ConfigDirectory());
+            using var fetcher = PolicyHttpFetcher.Create(registry.FetchOrigins);
+            var coordinator = new CatalogueCoordinator(
+                _catalogue,
+                fetcher,
+                new NonTunCoreProbeTransport(Environment.GetEnvironmentVariable("AUTOVPN_MIHOMO_PATH"), ExpectedCoreHash()),
+                _ledger,
+                registry.ProbeTargets);
+            var discovery = await coordinator.DiscoverAsync(registry, token).ConfigureAwait(true);
+            if (!discovery.Complete)
+            {
+                SubscriptionStatus.Text = "Список источников неполный: " + (discovery.ReasonCode ?? "DISCOVERY_INCOMPLETE") + ". Сохранённый каталог не удалён.";
+                return;
+            }
+
+            var outcome = await coordinator.RefreshAsync(discovery.Items, DateTimeOffset.UtcNow, token).ConfigureAwait(true);
+            if (registry.ProbeTargets.Count > 0)
+            {
+                await coordinator.ProbeAsync(registry.ProbeTargets[0], DateTimeOffset.UtcNow, token).ConfigureAwait(true);
+            }
+
+            _ledger.Save(Path.Combine(_root, "sources.json"));
+            var eligible = _catalogue.Eligible(new EligibilityContext
+            {
+                NowUtc = DateTimeOffset.UtcNow,
+                NetworkEpoch = _catalogue.NetworkEpoch,
+                AllowInsecureCertificates = _catalogue.Settings.AllowInsecureCertificates,
+            });
+            SubscriptionStatus.Text = "Обновление завершено. Записей: " + _catalogue.Nodes.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + ". Рабочих после проверки: " + eligible.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + (outcome.AnyFetchFailed ? ". Часть источников недоступна, прежний состав сохранён." : ".");
+        }
+        catch (OperationCanceledException)
+        {
+            SubscriptionStatus.Text = "Обновление отменено. Уже сохранённые записи не удалены.";
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or HttpRequestException or CatalogueStoreException)
+        {
+            SubscriptionStatus.Text = "Обновление не выполнено: " + ex.Message;
+        }
+    }
+
+    private void CancelRefreshClick(object sender, RoutedEventArgs e)
+    {
+        _refresh?.Cancel();
+    }
+
+    private async void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        DateTimeOffset? lastSuccess = null;
+        foreach (var entry in _ledger.Entries)
+        {
+            if (entry.LastSuccessUtc is DateTimeOffset seen && (lastSuccess is null || seen > lastSuccess))
+            {
+                lastSuccess = seen;
+            }
+        }
+
+        if (!RefreshScheduleGate.ShouldRefresh(lastSuccess, DateTimeOffset.UtcNow, _catalogue.Settings, Environment.ProcessId))
+        {
+            return;
+        }
+
+        RefreshClick(sender, e);
+        await Task.CompletedTask;
     }
 
     private async Task SendAsync(string operation, object payload)
@@ -99,29 +269,32 @@ public partial class MainWindow : Window
             }, CancellationToken.None).ConfigureAwait(true);
             if (response?.Snapshot is null)
             {
-                ShowLocal(nameof(TunnelPhase.Disconnected), Ru.ServiceMissing, false);
+                _session = UiSessionReducer.BrokerUnreachable(_session);
+                ShowSession();
                 return;
             }
 
-            ShowLocal(response.Snapshot.Phase, response.Message ?? Ru.WindowsGate, response.Snapshot.ProtectionArmed);
+            _session = UiSessionReducer.FromSnapshot(_session, response.Snapshot, response.Message, _catalogue.Settings.DisclosureAccepted);
+            ShowSession();
         }
         catch (TimeoutException)
         {
-            ShowLocal(nameof(TunnelPhase.Disconnected), Ru.ServiceMissing, false);
+            _session = UiSessionReducer.BrokerUnreachable(_session);
+            ShowSession();
         }
         catch (IOException)
         {
-            ShowLocal(nameof(TunnelPhase.Disconnected), Ru.ServiceMissing, false);
+            _session = UiSessionReducer.BrokerUnreachable(_session);
+            ShowSession();
         }
     }
 
-    private void ShowLocal(string phase, string detail, bool protectionArmed)
+    private void ShowSession()
     {
-        _protectionArmed = protectionArmed;
-        PhaseText.Tag = phase;
-        PhaseText.Text = SessionText.Phase(phase);
-        DetailText.Text = detail;
-        ConnectButton.Content = SessionText.OffersDisconnect(phase, protectionArmed) ? Ru.Disconnect : Ru.Connect;
+        PhaseText.Tag = _session.PhaseCode;
+        PhaseText.Text = _session.PhaseLabel;
+        DetailText.Text = _session.Detail;
+        ConnectButton.Content = _session.PrimaryAction;
     }
 
     private void ShowPage(UIElement page)
@@ -139,6 +312,7 @@ public partial class MainWindow : Window
         {
             _tray.Visible = false;
             _tray.Dispose();
+            (_catalogue as IDisposable)?.Dispose();
             return;
         }
 
@@ -153,9 +327,64 @@ public partial class MainWindow : Window
         Activate();
     }
 
-    private void ExitApplication()
+    private async void ExitApplication()
     {
+        if (_session.SafetyDisconnectAvailable || _session.LastKnownProtectionArmed)
+        {
+            await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
+        }
+
+        var decision = UiSessionReducer.PlanExit(_session);
+        if (!decision.CanClose)
+        {
+            DetailText.Text = decision.Reason ?? "Выход не подтверждён.";
+            Show();
+            return;
+        }
+
         _exit = true;
         System.Windows.Application.Current.Shutdown();
+    }
+
+    private static string ConfigDirectory()
+    {
+        return Path.Combine(AppContext.BaseDirectory, "config");
+    }
+
+    private static string? ExpectedCoreHash()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "config", "core-manifest.json");
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            var name = OperatingSystem.IsWindows() ? "mihomo-windows-amd64.exe" : "mihomo-linux-amd64";
+            if (!document.RootElement.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            foreach (var asset in assets.EnumerateArray())
+            {
+                if (asset.TryGetProperty("name", out var assetName) &&
+                    assetName.ValueKind == JsonValueKind.String &&
+                    string.Equals(assetName.GetString(), name, StringComparison.Ordinal) &&
+                    asset.TryGetProperty("sha256", out var sha) &&
+                    sha.ValueKind == JsonValueKind.String)
+                {
+                    return sha.GetString();
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return null;
     }
 }

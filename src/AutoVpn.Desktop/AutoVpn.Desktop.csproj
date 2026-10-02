@@ -10,6 +10,12 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="..\..\config\source-manifest.json" Link="config\source-manifest.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\config\mirrors.json" Link="config\mirrors.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\config\probe-targets.json" Link="config\probe-targets.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\config\core-manifest.json" Link="config\core-manifest.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\AutoVpn.Domain\AutoVpn.Domain.csproj" />
     <ProjectReference Include="..\AutoVpn.Application\AutoVpn.Application.csproj" />
     <ProjectReference Include="..\AutoVpn.Contracts\AutoVpn.Contracts.csproj" />

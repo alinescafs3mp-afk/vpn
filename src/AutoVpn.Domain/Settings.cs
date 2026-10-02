@@ -36,9 +36,9 @@ public sealed record ProductSettings
             return "Настройки созданы более новой версией AutoVPN. Откат не выполняется.";
         }
 
-        if (RefreshIntervalMinutes < ProductLimits.MinimumRefreshIntervalMinutes)
+        if (RefreshIntervalMinutes < ProductLimits.MinimumRefreshIntervalMinutes || RefreshIntervalMinutes > 7 * 24 * 60)
         {
-            return "Интервал обновления не может быть короче 15 минут.";
+            return "Интервал обновления должен быть от 15 минут до 7 суток.";
         }
 
         if (RefreshJitterMinutes < 0 || RefreshJitterMinutes > RefreshIntervalMinutes)

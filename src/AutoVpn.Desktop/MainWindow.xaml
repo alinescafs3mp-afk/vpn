@@ -28,7 +28,7 @@
           <TextBlock x:Name="PhaseText" Text="Не подключён" FontSize="32" FontWeight="SemiBold"/>
           <TextBlock x:Name="DetailText" TextWrapping="Wrap" Margin="0,12,0,20" Foreground="{StaticResource MutedBrush}"
                      Text="Служба ещё не вызывалась. Доступность серверов не измерялась."/>
-          <CheckBox x:Name="DisclosureBox" Margin="0,0,0,16">
+          <CheckBox x:Name="DisclosureBox" Margin="0,0,0,16" Checked="DisclosureChanged" Unchecked="DisclosureChanged">
             <TextBlock TextWrapping="Wrap" MaxWidth="520"
                        Text="AutoVPN подключается к публичным серверам из стороннего списка. Их операторы не проверяются. Поставщик подписки видит запросы на скачивание, а проверки серверов обращаются к публичным адресам. Приложение не обещает анонимность. Обычный HTTPS по-прежнему нужен."/>
           </CheckBox>
@@ -48,16 +48,22 @@
         </StackPanel>
         <StackPanel x:Name="SubscriptionsPage" Visibility="Collapsed">
           <TextBlock Text="Подписки" FontSize="28" FontWeight="SemiBold"/>
-          <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
+          <StackPanel Orientation="Horizontal" Margin="0,16,0,12">
+            <Button Content="Обновить подписки" Margin="0,0,8,0" Click="RefreshClick"/>
+            <Button Content="Отменить" Click="CancelRefreshClick"/>
+          </StackPanel>
+          <TextBlock x:Name="SubscriptionStatus" Margin="0,0,0,12" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
+                     Text="Обновление ещё не запускалось."/>
+          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
                      Text="Источник: igareck/vpn-configs-for-russia. Данные подписки не исполняются как конфиг. Интервал в файле — совет, локальный минимум 15 минут. Tor-мосты — отдельный тип и в этой версии не используются."/>
         </StackPanel>
         <StackPanel x:Name="SettingsPage" Visibility="Collapsed">
           <TextBlock Text="Настройки" FontSize="28" FontWeight="SemiBold"/>
           <TextBlock Margin="0,12,0,8" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
                      Text="Обновление по умолчанию: 120 минут ±10. Защита при обрыве рекомендуется. Выключение защиты не включает непроверенный туннель."/>
-          <CheckBox x:Name="ProtectionBox" IsChecked="True" Content="Защита при обрыве" Margin="0,8,0,8"/>
-          <CheckBox x:Name="LanBox" IsChecked="True" Content="Разрешить доступ к локальной сети" Margin="0,0,0,8"/>
-          <CheckBox x:Name="InsecureBox" Content="Разрешить серверы без проверки сертификата" Margin="0,0,0,8"/>
+          <CheckBox x:Name="ProtectionBox" Content="Защита при обрыве" Margin="0,8,0,8" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+          <CheckBox x:Name="LanBox" Content="Разрешить доступ к локальной сети" Margin="0,0,0,8" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+          <CheckBox x:Name="InsecureBox" Content="Разрешить серверы без проверки сертификата" Margin="0,0,0,8" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
           <TextBlock Margin="0,12,0,0" Foreground="{StaticResource MutedBrush}" Text="Закрытие окна прячет его в область уведомлений. Выход — из меню значка."/>
         </StackPanel>
       </Grid>
