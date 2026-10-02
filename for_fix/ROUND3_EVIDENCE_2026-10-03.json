@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-10-03",
+  "repository": "alinescafs3mp-afk/vpn",
+  "audited_commit": "e7797c7d24e4f20befb7e43bfb8e72d5efd436f1",
+  "audited_tree": "cc40dc15c2db4f389b7a3da758d8fd6e1f5dbd31",
+  "audit_branch": "audit/round3-e7797c7-independent",
+  "test_commit": "eabbf3f5407971cc70a497a8f1856400e5f96819",
+  "evidence_export_commit": "a4b2b78e2fde0399798e907daef76e9a2b5c09de",
+  "scope": {
+    "tracked_files": 118,
+    "tracked_bytes": 1115967,
+    "tracked_lines": 22943,
+    "csharp_files": 61,
+    "csharp_lines": 17592,
+    "all_git_blobs_verified": true,
+    "root_git_tree_reconstructed_and_verified": true,
+    "production_files_modified_by_auditor": 0,
+    "history_commit_inventory": 17
+  },
+  "environment": {
+    "linux": "Ubuntu 24.04.5 x64 GitHub-hosted runner",
+    "windows": "Windows Server 2025 Datacenter 10.0.26100 GitHub-hosted runner; NOT a Windows 11 acceptance VM",
+    "dotnet_sdk": "10.0.112",
+    "dotnet_runtime": "10.0.12"
+  },
+  "windows_omission": "A16 Linux /bin/sh fixture explicitly excluded, not counted as a Windows skip or pass.",
+  "native_core": {
+    "version": "v1.19.32",
+    "source_commit": "88dcbf7f1614a67c3b36b848ee3592dfa92ada36",
+    "archive_sha256": "8451100836c9eda194331c2babfad490b2faf30cebc1a04b0e76fd8ac2d35d10",
+    "binary_sha256": "3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8",
+    "download_hash_checks_passed": true,
+    "tun_enabled": false,
+    "public_subscription_nodes_probed": false
+  },
+  "wpf": {
+    "actual_app_and_mainwindow_started": true,
+    "pages_navigated": 4,
+    "render_size": [
+      880,
+      640
+    ],
+    "render_images_produced": 4,
+    "images_inspected_by_auditor": true,
+    "consent_granted": false,
+    "ui_commands_scope": "Four navigation button handlers; no connection/refresh/settings mutation, no keyboard/theme/DPI/tray acceptance claims.",
+    "run_id": 37075649029,
+    "commit": "1d2a306c57b45212a18271d65ddb208097eb8b0b"
+  },
+  "nuget_audit": {
+    "command": "dotnet list AutoVpn.slnx package --vulnerable --include-transitive --format json",
+    "projects_reported": 9,
+    "vulnerability_entries_returned": 0,
+    "source": "https://api.nuget.org/v3/index.json",
+    "coverage_limit": "NuGet advisories only; not a native-core/Wintun/Go/installer SBOM or comprehensive vulnerability proof."
+  },
+  "current_tree_secret_screen": {
+    "files_scanned": 118,
+    "kind": "narrow static token/private-key signature screen",
+    "matches": [],
+    "limitation": "Not a general secret detector or an exhaustive historical secret audit. No secret values were logged."
+  },
+  "artifacts": [
+    {
+      "name": "round3-linux-eabb.zip",
+      "artifact_id": 11256522324,
+      "run_id": 37076157596,
+      "job_id": 111066426407,
+      "bytes": 37729,
+      "sha256": "0a4b05a58bd079d40263916df713fbbbed68fdf63e5bfd91a4cbda56dbda2b3e",
+      "downloaded_and_hash_verified": true,
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37076157596/artifacts/11256522324"
+    },
+    {
+      "name": "round3-windows-eabb.zip",
+      "artifact_id": 11257425116,
+      "run_id": 37076157596,
+      "job_id": 111066426632,
+      "bytes": 41024,
+      "sha256": "e54463c50ff34155c69b707e8fecf3535347ab81e93dfaef11a6ebbbe0e20caf",
+      "downloaded_and_hash_verified": true,
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37076157596/artifacts/11257425116"
+    },
+    {
+      "name": "round3-native-eabb.zip",
+      "artifact_id": 11256761980,
+      "run_id": 37076157596,
+      "job_id": 111066426258,
+      "bytes": 21227,
+      "sha256": "faff192de571a93f39d88f8a6b4f9fb5f23d77807b9984412ddda141f5ab041e",
+      "downloaded_and_hash_verified": true,
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37076157596/artifacts/11256761980"
+    },
+    {
+      "name": "round3-wpf-smoke.zip",
+      "artifact_id": 11256421609,
+      "run_id": 37075649029,
+      "job_id": 111064839369,
+      "bytes": 94596,
+      "sha256": "a2cdc5a6ccaef337b6955cd7edcd1d767f29a6bde60f8705b720390c9b67ae04",
+      "downloaded_and_hash_verified": true,
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37075649029/artifacts/11256421609"
+    },
+    {
+      "name": "round3-source-export.zip",
+      "artifact_id": 11256737460,
+      "run_id": 37076378485,
+      "job_id": null,
+      "bytes": 351925,
+      "sha256": "1bafc544ebe41d21de3883fac631996e7147abd6767e0a7a8625f48b16c9bdec",
+      "downloaded_and_hash_verified": true,
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37076378485/artifacts/11256737460"
+    }
+  ],
+  "auditor_fixture_correction": {
+    "failed_compile_runs": [
+      37075374477,
+      37075648890
+    ],
+    "reason": "CA2022 in newly added TLS test fixture before handling the actual SslStream.ReadAsync byte count. Auditor error, excluded from product findings.",
+    "corrected_commit": "eabbf3f5407971cc70a497a8f1856400e5f96819",
+    "additional_refinement": "Exclusion-during-start test explicitly uses automatic selection, not an intentionally permitted manual override."
+  },
+  "not_executed": [
+    "Installed Windows TUN/WFP/SCM positive journey",
+    "Packet-observed production DNS/IPv6/crash protection",
+    "Actual two-Windows-account service authorization",
+    "Windows 11 installer/upgrade/uninstall/reboot/sleep matrix",
+    "Full sustained 10000-node performance and long-run resource benchmarks",
+    "All-protocol live handshake matrix",
+    "Exhaustive Git-history secret scan",
+    "Native dependency vulnerability/SBOM/signature compliance closure"
+  ],
+  "verdict": "NOT_ACCEPTED",
+  "suites": {
+    "linux_independent": {
+      "total": 30,
+      "executed": 30,
+      "passed": 6,
+      "failed": 24,
+      "skipped": 0
+    },
+    "windows_independent": {
+      "total": 29,
+      "executed": 29,
+      "passed": 5,
+      "failed": 24,
+      "skipped": 0
+    },
+    "linux_existing_without_core": {
+      "total": 94,
+      "executed": 91,
+      "passed": 91,
+      "failed": 0,
+      "skipped": 3
+    },
+    "windows_existing_without_core": {
+      "total": 94,
+      "executed": 91,
+      "passed": 76,
+      "failed": 15,
+      "skipped": 3
+    },
+    "linux_existing_with_pinned_core": {
+      "total": 94,
+      "executed": 94,
+      "passed": 94,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "failing_independent_expectations": [
+    "A03_LongLivedMutationTrafficMustRemainUsable",
+    "A04_MismatchedCandidateAndTargetProofCannotPublishHealthy",
+    "A05_OneUnsupportedCandidateMustNotStarveOtherCandidates",
+    "A06_FailedOnDemandCheckMustInvalidateOldHealthyEvidence",
+    "A07_SpeedFromPreviousNetworkEpochMustBeRejected",
+    "A08_ByteCounterMustSaturateRatherThanOverflow",
+    "A09_LatePreviousDayChargeMustNotRefundTodaysBudget",
+    "A10_BenchmarkSpecialUseAddressMustNotBePublic",
+    "A11_QuotedSecretValuesMustBeRedacted",
+    "A12_NineTinySubscriptionsMustEventuallyAllBeFetched",
+    "A13_GitTreeIdentityMustNotBeUsedAsRawCommitRef",
+    "A14_PortOwnershipCheckMustWorkOnTheSupportedWindowsTarget",
+    "A15_CancellationBeforePublicationMustNotPublishHealthy",
+    "A16_OutputDrainMustContinueAfterItsRetentionCap",
+    "A17_SymlinkBlobMustNotBecomeSubscriptionData",
+    "A18_MalformedLabelMustNotEscapeContainment",
+    "B01_TightenedCertificatePolicyMustInvalidateUnconfirmedSession",
+    "B02_AutomaticallySelectedNodeExcludedDuringStartMustNotBeCommitted",
+    "B03_NetworkEpochChangeDuringStartMustRejectCommit",
+    "B04_CoreExitMustClearConnectedBeforeReplacementReadiness",
+    "B05_PolicyChangedDuringFailoverMustNotLeaveConnected",
+    "B06_AlreadyCancelledConnectMustNotArmProtection",
+    "B07_ExplicitUnprotectedModeMustNotRequireAnArmedGuard",
+    "T01_Authenticated200HeadersAloneMustNotProveExpected204",
+    "T02_NonHttpStatusLineMustNotBecomeAuthenticatedSuccess"
+  ]
+}
