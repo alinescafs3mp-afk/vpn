@@ -10,6 +10,12 @@ public static class ProductLimits
     public const int SettingsSchemaVersion = 1;
     public const int IpcProtocolVersion = 1;
     public const int MaxIpcFrameBytes = 256 * 1024;
+    public const int IpcPipeInstances = 4;
+    public const int IpcPipeCreateAttempts = 3;
+    public const int IpcFrameTimeoutMs = 2000;
+    public const int IpcWriteTimeoutMs = 2000;
+    public const int IpcRoundTripTimeoutMs = 15000;
+    public const int IpcIdempotencyEntries = 256;
     public const int MaxRedirects = 3;
     public const int MaxBase64Depth = 2;
     public const int MaxYamlDepth = 32;

@@ -65,6 +65,8 @@ public sealed class BrokerSnapshot
     public DateTimeOffset? LastCheckUtc { get; init; }
     public int StandbyCount { get; init; }
     public string? OwnerSid { get; init; }
+    public string? OperationId { get; init; }
+    public string? BootId { get; init; }
 }
 
 public sealed class NodeWire

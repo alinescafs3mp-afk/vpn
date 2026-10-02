@@ -13,34 +13,52 @@ public sealed class LocalIpcServer : IAsyncDisposable
     private readonly string _pipeName;
     private readonly IpcDispatcher _dispatcher;
     private readonly BrokerEngine _engine;
-    private readonly CallerIdentity _caller;
+    private readonly Func<string, NamedPipeServerStream> _open;
+    private readonly List<NamedPipeServerStream> _streams = [];
+    private readonly List<Task> _sessions = [];
     private readonly Task _loop;
-    private NamedPipeServerStream? _current;
+    private readonly TaskCompletionSource _completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private LocalIpcServer(string pipeName, IpcDispatcher dispatcher, BrokerEngine engine, CallerIdentity caller)
+    private LocalIpcServer(string pipeName, IpcDispatcher dispatcher, BrokerEngine engine, Func<string, NamedPipeServerStream> open)
     {
         _pipeName = pipeName;
         _dispatcher = dispatcher;
         _engine = engine;
-        _caller = caller;
+        _open = open;
         _loop = Task.Run(AcceptLoop);
     }
 
-    public static LocalIpcServer Start(string pipeName, IpcDispatcher dispatcher, BrokerEngine engine, CallerIdentity localCaller)
+    public string? PipeFault { get; private set; }
+
+    public Task Completion => _completed.Task;
+
+    public static LocalIpcServer Start(
+        string pipeName,
+        IpcDispatcher dispatcher,
+        BrokerEngine engine,
+        CallerIdentity localCaller,
+        Func<string, NamedPipeServerStream>? openPipe = null)
     {
-        return new LocalIpcServer(pipeName, dispatcher, engine, localCaller);
+        _ = localCaller;
+        return new LocalIpcServer(pipeName, dispatcher, engine, openPipe ?? OpenDefault);
     }
 
     public async ValueTask DisposeAsync()
     {
         await _stop.CancelAsync().ConfigureAwait(false);
-        NamedPipeServerStream? current;
+        NamedPipeServerStream[] streams;
+        Task[] sessions;
         lock (_gate)
         {
-            current = _current;
+            streams = _streams.ToArray();
+            sessions = _sessions.ToArray();
         }
 
-        current?.Dispose();
+        foreach (var stream in streams)
+        {
+            stream.Dispose();
+        }
+
         try
         {
             await _loop.ConfigureAwait(false);
@@ -49,113 +67,159 @@ public sealed class LocalIpcServer : IAsyncDisposable
         {
         }
 
+        try
+        {
+            await Task.WhenAll(sessions).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+        {
+        }
+
+        _completed.TrySetResult();
         _stop.Dispose();
     }
 
     public static async Task<IpcResponse?> RoundTripAsync(string pipeName, IpcRequest request, CancellationToken cancellationToken)
     {
-        using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-        await client.ConnectAsync(3000, cancellationToken).ConfigureAwait(false);
-        var frame = IpcFrames.Encode(request);
-        await client.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
-        var header = new byte[4];
-        if (!await ReadExactAsync(client, header, cancellationToken).ConfigureAwait(false))
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(ProductLimits.IpcRoundTripTimeoutMs);
+        try
         {
-            return null;
-        }
+            using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await client.ConnectAsync(3000, budget.Token).ConfigureAwait(false);
+            var frame = IpcFrames.Encode(request);
+            await client.WriteAsync(frame, budget.Token).ConfigureAwait(false);
+            var header = new byte[4];
+            if (!await ReadExactAsync(client, header, budget.Token).ConfigureAwait(false))
+            {
+                return null;
+            }
 
-        var length = BinaryPrimitives.ReadInt32LittleEndian(header);
-        if (length <= 0 || length > ProductLimits.MaxIpcFrameBytes)
+            var length = BinaryPrimitives.ReadInt32LittleEndian(header);
+            if (length <= 0 || length > ProductLimits.MaxIpcFrameBytes)
+            {
+                return null;
+            }
+
+            var body = new byte[length];
+            if (!await ReadExactAsync(client, body, budget.Token).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            var full = new byte[4 + length];
+            header.CopyTo(full, 0);
+            body.CopyTo(full, 4);
+            return IpcFrames.TryDecode<IpcResponse>(full, out var response, out _) ? response : null;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return null;
+            throw new TimeoutException("Ответ службы не пришёл в отведённое время.");
         }
-
-        var body = new byte[length];
-        if (!await ReadExactAsync(client, body, cancellationToken).ConfigureAwait(false))
-        {
-            return null;
-        }
-
-        var full = new byte[4 + length];
-        header.CopyTo(full, 0);
-        body.CopyTo(full, 4);
-        return IpcFrames.TryDecode<IpcResponse>(full, out var response, out _) ? response : null;
     }
 
     private async Task AcceptLoop()
     {
-        while (!_stop.IsCancellationRequested)
+        var faults = 0;
+        try
         {
-            NamedPipeServerStream server;
-            try
+            while (!_stop.IsCancellationRequested)
             {
-                server = new NamedPipeServerStream(
-                    _pipeName,
-                    PipeDirection.InOut,
-                    1,
-                    PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-            }
-            catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or UnauthorizedAccessException)
-            {
-                if (_stop.IsCancellationRequested)
+                NamedPipeServerStream server;
+                try
                 {
-                    return;
+                    server = _open(_pipeName);
+                    faults = 0;
+                }
+                catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or UnauthorizedAccessException)
+                {
+                    if (_stop.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    faults++;
+                    if (faults >= ProductLimits.IpcPipeCreateAttempts)
+                    {
+                        PipeFault = ex.GetType().Name;
+                        return;
+                    }
+
+                    try
+                    {
+                        await Task.Delay(50, _stop.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+
+                lock (_gate)
+                {
+                    _streams.Add(server);
                 }
 
                 try
                 {
-                    await Task.Delay(50, _stop.Token).ConfigureAwait(false);
+                    await server.WaitForConnectionAsync(_stop.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
+                    Forget(server);
+                    server.Dispose();
                     return;
                 }
-
-                continue;
-            }
-
-            lock (_gate)
-            {
-                _current = server;
-            }
-
-            try
-            {
-                await server.WaitForConnectionAsync(_stop.Token).ConfigureAwait(false);
-                await ServeOneAsync(server, _stop.Token).ConfigureAwait(false);
-                await DrainUntilCloseAsync(server, _stop.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
-            {
-                if (_stop.IsCancellationRequested)
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException)
                 {
-                    return;
+                    Forget(server);
+                    server.Dispose();
+                    if (_stop.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    continue;
                 }
-            }
-            finally
-            {
+
+                var session = ServeAndCloseAsync(server);
                 lock (_gate)
                 {
-                    if (ReferenceEquals(_current, server))
-                    {
-                        _current = null;
-                    }
+                    _sessions.Add(session);
                 }
-
-                server.Dispose();
             }
+        }
+        finally
+        {
+            _completed.TrySetResult();
         }
     }
 
-    private async Task ServeOneAsync(NamedPipeServerStream server, CancellationToken cancellationToken)
+    private async Task ServeAndCloseAsync(NamedPipeServerStream server)
     {
+        await Task.Yield();
+        try
+        {
+            await ServeOneAsync(server).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException or TimeoutException)
+        {
+        }
+        finally
+        {
+            Forget(server);
+            server.Dispose();
+        }
+    }
+
+    private async Task ServeOneAsync(NamedPipeServerStream server)
+    {
+        using var readBudget = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        readBudget.CancelAfter(ProductLimits.IpcFrameTimeoutMs);
         var header = new byte[4];
-        if (!await ReadExactAsync(server, header, cancellationToken).ConfigureAwait(false))
+        if (!await ReadExactAsync(server, header, readBudget.Token).ConfigureAwait(false))
         {
             return;
         }
@@ -167,7 +231,7 @@ public sealed class LocalIpcServer : IAsyncDisposable
         }
 
         var body = new byte[length];
-        if (!await ReadExactAsync(server, body, cancellationToken).ConfigureAwait(false))
+        if (!await ReadExactAsync(server, body, readBudget.Token).ConfigureAwait(false))
         {
             return;
         }
@@ -183,24 +247,24 @@ public sealed class LocalIpcServer : IAsyncDisposable
         else
         {
             var peer = PipePeer.Inspect(server);
-            if (!peer.Accepted)
+            if (!peer.Accepted || !peer.Verified)
             {
                 response = new IpcResponse
                 {
                     RequestId = request.RequestId,
                     Ok = false,
                     ErrorCode = "PEER",
-                    Message = "Владелец канала не совпадает с пользователем службы.",
+                    Message = OperatingSystem.IsWindows()
+                        ? "Личность клиента Windows не проверена. Канал отклонён."
+                        : "Владелец канала не совпадает с пользователем службы.",
                 };
             }
             else
             {
-                var caller = peer.Verified
-                    ? new CallerIdentity { Sid = peer.Identity, SessionId = 0, IsRemotePipe = false }
-                    : _caller;
+                var caller = new CallerIdentity { Sid = peer.Identity, SessionId = 0, IsRemotePipe = false };
                 try
                 {
-                    response = _dispatcher.Dispatch(request, caller, incoming => _engine.HandleAsync(incoming, cancellationToken).GetAwaiter().GetResult());
+                    response = _dispatcher.Dispatch(request, caller, incoming => _engine.HandleAsync(incoming, _stop.Token).GetAwaiter().GetResult());
                 }
                 catch (Exception)
                 {
@@ -215,22 +279,29 @@ public sealed class LocalIpcServer : IAsyncDisposable
             }
         }
 
+        using var writeBudget = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        writeBudget.CancelAfter(ProductLimits.IpcWriteTimeoutMs);
         var encoded = IpcFrames.Encode(response);
-        await server.WriteAsync(encoded, cancellationToken).ConfigureAwait(false);
-        await server.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await server.WriteAsync(encoded, writeBudget.Token).ConfigureAwait(false);
+        await server.FlushAsync(writeBudget.Token).ConfigureAwait(false);
     }
 
-    private static async Task DrainUntilCloseAsync(Stream stream, CancellationToken cancellationToken)
+    private void Forget(NamedPipeServerStream server)
     {
-        var scratch = new byte[1];
-        while (true)
+        lock (_gate)
         {
-            var count = await stream.ReadAsync(scratch, cancellationToken).ConfigureAwait(false);
-            if (count == 0)
-            {
-                return;
-            }
+            _streams.Remove(server);
         }
+    }
+
+    private static NamedPipeServerStream OpenDefault(string pipeName)
+    {
+        return new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            ProductLimits.IpcPipeInstances,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
     }
 
     private static async Task<bool> ReadExactAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)

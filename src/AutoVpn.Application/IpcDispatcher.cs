@@ -1,4 +1,3 @@
-using System.Text.Json;
 using AutoVpn.Contracts;
 using AutoVpn.Domain;
 
@@ -6,16 +5,11 @@ namespace AutoVpn.Application;
 
 public sealed class IpcDispatcher
 {
-    private readonly int _capacity;
-    private readonly Queue<string> _seen = new();
-    private readonly HashSet<string> _seenSet = new(StringComparer.Ordinal);
+    private readonly object _gate = new();
+    private readonly Dictionary<string, IpcResponse> _results = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCompletionSource<IpcResponse>> _inflight = new(StringComparer.Ordinal);
     private string? _ownerSid;
     private int? _ownerSession;
-
-    public IpcDispatcher(int replayCapacity = 64)
-    {
-        _capacity = replayCapacity;
-    }
 
     public IpcResponse Dispatch(IpcRequest request, CallerIdentity caller, Func<IpcRequest, IpcResponse> handler)
     {
@@ -44,38 +38,76 @@ public sealed class IpcDispatcher
             return Fail(request, "FORBIDDEN_FIELD", "Запрос содержит запрещённое поле.");
         }
 
-        if (_seenSet.Contains(request.RequestId))
+        TaskCompletionSource<IpcResponse>? wait = null;
+        TaskCompletionSource<IpcResponse>? created = null;
+        lock (_gate)
         {
-            return Fail(request, "REPLAY", "Повтор запроса отклонён.");
+            if (_ownerSid is null)
+            {
+                _ownerSid = caller.Sid;
+                _ownerSession = caller.SessionId;
+            }
+            else if (!string.Equals(_ownerSid, caller.Sid, StringComparison.Ordinal) || _ownerSession != caller.SessionId)
+            {
+                return Fail(request, "OWNER", "Сессия не владеет службой.");
+            }
+
+            if (_results.TryGetValue(request.RequestId, out var prior))
+            {
+                return prior;
+            }
+
+            if (_inflight.TryGetValue(request.RequestId, out wait))
+            {
+            }
+            else if (_results.Count >= ProductLimits.IpcIdempotencyEntries)
+            {
+                return Fail(request, "REPLAY_WINDOW", "Журнал идемпотентности заполнен. Повтор не выполняется заново.");
+            }
+            else
+            {
+                created = new TaskCompletionSource<IpcResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _inflight[request.RequestId] = created;
+            }
         }
 
-        if (_ownerSid is null)
+        if (wait is not null)
         {
-            _ownerSid = caller.Sid;
-            _ownerSession = caller.SessionId;
-        }
-        else if (!string.Equals(_ownerSid, caller.Sid, StringComparison.Ordinal) || _ownerSession != caller.SessionId)
-        {
-            return Fail(request, "OWNER", "Сессия не владеет службой.");
+            return wait.Task.GetAwaiter().GetResult();
         }
 
-        Remember(request.RequestId);
-        return handler(request);
+        try
+        {
+            var response = handler(request);
+            lock (_gate)
+            {
+                _results[request.RequestId] = response;
+                _inflight.Remove(request.RequestId);
+            }
+
+            created!.TrySetResult(response);
+            return response;
+        }
+        catch (Exception ex)
+        {
+            lock (_gate)
+            {
+                _inflight.Remove(request.RequestId);
+            }
+
+            created!.TrySetException(ex);
+            throw;
+        }
     }
 
     public void ResetOwner()
     {
-        _ownerSid = null;
-        _ownerSession = null;
-    }
-
-    private void Remember(string id)
-    {
-        _seen.Enqueue(id);
-        _seenSet.Add(id);
-        while (_seen.Count > _capacity)
+        lock (_gate)
         {
-            _seenSet.Remove(_seen.Dequeue());
+            _ownerSid = null;
+            _ownerSession = null;
+            _results.Clear();
+            _inflight.Clear();
         }
     }
 

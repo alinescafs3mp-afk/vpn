@@ -16,7 +16,7 @@ public static class PipePeer
     {
         if (!OperatingSystem.IsLinux())
         {
-            return new PeerCheck(true, false, "");
+            return new PeerCheck(false, false, "");
         }
 
         try

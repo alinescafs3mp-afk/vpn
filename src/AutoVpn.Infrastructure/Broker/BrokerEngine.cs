@@ -22,6 +22,11 @@ public sealed class BrokerEngine
     private readonly Queue<DateTimeOffset> _switchTimes = new();
     private DateTimeOffset? _cooldownUntil;
     private bool _switchBusy;
+    private string? _operationId;
+    private long _operationGeneration;
+    private long _operationEpoch;
+
+    public string BootId { get; } = Guid.NewGuid().ToString("N");
 
     public BrokerEngine(ICatalogue catalogue, INetworkGuard guard, ICoreController core, EffectJournal? journal = null)
     {
@@ -47,7 +52,6 @@ public sealed class BrokerEngine
         try
         {
             if (IpcOperations.ChangesState(request.Operation) &&
-                request.ExpectedStateRevision != 0 &&
                 request.ExpectedStateRevision != Snapshot().Revision)
             {
                 return Fail(request, ReasonCodes.StaleRevision, "Состояние службы уже изменилось.");
@@ -97,6 +101,8 @@ public sealed class BrokerEngine
             LatencyMs = active?.Assessment?.MedianLatencyMs,
             LastCheckUtc = active?.Assessment?.LastSuccessUtc,
             StandbyCount = _standbys.Count,
+            OperationId = _operationId,
+            BootId = BootId,
         };
     }
 
@@ -150,11 +156,16 @@ public sealed class BrokerEngine
 
         var alreadyRunning = false;
         string? refusal = null;
-        var didArm = false;
+        var staleRevision = false;
         long armedGeneration = 0;
+        var operationId = "";
         lock (_gate)
         {
-            if (_state.ProtectionArmed || _state.Phase is TunnelPhase.Connected or TunnelPhase.Connecting or TunnelPhase.PreparingProtection or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
+            if (request.ExpectedStateRevision != _state.Revision)
+            {
+                staleRevision = true;
+            }
+            else if (_state.ProtectionArmed || _state.Phase is TunnelPhase.Connected or TunnelPhase.Connecting or TunnelPhase.PreparingProtection or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
             {
                 alreadyRunning = true;
             }
@@ -172,11 +183,19 @@ public sealed class BrokerEngine
                 }
                 else
                 {
-                    didArm = true;
                     _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.ProtectionArmed, _state.Generation, selected.NodeId));
                     _sequence++;
+                    operationId = Guid.NewGuid().ToString("N");
+                    _operationId = operationId;
+                    _operationGeneration = armedGeneration;
+                    _operationEpoch = _catalogue.NetworkEpoch;
                 }
             }
+        }
+
+        if (staleRevision)
+        {
+            return Fail(request, ReasonCodes.StaleRevision, "Состояние службы уже изменилось.");
         }
 
         if (alreadyRunning)
@@ -190,7 +209,7 @@ public sealed class BrokerEngine
             return Fail(request, refusal, BlockMessage(refusal));
         }
 
-        var started = await _core.StartAsync(yaml, cancellationToken).ConfigureAwait(false);
+        var started = await _core.StartAsync(yaml, armedGeneration, operationId, cancellationToken).ConfigureAwait(false);
         var abandon = false;
         string? startRefusal = null;
         lock (_gate)
@@ -217,18 +236,13 @@ public sealed class BrokerEngine
 
         if (abandon || startRefusal is not null)
         {
-            await _core.StopAsync(cancellationToken).ConfigureAwait(false);
+            await _core.StopAsync(armedGeneration, operationId, cancellationToken).ConfigureAwait(false);
         }
 
         if (startRefusal is not null)
         {
-            if (didArm)
-            {
-                ReleaseProtection(armedGeneration);
-            }
-
             _catalogue.SetActiveNode(null);
-            return Fail(request, startRefusal, "Ядро не запущено. Подключение не объявлено.");
+            return Fail(request, startRefusal, "Ядро не запущено. Защита остаётся включённой до подтверждённого отключения.");
         }
 
         if (abandon)
@@ -244,11 +258,19 @@ public sealed class BrokerEngine
     /// <summary>
     /// In-process only. IPC cannot mark the tunnel connected.
     /// </summary>
-    public void ConfirmProduction(bool ok, string? reasonCode)
+    public void ConfirmProduction(string bootId, long generation, string? operationId, string? nodeId, long networkEpoch, bool ok, string? reasonCode)
     {
         lock (_gate)
         {
-            if (_state.Phase is not (TunnelPhase.Connecting or TunnelPhase.Reconnecting))
+            if (!string.Equals(bootId, BootId, StringComparison.Ordinal) ||
+                generation != _state.Generation ||
+                generation != _operationGeneration ||
+                string.IsNullOrEmpty(operationId) ||
+                !string.Equals(operationId, _operationId, StringComparison.Ordinal) ||
+                !string.Equals(nodeId, _state.ActiveNodeId, StringComparison.Ordinal) ||
+                networkEpoch != _operationEpoch ||
+                networkEpoch != _catalogue.NetworkEpoch ||
+                _state.Phase is not (TunnelPhase.Connecting or TunnelPhase.Reconnecting))
             {
                 return;
             }
@@ -263,15 +285,31 @@ public sealed class BrokerEngine
 
     private async Task<IpcResponse> DisconnectAsync(IpcRequest request, CancellationToken cancellationToken)
     {
-        long armedGeneration;
+        long armedGeneration = 0;
+        var operationId = "";
+        var staleRevision = false;
         lock (_gate)
         {
-            armedGeneration = _state.Generation;
-            _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Disconnect, armedGeneration));
-            _sequence++;
+            if (request.ExpectedStateRevision != _state.Revision)
+            {
+                staleRevision = true;
+            }
+            else
+            {
+                armedGeneration = _state.Generation;
+                operationId = _operationId ?? "";
+                _operationId = null;
+                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Disconnect, armedGeneration));
+                _sequence++;
+            }
         }
 
-        await _core.StopAsync(cancellationToken).ConfigureAwait(false);
+        if (staleRevision)
+        {
+            return Fail(request, ReasonCodes.StaleRevision, "Состояние службы уже изменилось.");
+        }
+
+        await _core.StopAsync(armedGeneration, operationId, cancellationToken).ConfigureAwait(false);
         lock (_gate)
         {
             _coreRunning = false;
@@ -318,62 +356,80 @@ public sealed class BrokerEngine
         var stayed = false;
         CatalogueNode? switchTarget = null;
         long switchGeneration = 0;
+        string? switchOperation = null;
+        var staleRevision = false;
         lock (_gate)
         {
-            PruneSwitches(now);
-            var decision = FailoverPolicy.Decide(new FailoverContext
+            if (request.ExpectedStateRevision != _state.Revision)
             {
-                Generation = _state.Generation,
-                CommandGeneration = _state.Generation,
-                Mode = _catalogue.Settings.SelectionMode,
-                CountryMode = _catalogue.Settings.CountryMode,
-                StrictCountry = _catalogue.Settings.Country,
-                ActiveNodeId = _state.ActiveNodeId,
-                Failure = failure,
-                ConsecutiveHealthFailures = payload.ConsecutiveFailures,
-                SwitchesInLastMinute = _switchTimes.Count,
-                CooldownActive = _cooldownUntil is DateTimeOffset until && until > now,
-                Standbys = _standbys,
-            });
-            if (decision.Action == FailoverAction.HoldProtected)
-            {
-                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.CoreExited, _state.Generation, _state.ActiveNodeId, decision.ReasonCode));
-                _sequence++;
-                _cooldownUntil ??= now.AddSeconds(ProductLimits.SwitchCooldownSeconds);
-            }
-            else if (decision.Action is FailoverAction.Stay or FailoverAction.IgnoreStale or FailoverAction.WaitCooldown or FailoverAction.DiagnoseTargets)
-            {
-                stayed = true;
-                if (decision.Action == FailoverAction.WaitCooldown && _cooldownUntil is null)
-                {
-                    _cooldownUntil = now.AddSeconds(ProductLimits.SwitchCooldownSeconds);
-                }
-            }
-            else if (decision.Action == FailoverAction.BlockOffline)
-            {
-                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.UplinkLost, _state.Generation, _state.ActiveNodeId));
-                _sequence++;
-            }
-            else if (decision.Action == FailoverAction.Switch && decision.NodeId is not null && _state.Phase == TunnelPhase.Connected && !_switchBusy)
-            {
-                var candidate = _catalogue.Nodes.FirstOrDefault(node => node.NodeId == decision.NodeId);
-                if (candidate is null || !IsCurrentlyEligible(candidate, now))
-                {
-                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, ReasonCodes.NoEligibleServer));
-                    _sequence++;
-                }
-                else
-                {
-                    _switchBusy = true;
-                    switchTarget = candidate;
-                    switchGeneration = _state.Generation;
-                }
+                staleRevision = true;
             }
             else
             {
-                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, decision.ReasonCode));
-                _sequence++;
+                PruneSwitches(now);
+                var decision = FailoverPolicy.Decide(new FailoverContext
+                {
+                    Generation = _state.Generation,
+                    CommandGeneration = _state.Generation,
+                    Mode = _catalogue.Settings.SelectionMode,
+                    CountryMode = _catalogue.Settings.CountryMode,
+                    StrictCountry = _catalogue.Settings.Country,
+                    ActiveNodeId = _state.ActiveNodeId,
+                    Failure = failure,
+                    ConsecutiveHealthFailures = payload.ConsecutiveFailures,
+                    SwitchesInLastMinute = _switchTimes.Count,
+                    CooldownActive = _cooldownUntil is DateTimeOffset until && until > now,
+                    Standbys = _standbys,
+                });
+                if (decision.Action == FailoverAction.HoldProtected)
+                {
+                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.CoreExited, _state.Generation, _state.ActiveNodeId, decision.ReasonCode));
+                    _sequence++;
+                    _cooldownUntil ??= now.AddSeconds(ProductLimits.SwitchCooldownSeconds);
+                }
+                else if (decision.Action is FailoverAction.Stay or FailoverAction.IgnoreStale or FailoverAction.WaitCooldown or FailoverAction.DiagnoseTargets)
+                {
+                    stayed = true;
+                    if (decision.Action == FailoverAction.WaitCooldown && _cooldownUntil is null)
+                    {
+                        _cooldownUntil = now.AddSeconds(ProductLimits.SwitchCooldownSeconds);
+                    }
+                }
+                else if (decision.Action == FailoverAction.BlockOffline)
+                {
+                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.UplinkLost, _state.Generation, _state.ActiveNodeId));
+                    _sequence++;
+                }
+                else if (decision.Action == FailoverAction.Switch && decision.NodeId is not null && _state.Phase == TunnelPhase.Connected && !_switchBusy)
+                {
+                    var candidate = _catalogue.Nodes.FirstOrDefault(node => node.NodeId == decision.NodeId);
+                    if (candidate is null || !IsCurrentlyEligible(candidate, now))
+                    {
+                        _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, ReasonCodes.NoEligibleServer));
+                        _sequence++;
+                    }
+                    else
+                    {
+                        _switchBusy = true;
+                        switchTarget = candidate;
+                        switchGeneration = _state.Generation;
+                        switchOperation = Guid.NewGuid().ToString("N");
+                        _operationId = switchOperation;
+                        _operationGeneration = switchGeneration;
+                        _operationEpoch = _catalogue.NetworkEpoch;
+                    }
+                }
+                else
+                {
+                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, decision.ReasonCode));
+                    _sequence++;
+                }
             }
+        }
+
+        if (staleRevision)
+        {
+            return Fail(request, ReasonCodes.StaleRevision, "Состояние службы уже изменилось.");
         }
 
         if (switchTarget is not null)
@@ -391,7 +447,7 @@ public sealed class BrokerEngine
                     Nodes = [NodeWireFactory.FromCatalogue(switchTarget)],
                     SelectedNodeId = switchTarget.NodeId,
                 });
-                var started = await _core.StartAsync(yaml, cancellationToken).ConfigureAwait(false);
+                var started = await _core.StartAsync(yaml, switchGeneration, switchOperation!, cancellationToken).ConfigureAwait(false);
                 var abandon = false;
                 lock (_gate)
                 {
@@ -420,7 +476,7 @@ public sealed class BrokerEngine
 
                 if (!switched)
                 {
-                    await _core.StopAsync(cancellationToken).ConfigureAwait(false);
+                    await _core.StopAsync(switchGeneration, switchOperation!, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (InvalidOperationException)
@@ -487,10 +543,24 @@ public sealed class BrokerEngine
             });
         }
 
+        var staleRevision = false;
         lock (_gate)
         {
-            _standbys = accepted;
-            _sequence++;
+            if (request.ExpectedStateRevision != _state.Revision)
+            {
+                staleRevision = true;
+            }
+            else
+            {
+                _standbys = accepted;
+                _state = _state with { Revision = _state.Revision + 1 };
+                _sequence++;
+            }
+        }
+
+        if (staleRevision)
+        {
+            return Fail(request, ReasonCodes.StaleRevision, "Состояние службы уже изменилось.");
         }
 
         var connected = Snapshot().Phase == nameof(TunnelPhase.Connected);
@@ -504,6 +574,30 @@ public sealed class BrokerEngine
 
     private IpcResponse Recover(IpcRequest request)
     {
+        var blocked = false;
+        var staleRevision = false;
+        lock (_gate)
+        {
+            if (request.ExpectedStateRevision != _state.Revision)
+            {
+                staleRevision = true;
+            }
+            else if (_state.ProtectionArmed || _state.Phase is TunnelPhase.PreparingProtection or TunnelPhase.Connecting or TunnelPhase.Connected or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
+            {
+                blocked = true;
+            }
+        }
+
+        if (staleRevision)
+        {
+            return Fail(request, ReasonCodes.StaleRevision, "Состояние службы уже изменилось.");
+        }
+
+        if (blocked)
+        {
+            return Fail(request, "RECOVERY_BLOCKED", "Восстановление не снимает защиту активной сессии.");
+        }
+
         var recovery = _journal?.Recover(_guard) ?? new JournalRecovery(true, null, null, 0, 0);
         if (!recovery.Completed)
         {

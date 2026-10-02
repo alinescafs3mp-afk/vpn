@@ -303,7 +303,7 @@ public class BehaviorTests
         Assert.False(connect.Snapshot.ProtectionArmed);
         Assert.False(connect.Snapshot.CoreRunning);
 
-        var disconnect = await engine.HandleAsync(Request(IpcOperations.Disconnect, new DisconnectPayload()), CancellationToken.None);
+        var disconnect = await engine.HandleAsync(Request(IpcOperations.Disconnect, new DisconnectPayload(), revision: connect.Snapshot.Revision), CancellationToken.None);
         Assert.True(disconnect.Ok);
         Assert.Equal(nameof(TunnelPhase.Disconnected), disconnect.Snapshot!.Phase);
         Assert.True(disconnect.Snapshot.Generation > connect.Snapshot.Generation);
@@ -323,7 +323,7 @@ public class BehaviorTests
         Assert.True(connect.Ok);
         Assert.Equal(nameof(TunnelPhase.Connecting), connect.Snapshot!.Phase);
         Assert.NotEqual(nameof(TunnelPhase.Connected), connect.Snapshot.Phase);
-        engine.ConfirmProduction(true, null);
+        Confirm(engine, connect, catalogue.NetworkEpoch);
         Assert.Equal(TunnelPhase.Connected, engine.State.Phase);
         RefreshMerge.Ingest(catalogue, [
             new IngestArtifact { ArtifactId = "list-b", FamilyId = "black-vless", Enabled = true, Text = NodeUri("203.0.113.20"), ContentHash = "b" },
@@ -353,7 +353,7 @@ public class BehaviorTests
                     FreshOnEpoch = true,
                 },
             },
-        }), CancellationToken.None);
+        }, revision: engine.Snapshot().Revision), CancellationToken.None);
         Assert.True(update.Ok);
         Assert.Equal(TunnelPhase.Connected, engine.State.Phase);
         var health = await engine.HandleAsync(Request(IpcOperations.ReportHealth, new HealthPayload
@@ -361,7 +361,7 @@ public class BehaviorTests
             FailureKind = nameof(FailureKind.CoreExit),
             ConsecutiveFailures = 3,
             NetworkEpoch = catalogue.NetworkEpoch,
-        }), CancellationToken.None);
+        }, revision: engine.Snapshot().Revision), CancellationToken.None);
         Assert.True(health.Ok);
         Assert.Equal(TunnelPhase.Connecting, engine.State.Phase);
         Assert.Equal(standbyNode.NodeId, engine.State.ActiveNodeId);
@@ -424,7 +424,8 @@ public class BehaviorTests
         var first = dispatcher.Dispatch(Request(IpcOperations.GetSnapshot, new { }, "same"), caller, request => new IpcResponse { RequestId = request.RequestId, Ok = true });
         Assert.True(first.Ok);
         var replay = dispatcher.Dispatch(Request(IpcOperations.GetSnapshot, new { }, "same"), caller, _ => throw new InvalidOperationException());
-        Assert.Equal("REPLAY", replay.ErrorCode);
+        Assert.True(replay.Ok);
+        Assert.Equal(first.RequestId, replay.RequestId);
         var forbidden = dispatcher.Dispatch(Request(IpcOperations.Connect, new { yaml = "tun: enable" }), caller, _ => throw new InvalidOperationException());
         Assert.Equal("FORBIDDEN_FIELD", forbidden.ErrorCode);
         var nested = dispatcher.Dispatch(Request(IpcOperations.Connect, new { nested = new { profilePath = "C:\\x" } }), caller, _ => throw new InvalidOperationException());
@@ -677,7 +678,7 @@ public class BehaviorTests
             LanAccess = false,
         }), CancellationToken.None);
         await core.Started.Task;
-        var disconnect = engine.HandleAsync(Request(IpcOperations.Disconnect, new DisconnectPayload()), CancellationToken.None);
+        var disconnect = engine.HandleAsync(Request(IpcOperations.Disconnect, new DisconnectPayload(), revision: engine.Snapshot().Revision), CancellationToken.None);
         await core.Stopped.Task;
         core.Release.TrySetResult();
         var connectResult = await connect;
@@ -702,13 +703,13 @@ public class BehaviorTests
         var other = catalogue.Nodes.Single(node => node.Semantics.Host == "203.0.113.21");
         catalogue.ApplyAssessment(other.NodeId, Healthy(other, 90) with { LastSuccessUtc = DateTimeOffset.UtcNow });
         var engine = new BrokerEngine(catalogue, new ArmingGuard(), new StartingCore());
-        await engine.HandleAsync(Request(IpcOperations.Connect, new ConnectPayload
+        var connected = await engine.HandleAsync(Request(IpcOperations.Connect, new ConnectPayload
         {
             NodeId = catalogue.Nodes[0].NodeId,
             Digest = catalogue.Nodes[0].Digest,
             NetworkEpoch = catalogue.NetworkEpoch,
         }), CancellationToken.None);
-        engine.ConfirmProduction(true, null);
+        Confirm(engine, connected, catalogue.NetworkEpoch);
         var active = catalogue.Nodes[0].NodeId;
         for (var i = 0; i < 3; i++)
         {
@@ -727,15 +728,15 @@ public class BehaviorTests
                         FreshOnEpoch = true,
                     },
                 },
-            }), CancellationToken.None);
-            await engine.HandleAsync(Request(IpcOperations.ReportHealth, new HealthPayload
+            }, revision: engine.Snapshot().Revision), CancellationToken.None);
+            var switched = await engine.HandleAsync(Request(IpcOperations.ReportHealth, new HealthPayload
             {
                 FailureKind = nameof(FailureKind.CoreExit),
                 ConsecutiveFailures = 3,
                 NetworkEpoch = catalogue.NetworkEpoch,
-            }), CancellationToken.None);
+            }, revision: engine.Snapshot().Revision), CancellationToken.None);
             Assert.Equal(TunnelPhase.Connecting, engine.State.Phase);
-            engine.ConfirmProduction(true, null);
+            Confirm(engine, switched, catalogue.NetworkEpoch);
             active = engine.State.ActiveNodeId!;
         }
 
@@ -745,7 +746,7 @@ public class BehaviorTests
             FailureKind = nameof(FailureKind.CoreExit),
             ConsecutiveFailures = 3,
             NetworkEpoch = catalogue.NetworkEpoch,
-        }), CancellationToken.None);
+        }, revision: engine.Snapshot().Revision), CancellationToken.None);
         Assert.True(held.Ok);
         Assert.Equal(TunnelPhase.Reconnecting, engine.State.Phase);
         Assert.True(engine.State.ProtectionArmed);
@@ -755,7 +756,7 @@ public class BehaviorTests
             FailureKind = nameof(FailureKind.TargetOutage),
             ConsecutiveFailures = 1,
             NetworkEpoch = catalogue.NetworkEpoch,
-        }), CancellationToken.None);
+        }, revision: engine.Snapshot().Revision), CancellationToken.None);
         Assert.Equal(TunnelPhase.Reconnecting, engine.State.Phase);
         Assert.Contains("не переключена", outage.Message, StringComparison.Ordinal);
     }
@@ -830,6 +831,11 @@ public class BehaviorTests
     private static EligibilityContext Context()
     {
         return new EligibilityContext { NowUtc = Now, NetworkEpoch = 1, AllowInsecureCertificates = false };
+    }
+
+    private static void Confirm(BrokerEngine engine, IpcResponse response, long epoch)
+    {
+        engine.ConfirmProduction(engine.BootId, response.Snapshot!.Generation, response.Snapshot.OperationId, response.Snapshot.ActiveNodeId, epoch, true, null);
     }
 
     private static IpcRequest Request(string operation, object payload, string? id = null, long revision = 0)
@@ -934,18 +940,32 @@ public class BehaviorTests
         public int Stops { get; private set; }
         public string Yaml { get; private set; } = "";
 
-        public async Task<CoreStartResult> StartAsync(string yaml, CancellationToken cancellationToken)
+        public long RunningGeneration { get; private set; }
+        public string RunningOperation { get; private set; } = "";
+        public int IgnoredStops { get; private set; }
+
+        public async Task<CoreStartResult> StartAsync(string yaml, long generation, string operationId, CancellationToken cancellationToken)
         {
             Yaml = yaml;
+            RunningGeneration = generation;
+            RunningOperation = operationId;
             Started.TrySetResult();
             await Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             return new CoreStartResult(true, null);
         }
 
-        public Task StopAsync(CancellationToken cancellationToken)
+        public Task StopAsync(long generation, string operationId, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (RunningGeneration != generation || !string.Equals(RunningOperation, operationId, StringComparison.Ordinal))
+            {
+                IgnoredStops++;
+                return Task.CompletedTask;
+            }
+
             Stops++;
+            RunningGeneration = 0;
+            RunningOperation = "";
             Stopped.TrySetResult();
             return Task.CompletedTask;
         }
@@ -953,15 +973,19 @@ public class BehaviorTests
 
     private sealed class StartingCore : ICoreController
     {
-        public Task<CoreStartResult> StartAsync(string yaml, CancellationToken cancellationToken)
+        public Task<CoreStartResult> StartAsync(string yaml, long generation, string operationId, CancellationToken cancellationToken)
         {
+            _ = generation;
+            _ = operationId;
             Assert.DoesNotContain("LABEL-SHOULD-NOT-LEAK", yaml, StringComparison.Ordinal);
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(new CoreStartResult(true, null));
         }
 
-        public Task StopAsync(CancellationToken cancellationToken)
+        public Task StopAsync(long generation, string operationId, CancellationToken cancellationToken)
         {
+            _ = generation;
+            _ = operationId;
             cancellationToken.ThrowIfCancellationRequested();
             return Task.CompletedTask;
         }

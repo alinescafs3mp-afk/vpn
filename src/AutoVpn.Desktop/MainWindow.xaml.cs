@@ -264,6 +264,7 @@ public partial class MainWindow : Window
             {
                 ProtocolVersion = ProductLimits.IpcProtocolVersion,
                 RequestId = Guid.NewGuid().ToString("N"),
+                ExpectedStateRevision = _session.StateRevision,
                 Operation = operation,
                 Payload = JsonSerializer.SerializeToElement(payload, IpcJson.Options),
             }, CancellationToken.None).ConfigureAwait(true);

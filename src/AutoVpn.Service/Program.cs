@@ -13,7 +13,7 @@ Console.WriteLine("Сетевые фильтры и TUN на этом запус
 
 // SQLite secrets use DPAPI current-user and are refused off Windows.
 // Linux accepts the pipe only after SO_PEERCRED matches the service uid.
-// The Windows SID of the connected client is still not read (NOT_RUN).
+// An unverified peer is rejected. Windows SID and pipe ACL are not implemented.
 ICatalogue catalogue = OperatingSystem.IsWindows()
     ? SqliteCatalogue.Open(Path.Combine(root, "catalogue.sqlite"), SecretProtectors.ForProductionHost())
     : new MemoryCatalogue();
@@ -21,8 +21,7 @@ using var catalogueLifetime = catalogue as IDisposable;
 using var journal = EffectJournal.Open(Path.Combine(root, "effects.sqlite"));
 var engine = new BrokerEngine(catalogue, new UnavailableNetworkGuard(), new RefusingCoreController(), journal);
 var dispatcher = new IpcDispatcher();
-var sid = OperatingSystem.IsWindows() ? "windows-user" : "uid:" + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-await using var server = LocalIpcServer.Start("autovpn-broker", dispatcher, engine, new CallerIdentity { Sid = sid, SessionId = 0, IsRemotePipe = false });
+await using var server = LocalIpcServer.Start("autovpn-broker", dispatcher, engine, new CallerIdentity { Sid = "unverified", SessionId = 0, IsRemotePipe = false });
 using var stop = new CancellationTokenSource();
 Console.CancelKeyPress += (_, eventArgs) =>
 {

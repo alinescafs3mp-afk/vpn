@@ -14,6 +14,7 @@ public sealed record UiSession
     public bool DisclosureAccepted { get; init; }
     public bool SafetyDisconnectAvailable { get; init; }
     public string PrimaryAction { get; init; } = Ru.Connect;
+    public long StateRevision { get; init; }
 }
 
 public readonly record struct ExitDecision(bool CanClose, string? Reason);
@@ -59,6 +60,7 @@ public static class UiSessionReducer
             DisclosureAccepted = disclosureAccepted,
             SafetyDisconnectAvailable = safety,
             PrimaryAction = safety ? Ru.Disconnect : Ru.Connect,
+            StateRevision = snapshot.Revision,
         };
     }
 
