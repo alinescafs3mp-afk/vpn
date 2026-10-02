@@ -62,6 +62,7 @@ public sealed record NodeSemantics
     public string? PacketEncoding { get; init; }
     public string? Up { get; init; }
     public string? Down { get; init; }
+    public string? HopPorts { get; init; }
 
     public SecurityPosture Classify(bool allowInsecureCertificates)
     {
@@ -85,12 +86,29 @@ public sealed record NodeSemantics
             return SecurityPosture.PolicyBlocked;
         }
 
+        if (!HasClosedSecurity())
+        {
+            return SecurityPosture.Unsupported;
+        }
+
         if (IsPlaintext())
         {
             return SecurityPosture.PolicyBlocked;
         }
 
         return HasRequiredCredentials() ? SecurityPosture.Accepted : SecurityPosture.Invalid;
+    }
+
+    public bool HasClosedSecurity()
+    {
+        var security = Security?.Trim().ToLowerInvariant();
+        return Protocol switch
+        {
+            ProtocolKind.Vless or ProtocolKind.Vmess or ProtocolKind.Trojan => security is null or "" or "none" or "tls" or "reality",
+            ProtocolKind.Shadowsocks => security is null or "" or "aead",
+            ProtocolKind.Hysteria2 or ProtocolKind.Tuic => security is null or "" or "tls",
+            _ => false,
+        };
     }
 
     public bool IsPlaintext()
@@ -158,34 +176,37 @@ public static class CanonicalIdentity
             Fingerprint = EmptyToNull(input.Fingerprint)?.ToLowerInvariant(),
             PublicKey = EmptyToNull(input.PublicKey),
             ShortId = EmptyToNull(input.ShortId)?.ToLowerInvariant(),
-            SpiderX = EmptyToNull(input.SpiderX),
+            SpiderX = KeepOpaque(input.SpiderX),
             Alpn = alpn is { Length: > 0 } ? alpn : null,
             Transport = NormalizeTransport(input.Transport),
-            Path = EmptyToNull(input.Path),
+            Path = KeepOpaque(input.Path),
             HostHeader = EmptyToNull(input.HostHeader),
-            ServiceName = EmptyToNull(input.ServiceName),
+            ServiceName = KeepOpaque(input.ServiceName),
             HeaderType = NormalizeHeader(input.HeaderType),
             Plugin = EmptyToNull(input.Plugin)?.ToLowerInvariant(),
-            PluginOpts = EmptyToNull(input.PluginOpts),
+            PluginOpts = KeepOpaque(input.PluginOpts),
             Congestion = EmptyToNull(input.Congestion)?.ToLowerInvariant(),
             UdpRelayMode = EmptyToNull(input.UdpRelayMode)?.ToLowerInvariant(),
             Obfs = EmptyToNull(input.Obfs)?.ToLowerInvariant(),
-            ObfsPassword = EmptyToNull(input.ObfsPassword),
+            ObfsPassword = KeepOpaque(input.ObfsPassword),
             PacketEncoding = EmptyToNull(input.PacketEncoding)?.ToLowerInvariant(),
-            Up = EmptyToNull(input.Up),
-            Down = EmptyToNull(input.Down),
+            Up = KeepOpaque(input.Up),
+            Down = KeepOpaque(input.Down),
+            HopPorts = KeepOpaque(input.HopPorts),
             AlterId = input.Protocol == ProtocolKind.Vmess ? input.AlterId ?? 0 : input.AlterId,
         };
     }
 
-    public static string CanonicalJson(NodeSemantics raw)
+    public static string CanonicalJson(NodeSemantics raw) => CanonicalJson(raw, ProductLimits.CanonicalizerVersion);
+
+    public static string CanonicalJson(NodeSemantics raw, int version)
     {
-        var node = Normalize(raw);
+        var node = version <= 1 ? NormalizeLegacy(raw) : Normalize(raw);
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
         {
             writer.WriteStartObject();
-            writer.WriteNumber("v", ProductLimits.CanonicalizerVersion);
+            writer.WriteNumber("v", version);
             writer.WriteString("protocol", node.Protocol.ToString().ToLowerInvariant());
             writer.WriteString("host", node.Host);
             writer.WriteNumber("port", node.Port);
@@ -236,15 +257,18 @@ public static class CanonicalIdentity
             Write(writer, "packetEncoding", node.PacketEncoding);
             Write(writer, "up", node.Up);
             Write(writer, "down", node.Down);
+            Write(writer, "hopPorts", node.HopPorts);
             writer.WriteEndObject();
         }
 
         return Encoding.UTF8.GetString(stream.ToArray());
     }
 
-    public static string Digest(NodeSemantics node)
+    public static string Digest(NodeSemantics node) => Digest(node, ProductLimits.CanonicalizerVersion);
+
+    public static string Digest(NodeSemantics node, int version)
     {
-        var bytes = SHA256Hash(Encoding.UTF8.GetBytes(CanonicalJson(node)));
+        var bytes = SHA256Hash(Encoding.UTF8.GetBytes(CanonicalJson(node, version)));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
@@ -295,12 +319,33 @@ public static class CanonicalIdentity
             return "tls";
         }
 
+        if (input.Protocol == ProtocolKind.Trojan && value is null)
+        {
+            return "tls";
+        }
+
         if (input.Protocol == ProtocolKind.Shadowsocks)
         {
             return "aead";
         }
 
         return value ?? "none";
+    }
+
+    private static NodeSemantics NormalizeLegacy(NodeSemantics input)
+    {
+        var current = Normalize(input);
+        return current with
+        {
+            Path = EmptyToNull(input.Path),
+            ServiceName = EmptyToNull(input.ServiceName),
+            PluginOpts = EmptyToNull(input.PluginOpts),
+            ObfsPassword = EmptyToNull(input.ObfsPassword),
+            SpiderX = EmptyToNull(input.SpiderX),
+            Up = EmptyToNull(input.Up),
+            Down = EmptyToNull(input.Down),
+            HopPorts = EmptyToNull(input.HopPorts),
+        };
     }
 
     private static string NormalizeTransport(string? transport)
@@ -319,6 +364,11 @@ public static class CanonicalIdentity
     {
         var trimmed = value?.Trim();
         return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
+
+    private static string? KeepOpaque(string? value)
+    {
+        return string.IsNullOrEmpty(value) ? null : value;
     }
 
     private static void Write(Utf8JsonWriter writer, string name, string? value)

@@ -17,6 +17,5 @@ jobs:
           dotnet build AutoVpn.slnx -c Release --nologo
           dotnet test AutoVpn.slnx -c Release --nologo
         env:
-          # Leave unset. The Mihomo fact returns immediately without this path.
-          # Setting it would still be a non-TUN config test, not a Windows gate.
+          # Leave unset. The pinned Mihomo fact skips and must not count as native validation.
           AUTOVPN_MIHOMO_PATH: ""

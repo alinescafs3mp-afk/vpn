@@ -34,6 +34,7 @@ public enum FailoverAction
     IgnoreStale = 5,
     WaitCooldown = 6,
     DiagnoseTargets = 7,
+    HoldProtected = 8,
 }
 
 public sealed record StandbyCandidate
@@ -100,14 +101,17 @@ public static class FailoverPolicy
             return new(FailoverAction.BlockPinned, context.ActiveNodeId, ReasonCodes.Pinned);
         }
 
-        if (context.CooldownActive && !context.OwnerRetry)
+        var overBudget = !context.OwnerRetry &&
+                         (context.CooldownActive || context.SwitchesInLastMinute >= ProductLimits.MaxSwitchesPerMinute);
+        if (overBudget)
         {
-            return new(FailoverAction.WaitCooldown, null, "COOLDOWN");
-        }
+            var reason = context.CooldownActive ? "COOLDOWN" : "SWITCH_BUDGET";
+            if (context.Failure == FailureKind.CoreExit)
+            {
+                return new(FailoverAction.HoldProtected, context.ActiveNodeId, reason);
+            }
 
-        if (context.SwitchesInLastMinute >= ProductLimits.MaxSwitchesPerMinute && !context.OwnerRetry)
-        {
-            return new(FailoverAction.WaitCooldown, null, "SWITCH_BUDGET");
+            return new(FailoverAction.WaitCooldown, context.ActiveNodeId, reason);
         }
 
         var choice = context.Standbys

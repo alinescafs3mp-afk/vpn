@@ -91,9 +91,11 @@ public class BehaviorTests
         var report = await ProbeCoordinator.RunAsync(catalogue, transport, new Uri("https://cp.cloudflare.com/generate_204"), Now, CancellationToken.None);
         Assert.True(report.StoppedForUplink);
         Assert.Equal(1, report.Attempted);
-        Assert.Equal(HealthState.EnvironmentUnknown, catalogue.Nodes[0].Assessment!.Health);
-        Assert.Equal(HealthState.Pending, catalogue.Nodes[1].Assessment!.Health);
-        Assert.Null(catalogue.Nodes[1].Assessment!.LastFailureUtc);
+        Assert.Equal(1, calls);
+        var stopped = Assert.Single(catalogue.Nodes, node => node.Assessment!.Health == HealthState.EnvironmentUnknown);
+        var pending = Assert.Single(catalogue.Nodes, node => node.Assessment!.Health == HealthState.Pending);
+        Assert.True(stopped.Assessment!.EnvironmentFailure);
+        Assert.Null(pending.Assessment!.LastFailureUtc);
         Assert.Empty(catalogue.Eligible(Context()));
     }
 
@@ -296,7 +298,7 @@ public class BehaviorTests
             NetworkEpoch = catalogue.NetworkEpoch,
         }), CancellationToken.None);
         Assert.False(connect.Ok);
-        Assert.Equal(ReasonCodes.NotWindows, connect.ErrorCode);
+        Assert.Equal(UnavailableNetworkGuard.PlatformReason(), connect.ErrorCode);
         Assert.NotEqual(nameof(TunnelPhase.Connected), connect.Snapshot!.Phase);
         Assert.False(connect.Snapshot.ProtectionArmed);
         Assert.False(connect.Snapshot.CoreRunning);
@@ -465,16 +467,16 @@ public class BehaviorTests
         Assert.True(yaml.IndexOf("DST-PORT,53", StringComparison.Ordinal) < yaml.IndexOf("IP-CIDR,10.0.0.0/8,DIRECT", StringComparison.Ordinal));
         Assert.Contains("enhanced-mode: redir-host", yaml, StringComparison.Ordinal);
         var validation = await MihomoProcessController.ValidateAsync("/does/not/exist", "00", yaml, CancellationToken.None);
-        Assert.Equal(ReasonCodes.NotWindows, validation.ReasonCode);
+        Assert.Equal(OperatingSystem.IsWindows() ? "CORE_MISSING" : ReasonCodes.NotWindows, validation.ReasonCode);
     }
 
-    [Fact]
+    [RequiresMihomoFact]
     public async Task PinnedLinuxCoreValidatesSyntheticNonTunProfileWhenProvided()
     {
         var path = Environment.GetEnvironmentVariable("AUTOVPN_MIHOMO_PATH");
         if (string.IsNullOrWhiteSpace(path))
         {
-            return;
+            Assert.Fail("AUTOVPN_MIHOMO_PATH is unset. Native mihomo -t is NOT_RUN, not a pass.");
         }
 
         var yaml = MihomoProfileGenerator.Build(new ProfileBuildRequest
@@ -745,7 +747,8 @@ public class BehaviorTests
             NetworkEpoch = catalogue.NetworkEpoch,
         }), CancellationToken.None);
         Assert.True(held.Ok);
-        Assert.Equal(TunnelPhase.Connected, engine.State.Phase);
+        Assert.Equal(TunnelPhase.Reconnecting, engine.State.Phase);
+        Assert.True(engine.State.ProtectionArmed);
         Assert.Equal(before, engine.State.ActiveNodeId);
         var outage = await engine.HandleAsync(Request(IpcOperations.ReportHealth, new HealthPayload
         {
@@ -753,7 +756,7 @@ public class BehaviorTests
             ConsecutiveFailures = 1,
             NetworkEpoch = catalogue.NetworkEpoch,
         }), CancellationToken.None);
-        Assert.Equal(TunnelPhase.Connected, engine.State.Phase);
+        Assert.Equal(TunnelPhase.Reconnecting, engine.State.Phase);
         Assert.Contains("не переключена", outage.Message, StringComparison.Ordinal);
     }
 
@@ -961,6 +964,21 @@ public class BehaviorTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.CompletedTask;
+        }
+    }
+}
+
+/// <summary>
+/// xUnit 2.9 has no runner support for <c>SkipException.ForSkip</c> (that signal is v3).
+/// An absent Mihomo binary is a skip, never a passing fact.
+/// </summary>
+public sealed class RequiresMihomoFactAttribute : FactAttribute
+{
+    public RequiresMihomoFactAttribute()
+    {
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AUTOVPN_MIHOMO_PATH")))
+        {
+            Skip = "AUTOVPN_MIHOMO_PATH is unset. Native mihomo -t is NOT_RUN, not a pass.";
         }
     }
 }

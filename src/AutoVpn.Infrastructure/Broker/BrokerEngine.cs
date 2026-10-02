@@ -335,7 +335,13 @@ public sealed class BrokerEngine
                 CooldownActive = _cooldownUntil is DateTimeOffset until && until > now,
                 Standbys = _standbys,
             });
-            if (decision.Action is FailoverAction.Stay or FailoverAction.IgnoreStale or FailoverAction.WaitCooldown or FailoverAction.DiagnoseTargets)
+            if (decision.Action == FailoverAction.HoldProtected)
+            {
+                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.CoreExited, _state.Generation, _state.ActiveNodeId, decision.ReasonCode));
+                _sequence++;
+                _cooldownUntil ??= now.AddSeconds(ProductLimits.SwitchCooldownSeconds);
+            }
+            else if (decision.Action is FailoverAction.Stay or FailoverAction.IgnoreStale or FailoverAction.WaitCooldown or FailoverAction.DiagnoseTargets)
             {
                 stayed = true;
                 if (decision.Action == FailoverAction.WaitCooldown && _cooldownUntil is null)
@@ -521,7 +527,7 @@ public sealed class BrokerEngine
             NetworkEpoch = _catalogue.NetworkEpoch,
             AllowInsecureCertificates = settings.AllowInsecureCertificates,
             Purpose = string.IsNullOrWhiteSpace(payload.NodeId) ? SelectionPurpose.Automatic : SelectionPurpose.Manual,
-            AllowedAge = TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes),
+            AllowedAge = TimeSpan.FromSeconds(ProductLimits.PreConnectFreshnessSeconds),
             MaxAcceptableLatencyMs = settings.MaxAcceptableLatencyMs,
         };
         if (!string.IsNullOrWhiteSpace(payload.NodeId))
@@ -585,8 +591,8 @@ public sealed class BrokerEngine
             NowUtc = now,
             NetworkEpoch = _catalogue.NetworkEpoch,
             AllowInsecureCertificates = settings.AllowInsecureCertificates,
-            Purpose = SelectionPurpose.Automatic,
-            AllowedAge = TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes),
+            Purpose = SelectionPurpose.PreConnect,
+            AllowedAge = TimeSpan.FromSeconds(ProductLimits.PreConnectFreshnessSeconds),
             MaxAcceptableLatencyMs = settings.MaxAcceptableLatencyMs,
             DisabledFamilies = settings.DisabledFamilyIds.ToHashSet(StringComparer.Ordinal),
         });

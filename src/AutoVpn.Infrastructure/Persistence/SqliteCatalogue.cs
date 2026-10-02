@@ -18,7 +18,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
     private readonly SqliteConnection _connection;
     private readonly ISecretProtector _protector;
-    private readonly MemoryCatalogue _memory = new();
+    private MemoryCatalogue _memory = new();
     private readonly object _gate = new();
 
     public string? QuarantinedFrom { get; }
@@ -90,11 +90,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
                 throw new CatalogueStoreException(error);
             }
 
-            lock (_gate)
-            {
-                _memory.Settings = value;
-                Save();
-            }
+            Commit(copy => copy.Settings = value);
         }
     }
 
@@ -102,39 +98,29 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
     public void SetNetworkEpoch(long epoch)
     {
-        lock (_gate)
-        {
-            _memory.SetNetworkEpoch(epoch);
-            Save();
-        }
+        Commit(copy => copy.SetNetworkEpoch(epoch));
     }
 
     public void ApplySnapshot(SnapshotCommit commit)
     {
-        lock (_gate)
-        {
-            _memory.ApplySnapshot(commit);
-            Save();
-        }
+        Commit(copy => copy.ApplySnapshot(commit));
     }
 
     public void ApplyAssessment(string nodeId, AssessmentSnapshot assessment)
     {
-        lock (_gate)
-        {
-            _memory.ApplyAssessment(nodeId, assessment);
-            Save();
-        }
+        Commit(copy => copy.ApplyAssessment(nodeId, assessment));
     }
 
     public int EvictOverflow(DateTimeOffset nowUtc)
     {
         lock (_gate)
         {
-            var removed = _memory.EvictOverflow(nowUtc);
+            var next = _memory.Copy();
+            var removed = next.EvictOverflow(nowUtc);
             if (removed > 0)
             {
-                Save();
+                Save(next);
+                _memory = next;
             }
 
             return removed;
@@ -145,13 +131,15 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
     {
         lock (_gate)
         {
-            var changed = _memory.TrySetFavorite(nodeId, favorite);
-            if (changed)
+            var next = _memory.Copy();
+            if (!next.TrySetFavorite(nodeId, favorite))
             {
-                Save();
+                return false;
             }
 
-            return changed;
+            Save(next);
+            _memory = next;
+            return true;
         }
     }
 
@@ -159,22 +147,31 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
     {
         lock (_gate)
         {
-            var changed = _memory.TrySetExcluded(nodeId, excluded);
-            if (changed)
+            var next = _memory.Copy();
+            if (!next.TrySetExcluded(nodeId, excluded))
             {
-                Save();
+                return false;
             }
 
-            return changed;
+            Save(next);
+            _memory = next;
+            return true;
         }
     }
 
     public void SetActiveNode(string? nodeId)
     {
+        Commit(copy => copy.SetActiveNode(nodeId));
+    }
+
+    private void Commit(Action<MemoryCatalogue> mutate)
+    {
         lock (_gate)
         {
-            _memory.SetActiveNode(nodeId);
-            Save();
+            var next = _memory.Copy();
+            mutate(next);
+            Save(next);
+            _memory = next;
         }
     }
 
@@ -264,6 +261,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
                     Assessment = reader.IsDBNull(10) ? null : JsonSerializer.Deserialize<AssessmentSnapshot>(reader.GetString(10), StoredJson.Options),
                     PolicyReason = reader.IsDBNull(11) ? null : reader.GetString(11),
                 };
+                MemoryCatalogue.ReconcileStoredDigest(node);
                 nodes.Add(node);
             }
         }
@@ -299,7 +297,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
         _memory.Restore(epoch, settings, nodes);
     }
 
-    private void Save()
+    private void Save(MemoryCatalogue source)
     {
         using var transaction = _connection.BeginTransaction();
         using (var clear = _connection.CreateCommand())
@@ -327,12 +325,12 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
             }
 
             Put("schema_version", SchemaVersion.ToString(CultureInfo.InvariantCulture));
-            Put("network_epoch", _memory.NetworkEpoch.ToString(CultureInfo.InvariantCulture));
+            Put("network_epoch", source.NetworkEpoch.ToString(CultureInfo.InvariantCulture));
             Put("protector", _protector.ProtectorId);
-            Put("settings", JsonSerializer.Serialize(_memory.Settings, StoredJson.Options));
+            Put("settings", JsonSerializer.Serialize(source.Settings, StoredJson.Options));
         }
 
-        foreach (var node in _memory.Nodes)
+        foreach (var node in source.Nodes)
         {
             using var insert = _connection.CreateCommand();
             insert.Transaction = transaction;

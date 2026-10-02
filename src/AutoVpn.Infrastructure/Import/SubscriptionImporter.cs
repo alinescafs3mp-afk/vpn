@@ -33,6 +33,7 @@ public sealed record ImportBatch
 {
     public required IReadOnlyList<ImportRecord> Records { get; init; }
     public bool EmptyValidDocument { get; init; }
+    public bool DocumentValid { get; init; } = true;
     public bool LimitExceeded { get; init; }
     public int? AdvisoryUpdateInterval { get; init; }
     public string? ProfileTitle { get; init; }
@@ -243,13 +244,27 @@ public static class SubscriptionImporter
             var records = new List<ImportRecord>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             var stripped = 0;
-            IEnumerable<JsonElement> nodes = document.RootElement.ValueKind switch
+            IEnumerable<JsonElement> nodes;
+            if (document.RootElement.ValueKind == JsonValueKind.Array)
             {
-                JsonValueKind.Array => document.RootElement.EnumerateArray(),
-                JsonValueKind.Object when document.RootElement.TryGetProperty("outbounds", out var outbounds) => outbounds.EnumerateArray(),
-                JsonValueKind.Object when document.RootElement.TryGetProperty("proxies", out var proxies) => proxies.EnumerateArray(),
-                _ => [],
-            };
+                nodes = document.RootElement.EnumerateArray();
+            }
+            else if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                JsonElement list;
+                var named = document.RootElement.TryGetProperty("outbounds", out list) ||
+                            document.RootElement.TryGetProperty("proxies", out list);
+                if (!named || list.ValueKind != JsonValueKind.Array)
+                {
+                    return Single(RecordDisposition.Invalid, ReasonCodes.InvalidUri);
+                }
+
+                nodes = list.EnumerateArray();
+            }
+            else
+            {
+                return Single(RecordDisposition.Invalid, ReasonCodes.InvalidUri);
+            }
             if (document.RootElement.ValueKind == JsonValueKind.Object)
             {
                 foreach (var property in document.RootElement.EnumerateObject())
@@ -270,7 +285,17 @@ public static class SubscriptionImporter
                     break;
                 }
 
-                var parsed = XrayOutboundParser.Parse(node, ref stripped);
+                ParsedNode? parsed;
+                try
+                {
+                    parsed = XrayOutboundParser.Parse(node, ref stripped);
+                }
+                catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
+                {
+                    records.Add(Invalid(ReasonCodes.InvalidUri));
+                    continue;
+                }
+
                 if (parsed is null)
                 {
                     continue;
@@ -340,6 +365,7 @@ public static class SubscriptionImporter
         {
             SecurityPosture.PolicyBlocked when semantics.SkipCertVerify => ReasonCodes.CertVerificationDisabled,
             SecurityPosture.PolicyBlocked => ReasonCodes.PlaintextTransport,
+            SecurityPosture.Unsupported when !semantics.HasClosedSecurity() => ReasonCodes.UnsupportedSecurityOption,
             SecurityPosture.Unsupported => parsed.ReasonCode ?? ReasonCodes.UnsupportedProtocol,
             SecurityPosture.Invalid when semantics.Port is < 1 or > 65535 => ReasonCodes.InvalidPort,
             SecurityPosture.Invalid when !semantics.HasRequiredCredentials() => ReasonCodes.MissingCredential,
@@ -411,6 +437,7 @@ public static class SubscriptionImporter
         {
             Records = [new ImportRecord { Disposition = disposition, ReasonCode = reason }],
             EmptyValidDocument = false,
+            DocumentValid = false,
         };
     }
 

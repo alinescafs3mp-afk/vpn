@@ -4,7 +4,7 @@ using AutoVpn.Domain;
 
 namespace AutoVpn.Infrastructure.Probe;
 
-public sealed record ProbeObservation(bool Success, int? LatencyMs, bool UplinkOffline, string? ReasonCode);
+public sealed record ProbeObservation(bool Success, int? LatencyMs, bool UplinkOffline, string? ReasonCode, int PayloadBytes = 0);
 
 public interface IProbeTransport
 {
@@ -14,8 +14,9 @@ public interface IProbeTransport
 public sealed record ProbeReport(int Attempted, int Succeeded, int Failed, bool StoppedForUplink);
 
 /// <summary>
-/// Publishes a node as healthy only after the transport reports success and a latency sample.
+/// Publishes a node only after the transport returns and the captured epoch still matches.
 /// An uplink failure stops the cycle and does not mark the remaining nodes failed.
+/// Healthy rows are rechecked when they are stale or belong to another network epoch.
 /// </summary>
 public static class ProbeCoordinator
 {
@@ -25,19 +26,25 @@ public static class ProbeCoordinator
         Uri target,
         DateTimeOffset nowUtc,
         CancellationToken cancellationToken,
-        TimeSpan? budget = null)
+        TimeSpan? budget = null,
+        TimeSpan? attemptTimeout = null,
+        long? byteBudget = null)
     {
         var attempted = 0;
         var succeeded = 0;
         var failed = 0;
+        long bytes = 0;
         var limit = budget ?? TimeSpan.FromSeconds(ProductLimits.NewCandidateBudgetSeconds);
+        var perAttempt = attemptTimeout ?? TimeSpan.FromSeconds(ProductLimits.ProbeRequestTimeoutSeconds);
+        var byteLimit = byteBudget ?? ProductLimits.DailyHealthBudgetBytes;
         var elapsed = Stopwatch.StartNew();
-        var perEndpoint = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        // Sequential on purpose: an uplink failure must not race an in-flight probe.
-        // LightweightProbeConcurrency is the intended parallel cap once a Windows
-        // worker pool exists. It is not a reason to abandon the rest of the catalogue.
-        _ = ProductLimits.LightweightProbeConcurrency;
-        foreach (var node in catalogue.Nodes)
+        using var gate = new SemaphoreSlim(ProductLimits.MaxProbesPerEndpoint, ProductLimits.MaxProbesPerEndpoint);
+        var pending = catalogue.Nodes
+            .Where(node => NeedsProbe(node, nowUtc, catalogue.NetworkEpoch))
+            .OrderBy(node => node.Assessment?.LastFailureUtc ?? node.Assessment?.LastSuccessUtc ?? DateTimeOffset.MinValue)
+            .ThenBy(node => node.NodeId, StringComparer.Ordinal)
+            .ToArray();
+        foreach (var node in pending)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (attempted > 0 && elapsed.Elapsed >= limit)
@@ -45,32 +52,63 @@ public static class ProbeCoordinator
                 break;
             }
 
-            if (node.PolicyReason is not null)
+            if (bytes >= byteLimit)
             {
-                continue;
+                break;
             }
 
-            if (node.Assessment?.Health is HealthState.Healthy or HealthState.Degraded)
-            {
-                continue;
-            }
-
-            var endpoint = node.Semantics.Host + ":" + node.Semantics.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            perEndpoint.TryGetValue(endpoint, out var used);
-            if (used >= ProductLimits.MaxProbesPerEndpoint)
-            {
-                continue;
-            }
-
-            perEndpoint[endpoint] = used + 1;
+            var epoch = catalogue.NetworkEpoch;
+            var digest = node.Digest;
+            var nodeId = node.NodeId;
             attempted++;
-            var observation = await transport.ProbeAsync(node.Semantics, target, cancellationToken).ConfigureAwait(false);
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            ProbeObservation observation;
+            try
+            {
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                attempt.CancelAfter(perAttempt);
+                try
+                {
+                    observation = await transport.ProbeAsync(node.Semantics, target, attempt.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    failed++;
+                    TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
+                    {
+                        Digest = digest,
+                        NetworkEpoch = epoch,
+                        Health = HealthState.Failed,
+                        LastSuccessUtc = node.Assessment?.LastSuccessUtc,
+                        LastFailureUtc = nowUtc,
+                        MedianLatencyMs = node.Assessment?.MedianLatencyMs,
+                        ConsecutiveFailures = (node.Assessment?.ConsecutiveFailures ?? 0) + 1,
+                    });
+                    continue;
+                }
+                catch (OperationCanceledException)
+                {
+                    attempted--;
+                    break;
+                }
+            }
+            finally
+            {
+                gate.Release();
+            }
+
+            bytes += Math.Max(0, observation.PayloadBytes);
+            if (catalogue.NetworkEpoch != epoch || catalogue.Nodes.All(item => item.NodeId != nodeId || item.Digest != digest))
+            {
+                continue;
+            }
+
             if (observation.UplinkOffline)
             {
-                catalogue.ApplyAssessment(node.NodeId, new AssessmentSnapshot
+                TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
                 {
-                    Digest = node.Digest,
-                    NetworkEpoch = catalogue.NetworkEpoch,
+                    Digest = digest,
+                    NetworkEpoch = epoch,
                     Health = HealthState.EnvironmentUnknown,
                     EnvironmentFailure = true,
                     LastSuccessUtc = node.Assessment?.LastSuccessUtc,
@@ -82,10 +120,10 @@ public static class ProbeCoordinator
 
             if (observation.Success && observation.LatencyMs is int latency && latency >= 0)
             {
-                catalogue.ApplyAssessment(node.NodeId, new AssessmentSnapshot
+                TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
                 {
-                    Digest = node.Digest,
-                    NetworkEpoch = catalogue.NetworkEpoch,
+                    Digest = digest,
+                    NetworkEpoch = epoch,
                     Health = HealthState.Healthy,
                     LastSuccessUtc = nowUtc,
                     MedianLatencyMs = latency,
@@ -95,10 +133,10 @@ public static class ProbeCoordinator
                 continue;
             }
 
-            catalogue.ApplyAssessment(node.NodeId, new AssessmentSnapshot
+            TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
             {
-                Digest = node.Digest,
-                NetworkEpoch = catalogue.NetworkEpoch,
+                Digest = digest,
+                NetworkEpoch = epoch,
                 Health = HealthState.Failed,
                 LastSuccessUtc = node.Assessment?.LastSuccessUtc,
                 LastFailureUtc = nowUtc,
@@ -109,5 +147,42 @@ public static class ProbeCoordinator
         }
 
         return new ProbeReport(attempted, succeeded, failed, false);
+    }
+
+    public static bool NeedsProbe(CatalogueNode node, DateTimeOffset nowUtc, long epoch)
+    {
+        if (node.PolicyReason is not null)
+        {
+            return false;
+        }
+
+        var assessment = node.Assessment;
+        if (assessment is null || assessment.Health is not (HealthState.Healthy or HealthState.Degraded))
+        {
+            return true;
+        }
+
+        if (assessment.NetworkEpoch != epoch || assessment.LastSuccessUtc is not DateTimeOffset success)
+        {
+            return true;
+        }
+
+        return nowUtc - success > TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes);
+    }
+
+    private static void TryApply(ICatalogue catalogue, string nodeId, string digest, long epoch, AssessmentSnapshot assessment)
+    {
+        if (catalogue.NetworkEpoch != epoch)
+        {
+            return;
+        }
+
+        var current = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
+        if (current is null || current.Digest != digest)
+        {
+            return;
+        }
+
+        catalogue.ApplyAssessment(nodeId, assessment);
     }
 }

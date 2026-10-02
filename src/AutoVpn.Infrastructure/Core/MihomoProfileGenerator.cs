@@ -178,14 +178,19 @@ public static class MihomoProfileGenerator
             throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
         }
 
+        if (!AcceptedSecurity(type, node.Security))
+        {
+            throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+        }
+
         builder.AppendLine($"  - name: '{CoreNodeName(node)}'");
         builder.AppendLine($"    type: {type}");
         builder.AppendLine($"    server: '{Yaml(node.Host)}'");
         builder.AppendLine($"    port: {node.Port.ToString(CultureInfo.InvariantCulture)}");
         Write(builder, "uuid", node.UserId);
         Write(builder, "password", node.Password);
-        Write(builder, "cipher", node.Protocol.Equals("shadowsocks", StringComparison.OrdinalIgnoreCase) ? node.Encryption : null);
-        Write(builder, "encryption", node.Protocol.Equals("vless", StringComparison.OrdinalIgnoreCase) ? node.Encryption : null);
+        Write(builder, "cipher", type is "ss" or "vmess" ? node.Encryption : null);
+        Write(builder, "encryption", type == "vless" ? node.Encryption : null);
         if (node.AlterId is int alter)
         {
             builder.AppendLine($"    alterId: {alter.ToString(CultureInfo.InvariantCulture)}");
@@ -207,9 +212,16 @@ public static class MihomoProfileGenerator
             builder.AppendLine("    skip-cert-verify: true");
         }
 
-        Write(builder, "servername", node.Sni);
+        Write(builder, SniKey(type), node.Sni);
         Write(builder, "client-fingerprint", node.Fingerprint);
         Write(builder, "network", node.Transport);
+        Write(builder, "packet-encoding", node.PacketEncoding);
+        Write(builder, "up", node.Up);
+        Write(builder, "down", node.Down);
+        if (type == "hysteria2")
+        {
+            Write(builder, "ports", node.HopPorts);
+        }
         if (node.PublicKey is not null)
         {
             builder.AppendLine("    reality-opts:");
@@ -234,26 +246,7 @@ public static class MihomoProfileGenerator
             }
         }
 
-        if (node.Path is not null || node.HostHeader is not null)
-        {
-            builder.AppendLine("    ws-opts:");
-            if (node.Path is not null)
-            {
-                builder.AppendLine($"      path: '{Yaml(node.Path)}'");
-            }
-
-            if (node.HostHeader is not null)
-            {
-                builder.AppendLine("      headers:");
-                builder.AppendLine($"        Host: '{Yaml(node.HostHeader)}'");
-            }
-        }
-
-        if (node.ServiceName is not null)
-        {
-            builder.AppendLine("    grpc-opts:");
-            builder.AppendLine($"      grpc-service-name: '{Yaml(node.ServiceName)}'");
-        }
+        AppendTransport(builder, node);
 
         Write(builder, "plugin", node.Plugin);
         if (!string.IsNullOrEmpty(node.PluginOpts))
@@ -265,6 +258,119 @@ public static class MihomoProfileGenerator
         Write(builder, "obfs-password", node.ObfsPassword);
         Write(builder, "congestion-controller", node.Congestion);
         Write(builder, "udp-relay-mode", node.UdpRelayMode);
+    }
+
+    private static bool AcceptedSecurity(string type, string? security)
+    {
+        var value = security?.Trim().ToLowerInvariant();
+        return type switch
+        {
+            "vless" or "vmess" or "trojan" => value is "tls" or "reality",
+            "ss" => value is null or "" or "aead",
+            "hysteria2" or "tuic" => value is null or "" or "tls",
+            _ => false,
+        };
+    }
+
+    private static string SniKey(string type)
+    {
+        return type is "trojan" or "hysteria2" or "tuic" ? "sni" : "servername";
+    }
+
+    private static void AppendTransport(StringBuilder builder, NodeWire node)
+    {
+        var transport = node.Transport?.Trim().ToLowerInvariant();
+        if (node.HeaderType is not null && transport is not ("http" or "h2"))
+        {
+            throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+        }
+
+        var hasPath = node.Path is not null || node.HostHeader is not null;
+        var hasGrpc = node.ServiceName is not null;
+        if (transport is "ws" or "websocket")
+        {
+            if (hasGrpc)
+            {
+                throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+            }
+
+            AppendWs(builder, node);
+            return;
+        }
+
+        if (transport == "grpc")
+        {
+            if (node.Path is not null)
+            {
+                throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+            }
+
+            if (hasGrpc)
+            {
+                builder.AppendLine("    grpc-opts:");
+                builder.AppendLine($"      grpc-service-name: '{Yaml(node.ServiceName!)}'");
+            }
+
+            return;
+        }
+
+        if (transport is "http" or "h2")
+        {
+            if (hasGrpc)
+            {
+                throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+            }
+
+            AppendHttp(builder, node);
+            return;
+        }
+
+        if (hasPath || hasGrpc)
+        {
+            throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+        }
+    }
+
+    private static void AppendWs(StringBuilder builder, NodeWire node)
+    {
+        if (node.Path is null && node.HostHeader is null)
+        {
+            return;
+        }
+
+        builder.AppendLine("    ws-opts:");
+        if (node.Path is not null)
+        {
+            builder.AppendLine($"      path: '{Yaml(node.Path)}'");
+        }
+
+        if (node.HostHeader is not null)
+        {
+            builder.AppendLine("      headers:");
+            builder.AppendLine($"        Host: '{Yaml(node.HostHeader)}'");
+        }
+    }
+
+    private static void AppendHttp(StringBuilder builder, NodeWire node)
+    {
+        if (node.Path is null && node.HostHeader is null)
+        {
+            return;
+        }
+
+        builder.AppendLine("    http-opts:");
+        if (node.Path is not null)
+        {
+            builder.AppendLine($"      path:");
+            builder.AppendLine($"        - '{Yaml(node.Path)}'");
+        }
+
+        if (node.HostHeader is not null)
+        {
+            builder.AppendLine("      headers:");
+            builder.AppendLine($"        Host:");
+            builder.AppendLine($"          - '{Yaml(node.HostHeader)}'");
+        }
     }
 
     private static string TypeName(string protocol)

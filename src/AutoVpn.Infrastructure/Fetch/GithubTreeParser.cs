@@ -15,37 +15,65 @@ public static class GithubTreeParser
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return Incomplete(null, false);
+            }
+
             var truncated = root.TryGetProperty("truncated", out var flag) && flag.ValueKind == JsonValueKind.True;
-            var sha = root.TryGetProperty("sha", out var shaElement) ? shaElement.GetString() : null;
+            if (root.TryGetProperty("sha", out var shaElement) && shaElement.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+            {
+                return Incomplete(null, truncated);
+            }
+
+            var sha = root.TryGetProperty("sha", out shaElement) ? shaElement.GetString() : null;
             if (truncated || !root.TryGetProperty("tree", out var tree) || tree.ValueKind != JsonValueKind.Array)
             {
-                return new TreeDiscovery(false, sha, truncated, [], "DISCOVERY_INCOMPLETE");
+                return Incomplete(sha, truncated);
             }
 
             var paths = new List<DiscoveredPath>();
             foreach (var item in tree.EnumerateArray())
             {
-                if (!item.TryGetProperty("path", out var pathElement))
+                if (item.ValueKind != JsonValueKind.Object ||
+                    !item.TryGetProperty("path", out var pathElement) ||
+                    pathElement.ValueKind != JsonValueKind.String)
                 {
-                    continue;
+                    return Incomplete(sha, false);
                 }
 
                 var path = pathElement.GetString() ?? "";
-                var type = item.TryGetProperty("type", out var typeElement) ? typeElement.GetString() : "blob";
+                if (item.TryGetProperty("type", out var typeElement) && typeElement.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                {
+                    return Incomplete(sha, false);
+                }
+
+                var type = item.TryGetProperty("type", out typeElement) ? typeElement.GetString() : "blob";
                 if (!string.Equals(type, "blob", StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                long? size = item.TryGetProperty("size", out var sizeElement) && sizeElement.TryGetInt64(out var parsed) ? parsed : null;
+                if (item.TryGetProperty("size", out var sizeElement) &&
+                    sizeElement.ValueKind is not (JsonValueKind.Number or JsonValueKind.Null))
+                {
+                    return Incomplete(sha, false);
+                }
+
+                long? size = item.TryGetProperty("size", out sizeElement) && sizeElement.TryGetInt64(out var parsed) ? parsed : null;
                 paths.Add(new DiscoveredPath(path, ArtifactClassifier.ClassifyPath(path), SeedFamilies.MatchFamily(path), size));
             }
 
             return new TreeDiscovery(true, sha, false, paths, null);
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
-            return new TreeDiscovery(false, null, false, [], "DISCOVERY_INCOMPLETE");
+            return Incomplete(null, false);
         }
+    }
+
+    private static TreeDiscovery Incomplete(string? sha, bool truncated)
+    {
+        return new TreeDiscovery(false, sha, truncated, [], "DISCOVERY_INCOMPLETE");
     }
 }

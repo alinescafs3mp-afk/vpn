@@ -21,6 +21,7 @@ public sealed record IngestReport
     public int RetainedMissing { get; init; }
     public bool AnyFetchFailed { get; init; }
     public bool Balanced { get; init; }
+    public bool RefetchRequired { get; init; }
 }
 
 public static class RefreshMerge
@@ -32,10 +33,18 @@ public static class RefreshMerge
         var retained = 0;
         var failed = false;
         var balanced = true;
+        var refetch = false;
         foreach (var artifact in artifacts)
         {
-            if (!artifact.Enabled || artifact.NotModified)
+            if (!artifact.Enabled)
             {
+                continue;
+            }
+
+            if (artifact.NotModified)
+            {
+                var represented = catalogue.Nodes.Any(node => node.ArtifactFamilies.ContainsKey(artifact.ArtifactId));
+                refetch |= !represented;
                 continue;
             }
 
@@ -47,8 +56,10 @@ public static class RefreshMerge
 
             var batch = SubscriptionImporter.Import(artifact.Text, new ImportOptions { AllowInsecureCertificates = allowInsecure });
             batches.Add(batch);
-            balanced &= batch.Balanced && !batch.LimitExceeded;
-            if (!batch.Balanced || batch.LimitExceeded)
+            var publishable = batch.DocumentValid && batch.Balanced && !batch.LimitExceeded &&
+                              (batch.EmptyValidDocument || batch.Pending + batch.PolicyBlocked > 0);
+            balanced &= publishable;
+            if (!publishable)
             {
                 continue;
             }
@@ -89,6 +100,7 @@ public static class RefreshMerge
             RetainedMissing = retained,
             AnyFetchFailed = failed,
             Balanced = balanced,
+            RefetchRequired = refetch,
         };
     }
 }

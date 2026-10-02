@@ -19,7 +19,7 @@ public static class ShareLinkParser
 
     private static readonly HashSet<string> Hy2Keys = new(StringComparer.OrdinalIgnoreCase)
     {
-        "sni", "insecure", "obfs", "obfs-password", "alpn", "mport",
+        "sni", "insecure", "obfs", "obfs-password", "alpn", "mport", "up", "down",
     };
 
     private static readonly HashSet<string> TuicKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -64,6 +64,10 @@ public static class ShareLinkParser
             };
         }
         catch (UriFormatException)
+        {
+            return Fail(ReasonCodes.InvalidUri, fragment);
+        }
+        catch (JsonException)
         {
             return Fail(ReasonCodes.InvalidUri, fragment);
         }
@@ -165,6 +169,9 @@ public static class ShareLinkParser
         }
 
         var tls = GetString(root, "tls");
+        var security = string.IsNullOrWhiteSpace(tls)
+            ? "none"
+            : tls.Equals("tls", StringComparison.OrdinalIgnoreCase) ? "tls" : tls;
         var semantics = new NodeSemantics
         {
             Protocol = ProtocolKind.Vmess,
@@ -177,7 +184,7 @@ public static class ShareLinkParser
             HeaderType = GetString(root, "type"),
             HostHeader = GetString(root, "host"),
             Path = GetString(root, "path"),
-            Security = string.Equals(tls, "tls", StringComparison.OrdinalIgnoreCase) ? "tls" : "none",
+            Security = security,
             Sni = GetString(root, "sni"),
             Fingerprint = GetString(root, "fp"),
             Alpn = SplitAlpn(GetString(root, "alpn")),
@@ -340,6 +347,9 @@ public static class ShareLinkParser
             Alpn = SplitAlpn(query.Get("alpn")),
             Obfs = query.Get("obfs"),
             ObfsPassword = query.Get("obfs-password"),
+            Up = query.Get("up"),
+            Down = query.Get("down"),
+            HopPorts = query.Get("mport"),
             SkipCertVerify = IsInsecure(query.Get("insecure"), null),
         }, fragment);
     }
@@ -409,12 +419,23 @@ public static class ShareLinkParser
             }
 
             var key = part[..eq];
+            var optionValue = part[(eq + 1)..];
+            if (name is "obfs-local" or "obfs")
+            {
+                key = key switch
+                {
+                    "obfs" => "mode",
+                    "obfs-host" => "host",
+                    _ => key,
+                };
+            }
+
             if (key is not ("obfs" or "obfs-host" or "mode" or "host" or "path" or "tls"))
             {
                 return null;
             }
 
-            options.Add(part);
+            options.Add(key + "=" + optionValue);
         }
 
         var mapped = name == "obfs-local" ? "obfs" : name;

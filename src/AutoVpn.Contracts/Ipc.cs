@@ -99,6 +99,10 @@ public sealed class NodeWire
     public string? UdpRelayMode { get; init; }
     public string? Obfs { get; init; }
     public string? ObfsPassword { get; init; }
+    public string? PacketEncoding { get; init; }
+    public string? Up { get; init; }
+    public string? Down { get; init; }
+    public string? HopPorts { get; init; }
     public string DisplayLabel { get; init; } = "";
     public string? AdvertisedCountry { get; init; }
     public string? EndpointKey { get; init; }

@@ -11,7 +11,7 @@ public static class ClashProxyParser
         "name", "type", "server", "port", "uuid", "password", "cipher", "udp", "tls", "skip-cert-verify",
         "servername", "sni", "client-fingerprint", "flow", "network", "alpn", "plugin", "plugin-opts",
         "reality-opts", "ws-opts", "grpc-opts", "alterId", "encryption", "obfs", "obfs-password",
-        "up", "down", "auth", "congestion-controller", "udp-relay-mode",
+        "up", "down", "auth", "congestion-controller", "udp-relay-mode", "ports", "packet-encoding",
     };
 
     public static ParsedNode Parse(YamlMappingNode map)
@@ -95,9 +95,11 @@ public static class ClashProxyParser
         var ws = Mapping(values, "ws-opts");
         var grpc = Mapping(values, "grpc-opts");
         var wsHeaders = ws is null ? null : MappingNode(ws, "headers");
+        var tlsFlag = Scalar(values, "tls");
         var security = Scalar(reality, "public-key") is not null ? "reality"
-            : IsTrue(Scalar(values, "tls")) ? "tls"
+            : IsTrue(tlsFlag) ? "tls"
             : protocol is ProtocolKind.Hysteria2 or ProtocolKind.Tuic ? "tls"
+            : protocol == ProtocolKind.Trojan ? (IsExplicitFalse(tlsFlag) ? "none" : "tls")
             : protocol == ProtocolKind.Shadowsocks ? "aead"
             : "none";
         bool? udp = values.ContainsKey("udp") ? IsTrue(Scalar(values, "udp")) : null;
@@ -131,6 +133,8 @@ public static class ClashProxyParser
             ObfsPassword = Scalar(values, "obfs-password"),
             Up = Scalar(values, "up"),
             Down = Scalar(values, "down"),
+            HopPorts = Scalar(values, "ports"),
+            PacketEncoding = Scalar(values, "packet-encoding"),
         };
         return new ParsedNode { Semantics = semantics, DisplayName = name, Disposition = RecordDisposition.Pending };
     }
@@ -219,6 +223,11 @@ public static class ClashProxyParser
         }
 
         return null;
+    }
+
+    private static bool IsExplicitFalse(string? value)
+    {
+        return value is not null && value.Trim().ToLowerInvariant() is "0" or "false" or "no";
     }
 
     private static bool IsTrue(string? value)

@@ -5,7 +5,7 @@ namespace AutoVpn.Application;
 public sealed class CatalogueNode
 {
     public required string NodeId { get; init; }
-    public required string Digest { get; init; }
+    public required string Digest { get; set; }
     public required NodeSemantics Semantics { get; init; }
     public required string Label { get; set; }
     public string? AdvertisedCountry { get; set; }
@@ -159,6 +159,77 @@ public sealed class MemoryCatalogue : ICatalogue
         Settings = settings;
         _nodes.Clear();
         _nodes.AddRange(nodes);
+    }
+
+    public MemoryCatalogue Copy()
+    {
+        var copy = new MemoryCatalogue();
+        copy._epoch = _epoch;
+        copy._settings = _settings;
+        foreach (var node in _nodes)
+        {
+            copy._nodes.Add(CloneNode(node));
+        }
+
+        return copy;
+    }
+
+    public static bool ReconcileStoredDigest(CatalogueNode node)
+    {
+        var current = CanonicalIdentity.Digest(node.Semantics);
+        if (node.Digest == current && (node.Assessment is null || node.Assessment.Digest == current))
+        {
+            return false;
+        }
+
+        var previous = CanonicalIdentity.Digest(node.Semantics, ProductLimits.CanonicalizerVersion - 1);
+        var sameBytes = node.Digest == previous;
+        node.Digest = current;
+        if (sameBytes && node.Assessment is { } assessment && assessment.Digest == previous)
+        {
+            node.Assessment = assessment with { Digest = current };
+        }
+        else
+        {
+            node.Assessment = null;
+        }
+
+        return true;
+    }
+
+    private static CatalogueNode CloneNode(CatalogueNode node)
+    {
+        var clone = new CatalogueNode
+        {
+            NodeId = node.NodeId,
+            Digest = node.Digest,
+            Semantics = node.Semantics,
+            Label = node.Label,
+            AdvertisedCountry = node.AdvertisedCountry,
+            Favorite = node.Favorite,
+            Excluded = node.Excluded,
+            ActiveSession = node.ActiveSession,
+            PolicyReason = node.PolicyReason,
+            Assessment = node.Assessment,
+            FirstSeenUtc = node.FirstSeenUtc,
+            LastSeenUtc = node.LastSeenUtc,
+        };
+        foreach (var pair in node.ArtifactFamilies)
+        {
+            clone.ArtifactFamilies[pair.Key] = pair.Value;
+        }
+
+        foreach (var family in node.CurrentFamilies)
+        {
+            clone.CurrentFamilies.Add(family);
+        }
+
+        foreach (var family in node.HistoricalFamilies)
+        {
+            clone.HistoricalFamilies.Add(family);
+        }
+
+        return clone;
     }
 
     public bool TrySetFavorite(string nodeId, bool favorite)
