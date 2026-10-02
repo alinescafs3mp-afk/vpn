@@ -2,13 +2,13 @@
 
 ## Для владельца
 
-Аудит 2026-10-02 лежит в этом дереве. Выпуска нет. Установщика нет. Туннель Windows не проверялся. Публичные узлы не измерялись. Папка `for_fix/` пустая и ждёт директивы Астры. Архив и его сумма описаны в `docs/IMPLEMENTATION_STATUS.md`. SHA коммита аудита записывает следующий коммит. `origin/main` после отправки — тот записывающий коммит.
+Аудит 2026-10-02 лежит в этом дереве. Выпуска нет. Установщика нет. Туннель Windows не проверялся. Публичные узлы не измерялись. Папка `for_fix/` пустая и ждёт директивы Астры. Архив и его сумма описаны в `docs/IMPLEMENTATION_STATUS.md`. Коммит аудита: `f0f72d131e9465d9e35122c2c9699deafa667891`. Следующий коммит только записывает этот SHA. `origin/main` после отправки — тот записывающий коммит.
 
 ## Last verified commit
 
-Parent before the audit: `4425ce4a6fa93589ff8e2974fc1f84b3b156d3a0`
+Audit commit: `f0f72d131e9465d9e35122c2c9699deafa667891`
 
-This handoff does not name the audit commit yet. The next commit records that SHA. Verify with:
+This handoff edit is a child of that commit. `origin/main` after the push is the child. Verify with:
 
 ```bash
 git fetch origin

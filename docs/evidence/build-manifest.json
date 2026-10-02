@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "applicationVersion": "0.1.0",
-  "gitCommit": null,
-  "workingTreeClean": false,
-  "gitCommitNote": "Filled by the following docs-only commit with the audit commit SHA. The archive was packed before that object existed.",
+  "gitCommit": "f0f72d131e9465d9e35122c2c9699deafa667891",
+  "workingTreeClean": true,
+  "gitCommitNote": "gitCommit is the audit commit. This file is the following docs-only amendment. The archive was packed before that object existed.",
   "builtUtc": "2026-10-02T19:58:42Z",
   "build": {
     "sdk": "10.0.112",
