@@ -90,6 +90,25 @@ public sealed class Round2LifecycleTests
     }
 
     [Fact]
+    public void StaleConnectCannotClearANewerUiOperation()
+    {
+        var lease = new UiOperationLease();
+        var first = lease.Start();
+        Assert.True(lease.Pending);
+        Assert.True(lease.Owns(first));
+        var disconnect = lease.Supersede();
+        Assert.False(lease.Owns(first));
+        Assert.False(lease.FinishIfCurrent(first));
+        Assert.True(lease.Pending);
+        var second = lease.Start();
+        Assert.True(lease.Owns(second));
+        Assert.False(lease.FinishIfCurrent(disconnect));
+        Assert.True(lease.Pending);
+        Assert.True(lease.FinishIfCurrent(second));
+        Assert.False(lease.Pending);
+    }
+
+    [Fact]
     public async Task Rt28StalePolicyCannotPublishProbeConnectOrSwitch()
     {
         var probeCatalogue = ReadyCatalogue();

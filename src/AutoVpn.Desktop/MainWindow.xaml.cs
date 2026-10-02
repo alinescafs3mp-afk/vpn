@@ -26,9 +26,13 @@ public partial class MainWindow : Window
     private readonly RefreshFence _fence = new();
     private readonly RefreshScheduler _scheduler;
     private readonly DispatcherTimer _scheduleTimer;
+    private readonly UiOperationLease _connectLease = new();
+    private CancellationTokenSource? _connectCts;
+    private Task? _connectTask;
     private CancellationTokenSource? _refresh;
     private Task? _refreshTask;
     private int _refreshRun;
+    private int _shuttingDown;
     private bool _refreshActive;
     private bool _exit;
     private bool _ready;
@@ -44,8 +48,13 @@ public partial class MainWindow : Window
         _scheduler = new RefreshScheduler(
             () => _catalogue.Settings,
             () => _ledger.Entries.Select(entry => entry.LastSuccessUtc).ToArray(),
-            (_, _) =>
+            (_, token) =>
             {
+                if (Volatile.Read(ref _shuttingDown) == 1 || token.IsCancellationRequested)
+                {
+                    return Task.CompletedTask;
+                }
+
                 _refreshTask = RunRefreshAsync();
                 return _refreshTask;
             },
@@ -53,7 +62,7 @@ public partial class MainWindow : Window
         _scheduleTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
         _scheduleTimer.Tick += async (_, _) =>
         {
-            if (_refreshActive)
+            if (_refreshActive || Volatile.Read(ref _shuttingDown) == 1)
             {
                 return;
             }
@@ -130,7 +139,10 @@ public partial class MainWindow : Window
         {
             Consent.AcceptDisclosure(_catalogue);
             _mailbox.NoteDisclosure(true);
-            _ = _scheduler.PulseAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+            if (Volatile.Read(ref _shuttingDown) == 0)
+            {
+                _ = _scheduler.PulseAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+            }
         }
         catch (Exception ex) when (ex is InvalidOperationException or CatalogueStoreException)
         {
@@ -165,30 +177,48 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (_mailbox.OperationPending || _mailbox.Session.SafetyDisconnectAvailable)
+            var task = ConnectAsync();
+            _connectTask = task;
+            await task.ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or CatalogueStoreException)
+        {
+            DetailText.Text = ex.Message;
+        }
+    }
+
+    private async Task ConnectAsync()
+    {
+        if (_mailbox.OperationPending || _mailbox.Session.SafetyDisconnectAvailable)
+        {
+            await DisconnectLocalAsync().ConfigureAwait(true);
+            return;
+        }
+
+        if (_mailbox.Session.PhaseCode == "Unknown" || !_mailbox.Session.BrokerReachable)
+        {
+            await ResyncAsync().ConfigureAwait(true);
+            if (_mailbox.Session.SafetyDisconnectAvailable)
             {
-                await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
+                await DisconnectLocalAsync().ConfigureAwait(true);
                 return;
             }
+        }
 
-            if (_mailbox.Session.PhaseCode == "Unknown" || !_mailbox.Session.BrokerReachable)
-            {
-                await ResyncAsync().ConfigureAwait(true);
-                if (_mailbox.Session.SafetyDisconnectAvailable)
-                {
-                    await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
-                    return;
-                }
-            }
+        if (!_catalogue.Settings.DisclosureAccepted)
+        {
+            DetailText.Text = "Сначала подтвердите предупреждение о публичных серверах.";
+            return;
+        }
 
-            if (!_catalogue.Settings.DisclosureAccepted)
-            {
-                DetailText.Text = "Сначала подтвердите предупреждение о публичных серверах.";
-                return;
-            }
-
-            _mailbox.OperationPending = true;
-
+        _connectCts?.Cancel();
+        _connectCts?.Dispose();
+        _connectCts = new CancellationTokenSource();
+        var token = _connectCts.Token;
+        var generation = _connectLease.Start();
+        _mailbox.OperationPending = true;
+        try
+        {
             var now = DateTimeOffset.UtcNow;
             var eligible = _catalogue.Eligible(new EligibilityContext
             {
@@ -221,7 +251,12 @@ public partial class MainWindow : Window
                 if (target is not null)
                 {
                     var transport = new NonTunCoreProbeTransport(Environment.GetEnvironmentVariable("AUTOVPN_MIHOMO_PATH"), ExpectedCoreHash());
-                    await ProbeCoordinator.AdmitIfStaleAsync(_catalogue, transport, target, selected.NodeId, now, CancellationToken.None).ConfigureAwait(true);
+                    await ProbeCoordinator.AdmitIfStaleAsync(_catalogue, transport, target, selected.NodeId, now, token).ConfigureAwait(true);
+                }
+
+                if (!_connectLease.Owns(generation) || token.IsCancellationRequested)
+                {
+                    return;
                 }
 
                 var fresh = _catalogue.Eligible(new EligibilityContext
@@ -242,6 +277,11 @@ public partial class MainWindow : Window
                 selected = admitted;
             }
 
+            if (!_connectLease.Owns(generation) || token.IsCancellationRequested)
+            {
+                return;
+            }
+
             await SendAsync(IpcOperations.Connect, new ConnectPayload
             {
                 NodeId = selected.NodeId,
@@ -250,11 +290,34 @@ public partial class MainWindow : Window
                 ProtectionRequired = _catalogue.Settings.ProtectionOnConnect,
                 LanAccess = _catalogue.Settings.LanAccess,
                 Node = NodeWireFactory.FromCatalogue(selected),
-            }).ConfigureAwait(true);
+            }, token, generation).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
         }
         finally
         {
-            _mailbox.OperationPending = false;
+            if (_connectLease.FinishIfCurrent(generation))
+            {
+                _mailbox.OperationPending = false;
+            }
+        }
+    }
+
+    private async Task DisconnectLocalAsync()
+    {
+        _connectCts?.Cancel();
+        var generation = _connectLease.Supersede();
+        try
+        {
+            await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
+        }
+        finally
+        {
+            if (_connectLease.FinishIfCurrent(generation))
+            {
+                _mailbox.OperationPending = false;
+            }
         }
     }
 
@@ -269,6 +332,11 @@ public partial class MainWindow : Window
         if (!_catalogue.Settings.DisclosureAccepted)
         {
             SubscriptionStatus.Text = "Сначала подтвердите предупреждение о подписках. Загрузка источников не начата.";
+            return;
+        }
+
+        if (Volatile.Read(ref _shuttingDown) == 1)
+        {
             return;
         }
 
@@ -374,7 +442,7 @@ public partial class MainWindow : Window
         await _refreshTask.ConfigureAwait(true);
     }
 
-    private async Task SendAsync(string operation, object payload)
+    private async Task SendAsync(string operation, object payload, CancellationToken cancellationToken = default, int? ownerGeneration = null)
     {
         try
         {
@@ -385,7 +453,12 @@ public partial class MainWindow : Window
                 ExpectedStateRevision = _mailbox.Session.StateRevision,
                 Operation = operation,
                 Payload = JsonSerializer.SerializeToElement(payload, IpcJson.Options),
-            }, CancellationToken.None).ConfigureAwait(true);
+            }, cancellationToken).ConfigureAwait(true);
+            if (ownerGeneration is int generation && !_connectLease.Owns(generation))
+            {
+                return;
+            }
+
             if (response is null)
             {
                 _mailbox.ApplyTransportLoss();
@@ -395,6 +468,9 @@ public partial class MainWindow : Window
 
             _mailbox.Apply(response, _catalogue.Settings.DisclosureAccepted);
             ShowSession();
+        }
+        catch (OperationCanceledException) when (ownerGeneration is int generation && !_connectLease.Owns(generation))
+        {
         }
         catch (TimeoutException)
         {
@@ -477,34 +553,60 @@ public partial class MainWindow : Window
 
     private async void ExitApplication()
     {
+        Volatile.Write(ref _shuttingDown, 1);
+        _scheduleTimer.Stop();
+        _connectCts?.Cancel();
+        _refresh?.Cancel();
+        _fence.Begin();
+        var generation = _connectLease.Supersede();
         if (_mailbox.OperationPending || _mailbox.Session.SafetyDisconnectAvailable || _mailbox.Session.LastKnownProtectionArmed)
         {
             await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
         }
 
-        var decision = UiSessionReducer.PlanExit(_mailbox.Session, _mailbox.OperationPending);
-        if (!decision.CanClose)
+        var connectJoined = await JoinOwnedAsync(_connectTask).ConfigureAwait(true);
+        var refreshJoined = await JoinOwnedAsync(_refreshTask).ConfigureAwait(true);
+        if (connectJoined && _connectLease.FinishIfCurrent(generation))
         {
-            DetailText.Text = decision.Reason ?? "Выход не подтверждён.";
+            _mailbox.OperationPending = false;
+        }
+
+        var decision = UiSessionReducer.PlanExit(_mailbox.Session, _mailbox.OperationPending);
+        if (!connectJoined || !refreshJoined || !decision.CanClose)
+        {
+            Volatile.Write(ref _shuttingDown, 0);
+            _scheduleTimer.Start();
+            DetailText.Text = decision.CanClose
+                ? "Выход остановлен: локальная операция не завершилась."
+                : decision.Reason ?? "Выход не подтверждён.";
             Show();
             return;
         }
 
-        _refresh?.Cancel();
-        _fence.Begin();
-        if (_refreshTask is not null)
-        {
-            try
-            {
-                await _refreshTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(true);
-            }
-            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException)
-            {
-            }
-        }
-
         _exit = true;
         System.Windows.Application.Current.Shutdown();
+    }
+
+    private static async Task<bool> JoinOwnedAsync(Task? task)
+    {
+        if (task is null || task.IsCompleted)
+        {
+            return true;
+        }
+
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(true);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+        catch (Exception)
+        {
+            return task.IsCompleted;
+        }
     }
 
     private static string ConfigDirectory()

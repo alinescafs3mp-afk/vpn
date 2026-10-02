@@ -100,6 +100,42 @@ public static class UiSessionReducer
     }
 }
 
+public sealed class UiOperationLease
+{
+    private int _generation;
+    private bool _pending;
+
+    public bool Pending => _pending;
+
+    public int Start()
+    {
+        var generation = Interlocked.Increment(ref _generation);
+        _pending = true;
+        return generation;
+    }
+
+    public int Supersede()
+    {
+        return Interlocked.Increment(ref _generation);
+    }
+
+    public bool Owns(int generation)
+    {
+        return generation == Volatile.Read(ref _generation);
+    }
+
+    public bool FinishIfCurrent(int generation)
+    {
+        if (generation != Volatile.Read(ref _generation))
+        {
+            return false;
+        }
+
+        _pending = false;
+        return true;
+    }
+}
+
 public sealed class SessionMailbox
 {
     public UiSession Session { get; private set; } = UiSessionReducer.Initial();
