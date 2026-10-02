@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
   "applicationVersion": "0.1.0",
-  "gitCommit": "9258f6c0eef8f7e7ad5ea6b2eaa8355abd7e95cd",
-  "workingTreeClean": true,
-  "builtUtc": "2026-10-02T19:44:00Z",
+  "gitCommit": null,
+  "workingTreeClean": false,
+  "gitCommitNote": "Filled by the following docs-only commit with the audit commit SHA. The archive was packed before that object existed.",
+  "builtUtc": "2026-10-02T19:58:42Z",
   "build": {
     "sdk": "10.0.112",
     "configuration": "Release",
@@ -29,28 +30,28 @@
   },
   "tests": [
     {
-      "command": "dotnet test AutoVpn.slnx -c Release",
-      "environment": "Linux, SDK 10.0.112, AUTOVPN_MIHOMO_PATH unset",
-      "timestampUtc": "before 2026-10-02T19:41:48Z",
-      "exitCode": 0,
-      "passed": 29,
-      "failed": 0,
-      "skipped": 0,
-      "note": "The Mihomo fact returns without invoking the binary when AUTOVPN_MIHOMO_PATH is unset. Count that as a unit-test pass, not as core or Windows validation."
-    },
-    {
       "command": "dotnet build AutoVpn.slnx -c Release",
       "environment": "Linux, SDK 10.0.112",
-      "timestampUtc": "before 2026-10-02T19:41:48Z",
+      "timestampUtc": "2026-10-02",
       "exitCode": 0,
       "warnings": 0,
       "errors": 0,
-      "note": "Includes Desktop (net10.0-windows), Service, Recovery, and Inventory. Desktop was not executed. gitCommit above is the implementation commit; this manifest file is amended in the following docs-only commit."
+      "note": "Includes Desktop (net10.0-windows), Service, Recovery, and Inventory. Desktop was not executed."
+    },
+    {
+      "command": "dotnet test AutoVpn.slnx -c Release",
+      "environment": "Linux, SDK 10.0.112, AUTOVPN_MIHOMO_PATH unset",
+      "timestampUtc": "2026-10-02",
+      "exitCode": 0,
+      "passed": 36,
+      "failed": 0,
+      "skipped": 0,
+      "note": "The Mihomo fact returns without invoking the binary when AUTOVPN_MIHOMO_PATH is unset. Count that as a unit-test pass, not as core or Windows validation. Two earlier starts of this command aborted with Internal CLR error 0x80131506 before a result; this recorded run passed."
     },
     {
       "command": "AUTOVPN_MIHOMO_PATH=<pinned linux binary> dotnet test tests/AutoVpn.UnitTests -c Release --filter FullyQualifiedName~PinnedLinuxCore",
       "environment": "Linux, mihomo v1.19.32",
-      "timestampUtc": "before 2026-10-02T19:41:48Z",
+      "timestampUtc": "2026-10-02",
       "exitCode": 0,
       "passed": 1,
       "failed": 0,
@@ -62,8 +63,9 @@
     {
       "name": "autovpn-0.1.0-win-x64-self-contained.tar.xz",
       "location": "local artifacts/ only; gitignored; not a GitHub release",
-      "sha256": "bd314673d6947e7d14a385d1f5bdbe624e541a096053cd79fb9aa7ad2948baee",
-      "bytes": 134320688,
+      "sha256": "a4c142f9d88c85849278c6e7b0e13cdfc7a26975bdd3bf565d944a3ecd0c64cf",
+      "bytes": 134272704,
+      "packedUtc": "2026-10-02T19:58:42Z",
       "kind": "self-contained publish of Desktop, Service, Recovery, Inventory",
       "installer": false,
       "signed": false,
@@ -77,6 +79,8 @@
     "No public subscription node was probed.",
     "The desktop does not yet run a refresh or show a measured catalogue.",
     "The service does not start Mihomo and does not install filters.",
-    "Archive is unsigned and is not an installer."
+    "On Windows the service still stamps windows-user. Linux SO_PEERCRED was checked for the same uid only.",
+    "Archive is unsigned and is not an installer.",
+    "for_fix/ is empty aside from .gitkeep and is reserved for later Astra directives."
   ]
 }

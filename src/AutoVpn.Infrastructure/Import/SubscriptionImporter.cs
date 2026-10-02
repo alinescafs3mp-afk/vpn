@@ -287,13 +287,17 @@ public static class SubscriptionImporter
                 ClientPolicyStripped = stripped,
             };
         }
-        catch (JsonException)
+        catch (FormatException ex) when (ex.Message == ReasonCodes.DuplicateKey)
         {
             return Single(RecordDisposition.Invalid, ReasonCodes.DuplicateKey);
         }
+        catch (JsonException)
+        {
+            return Single(RecordDisposition.Invalid, ReasonCodes.InvalidUri);
+        }
         catch (FormatException)
         {
-            return Single(RecordDisposition.Invalid, ReasonCodes.DuplicateKey);
+            return Single(RecordDisposition.Invalid, ReasonCodes.InvalidUri);
         }
     }
 

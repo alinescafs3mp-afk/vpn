@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AutoVpn.Application;
 using AutoVpn.Domain;
 
@@ -23,15 +24,27 @@ public static class ProbeCoordinator
         IProbeTransport transport,
         Uri target,
         DateTimeOffset nowUtc,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? budget = null)
     {
         var attempted = 0;
         var succeeded = 0;
         var failed = 0;
+        var limit = budget ?? TimeSpan.FromSeconds(ProductLimits.NewCandidateBudgetSeconds);
+        var elapsed = Stopwatch.StartNew();
         var perEndpoint = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        // Sequential on purpose: an uplink failure must not race an in-flight probe.
+        // LightweightProbeConcurrency is the intended parallel cap once a Windows
+        // worker pool exists. It is not a reason to abandon the rest of the catalogue.
+        _ = ProductLimits.LightweightProbeConcurrency;
         foreach (var node in catalogue.Nodes)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (attempted > 0 && elapsed.Elapsed >= limit)
+            {
+                break;
+            }
+
             if (node.PolicyReason is not null)
             {
                 continue;
@@ -47,11 +60,6 @@ public static class ProbeCoordinator
             if (used >= ProductLimits.MaxProbesPerEndpoint)
             {
                 continue;
-            }
-
-            if (attempted >= ProductLimits.LightweightProbeConcurrency)
-            {
-                break;
             }
 
             perEndpoint[endpoint] = used + 1;

@@ -256,6 +256,9 @@ public class BehaviorTests
         Assert.Null(big.Body);
         var http = await fetcher.GetAsync(new Uri("http://raw.githubusercontent.com/big"), null, 100, CancellationToken.None);
         Assert.Equal(ReasonCodes.OffRegistryRedirect, http.ReasonCode);
+        var userInfo = await fetcher.GetAsync(new Uri("https://user:secret@raw.githubusercontent.com/ok"), null, 100, CancellationToken.None);
+        Assert.Equal(ReasonCodes.OffRegistryRedirect, userInfo.ReasonCode);
+        Assert.Null(userInfo.Body);
     }
 
     [Fact]
@@ -268,7 +271,8 @@ public class BehaviorTests
             {"sha":"abc","truncated":false,"tree":[
               {"path":"BLACK_VLESS_RUS.txt","type":"blob","size":10},
               {"path":"TOR-BRIDGES/bridges.txt","type":"blob","size":4},
-              {"path":"README.md","type":"blob","size":4}
+              {"path":"README.md","type":"blob","size":4},
+              {"path":"submodule","type":"commit","size":0}
             ]}
             """);
         Assert.True(complete.Complete);
@@ -277,6 +281,7 @@ public class BehaviorTests
         Assert.Equal("black-vless", SeedFamilies.MatchFamily("BLACK_VLESS_RUS.txt"));
         Assert.Contains(complete.Paths, item => item.Class == ArtifactClass.TorBridgeList);
         Assert.Contains(complete.Paths, item => item.Class == ArtifactClass.Documentation);
+        Assert.DoesNotContain(complete.Paths, item => item.Path == "submodule");
     }
 
     [Fact]
@@ -318,18 +323,34 @@ public class BehaviorTests
         Assert.NotEqual(nameof(TunnelPhase.Connected), connect.Snapshot.Phase);
         engine.ConfirmProduction(true, null);
         Assert.Equal(TunnelPhase.Connected, engine.State.Phase);
-        var standby = new StandbyCandidate
-        {
-            NodeId = "standby",
-            EndpointKey = "203.0.113.99:443",
-            Country = "DE",
-            SourceFamilyId = "black-vless",
-            Cost = 1,
-            FreshOnEpoch = true,
-        };
+        RefreshMerge.Ingest(catalogue, [
+            new IngestArtifact { ArtifactId = "list-b", FamilyId = "black-vless", Enabled = true, Text = NodeUri("203.0.113.20"), ContentHash = "b" },
+        ], Now, false);
+        var standbyNode = catalogue.Nodes.Single(node => node.Semantics.Host == "203.0.113.20");
+        catalogue.ApplyAssessment(standbyNode.NodeId, Healthy(standbyNode, 80) with { LastSuccessUtc = DateTimeOffset.UtcNow });
         var update = await engine.HandleAsync(Request(IpcOperations.ApplyRuntimeSet, new Dictionary<string, object>
         {
-            ["standbys"] = new[] { standby },
+            ["standbys"] = new[]
+            {
+                new StandbyCandidate
+                {
+                    NodeId = standbyNode.NodeId,
+                    EndpointKey = "ignored",
+                    Country = "US",
+                    SourceFamilyId = "ignored",
+                    Cost = 0,
+                    FreshOnEpoch = false,
+                },
+                new StandbyCandidate
+                {
+                    NodeId = "not-a-node",
+                    EndpointKey = "203.0.113.99:443",
+                    Country = "DE",
+                    SourceFamilyId = "black-vless",
+                    Cost = 1,
+                    FreshOnEpoch = true,
+                },
+            },
         }), CancellationToken.None);
         Assert.True(update.Ok);
         Assert.Equal(TunnelPhase.Connected, engine.State.Phase);
@@ -341,8 +362,9 @@ public class BehaviorTests
         }), CancellationToken.None);
         Assert.True(health.Ok);
         Assert.Equal(TunnelPhase.Connecting, engine.State.Phase);
-        Assert.Equal("standby", engine.State.ActiveNodeId);
+        Assert.Equal(standbyNode.NodeId, engine.State.ActiveNodeId);
         Assert.NotEqual(TunnelPhase.Connected, engine.State.Phase);
+        Assert.Equal(1, update.Snapshot!.StandbyCount);
     }
 
     [Fact]
@@ -403,6 +425,8 @@ public class BehaviorTests
         Assert.Equal("REPLAY", replay.ErrorCode);
         var forbidden = dispatcher.Dispatch(Request(IpcOperations.Connect, new { yaml = "tun: enable" }), caller, _ => throw new InvalidOperationException());
         Assert.Equal("FORBIDDEN_FIELD", forbidden.ErrorCode);
+        var nested = dispatcher.Dispatch(Request(IpcOperations.Connect, new { nested = new { profilePath = "C:\\x" } }), caller, _ => throw new InvalidOperationException());
+        Assert.Equal("FORBIDDEN_FIELD", nested.ErrorCode);
         var unknown = dispatcher.Dispatch(Request("Shell", new { }), caller, _ => throw new InvalidOperationException());
         Assert.Equal("UNKNOWN_OPERATION", unknown.ErrorCode);
     }
@@ -487,6 +511,10 @@ public class BehaviorTests
         Assert.NotEqual(Ru.Connected, SessionText.Phase(nameof(TunnelPhase.Connecting)));
         Assert.NotEqual(Ru.Connected, SessionText.Phase(nameof(TunnelPhase.Blocked)));
         Assert.False(SessionText.IsConnected(nameof(TunnelPhase.Connecting)));
+        Assert.True(SessionText.OffersDisconnect(nameof(TunnelPhase.Connecting)));
+        Assert.True(SessionText.OffersDisconnect(nameof(TunnelPhase.Blocked), protectionArmed: true));
+        Assert.False(SessionText.OffersDisconnect(nameof(TunnelPhase.Blocked)));
+        Assert.False(SessionText.OffersDisconnect(nameof(TunnelPhase.Disconnected)));
     }
 
     [Fact]
@@ -518,6 +546,253 @@ public class BehaviorTests
         Assert.NotNull(second);
         Assert.True(second!.Ok);
         Assert.Equal(nameof(TunnelPhase.Disconnected), second.Snapshot!.Phase);
+    }
+
+    [Fact]
+    public async Task ProbeBudgetLeavesTheRestPendingInsteadOfStoppingAtEight()
+    {
+        var catalogue = new MemoryCatalogue();
+        var lines = string.Join('\n', Enumerable.Range(1, 9).Select(index => NodeUri($"203.0.113.{index}")));
+        RefreshMerge.Ingest(catalogue, [
+            new IngestArtifact { ArtifactId = "list", FamilyId = "black-vless", Enabled = true, Text = lines, ContentHash = "a" },
+        ], Now, false);
+        var report = await ProbeCoordinator.RunAsync(
+            catalogue,
+            new ScriptedTransport(_ => new ProbeObservation(true, 40, false, null)),
+            new Uri("https://cp.cloudflare.com/generate_204"),
+            Now,
+            CancellationToken.None,
+            TimeSpan.Zero);
+        Assert.Equal(1, report.Attempted);
+        Assert.Equal(1, report.Succeeded);
+        Assert.Equal(8, catalogue.Nodes.Count(node => node.Assessment?.Health == HealthState.Pending));
+    }
+
+    [Fact]
+    public void PolicyBlockClearsWhenTheSameNodeIsImportedUnderTheOwnerAllow()
+    {
+        var catalogue = new MemoryCatalogue();
+        var uri = $"vless://{Uuid}@203.0.113.40:443?encryption=none&security=tls&allowInsecure=1&type=tcp&sni=www.example.com#Germany";
+        RefreshMerge.Ingest(catalogue, [
+            new IngestArtifact { ArtifactId = "list", FamilyId = "black-vless", Enabled = true, Text = uri, ContentHash = "a" },
+        ], Now, false);
+        Assert.Equal(ReasonCodes.CertVerificationDisabled, catalogue.Nodes[0].PolicyReason);
+        RefreshMerge.Ingest(catalogue, [
+            new IngestArtifact { ArtifactId = "list", FamilyId = "black-vless", Enabled = true, Text = uri, ContentHash = "b" },
+        ], Now, true);
+        Assert.Null(catalogue.Nodes[0].PolicyReason);
+        Assert.Equal(HealthState.Pending, catalogue.Nodes[0].Assessment!.Health);
+    }
+
+    [Fact]
+    public void ProfileRejectsControlCharactersInsecureCertsAndEmitsPluginOpts()
+    {
+        var wire = new NodeWire
+        {
+            NodeId = "abc123",
+            Digest = "digest",
+            Protocol = "vless",
+            Host = "203.0.113.10",
+            Port = 443,
+            UserId = Uuid,
+            Password = "line\nproxies: []",
+            Encryption = "none",
+            Security = "tls",
+            Transport = "tcp",
+        };
+        var rejected = Assert.Throws<InvalidOperationException>(() => MihomoProfileGenerator.Build(new ProfileBuildRequest
+        {
+            Secret = "unit-test-secret-01",
+            ControllerPort = 9090,
+            Tun = false,
+            Nodes = [wire],
+            SelectedNodeId = wire.NodeId,
+        }));
+        Assert.Equal(ReasonCodes.CoreConfigRejected, rejected.Message);
+        var insecure = new NodeWire
+        {
+            NodeId = "abc123",
+            Digest = "digest",
+            Protocol = "vless",
+            Host = "203.0.113.10",
+            Port = 443,
+            UserId = Uuid,
+            Encryption = "none",
+            Security = "tls",
+            Transport = "tcp",
+            SkipCertVerify = true,
+        };
+        var blocked = Assert.Throws<InvalidOperationException>(() => MihomoProfileGenerator.Build(new ProfileBuildRequest
+        {
+            Secret = "unit-test-secret-01",
+            ControllerPort = 9090,
+            Tun = false,
+            Nodes = [insecure],
+            SelectedNodeId = insecure.NodeId,
+        }));
+        Assert.Equal(ReasonCodes.CertVerificationDisabled, blocked.Message);
+        var plugin = new NodeWire
+        {
+            NodeId = "abc123",
+            Digest = "digest",
+            Protocol = "shadowsocks",
+            Host = "203.0.113.10",
+            Port = 443,
+            Password = "secret",
+            Encryption = "aes-256-gcm",
+            Plugin = "obfs",
+            PluginOpts = "mode=http;host=www.example.com",
+        };
+        var yaml = MihomoProfileGenerator.Build(new ProfileBuildRequest
+        {
+            Secret = "unit-test-secret-01",
+            ControllerPort = 9090,
+            Tun = false,
+            Nodes = [plugin],
+            SelectedNodeId = plugin.NodeId,
+        });
+        Assert.Contains("plugin: 'obfs'", yaml, StringComparison.Ordinal);
+        Assert.Contains("mode: 'http'", yaml, StringComparison.Ordinal);
+        Assert.Contains("host: 'www.example.com'", yaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StaleRevisionDoesNotDisconnectAndCancelDuringStartStopsTheCore()
+    {
+        var catalogue = PreparedCatalogue();
+        var guard = new RecordingGuard();
+        var core = new GateCore();
+        var engine = new BrokerEngine(catalogue, guard, core);
+        var stale = await engine.HandleAsync(Request(IpcOperations.Disconnect, new DisconnectPayload(), revision: 50), CancellationToken.None);
+        Assert.Equal(ReasonCodes.StaleRevision, stale.ErrorCode);
+        Assert.Equal(TunnelPhase.Disconnected, engine.State.Phase);
+
+        var connect = engine.HandleAsync(Request(IpcOperations.Connect, new ConnectPayload
+        {
+            NodeId = catalogue.Nodes[0].NodeId,
+            Digest = catalogue.Nodes[0].Digest,
+            NetworkEpoch = catalogue.NetworkEpoch,
+            LanAccess = false,
+        }), CancellationToken.None);
+        await core.Started.Task;
+        var disconnect = engine.HandleAsync(Request(IpcOperations.Disconnect, new DisconnectPayload()), CancellationToken.None);
+        await core.Stopped.Task;
+        core.Release.TrySetResult();
+        var connectResult = await connect;
+        var disconnectResult = await disconnect;
+        Assert.False(connectResult.Ok);
+        Assert.Equal(ReasonCodes.Canceled, connectResult.ErrorCode);
+        Assert.True(disconnectResult.Ok);
+        Assert.Equal(TunnelPhase.Disconnected, engine.State.Phase);
+        Assert.False(engine.State.ProtectionArmed);
+        Assert.True(core.Stops >= 1);
+        Assert.DoesNotContain("IP-CIDR,10.0.0.0/8,DIRECT", core.Yaml, StringComparison.Ordinal);
+        Assert.Equal(guard.ArmedGeneration, guard.DisarmedGeneration);
+    }
+
+    [Fact]
+    public async Task SwitchBudgetStaysOnTheCurrentSession()
+    {
+        var catalogue = PreparedCatalogue();
+        RefreshMerge.Ingest(catalogue, [
+            new IngestArtifact { ArtifactId = "list-b", FamilyId = "black-vless", Enabled = true, Text = NodeUri("203.0.113.21"), ContentHash = "b" },
+        ], Now, false);
+        var other = catalogue.Nodes.Single(node => node.Semantics.Host == "203.0.113.21");
+        catalogue.ApplyAssessment(other.NodeId, Healthy(other, 90) with { LastSuccessUtc = DateTimeOffset.UtcNow });
+        var engine = new BrokerEngine(catalogue, new ArmingGuard(), new StartingCore());
+        await engine.HandleAsync(Request(IpcOperations.Connect, new ConnectPayload
+        {
+            NodeId = catalogue.Nodes[0].NodeId,
+            Digest = catalogue.Nodes[0].Digest,
+            NetworkEpoch = catalogue.NetworkEpoch,
+        }), CancellationToken.None);
+        engine.ConfirmProduction(true, null);
+        var active = catalogue.Nodes[0].NodeId;
+        for (var i = 0; i < 3; i++)
+        {
+            var target = active == catalogue.Nodes[0].NodeId ? other : catalogue.Nodes[0];
+            await engine.HandleAsync(Request(IpcOperations.ApplyRuntimeSet, new Dictionary<string, object>
+            {
+                ["standbys"] = new[]
+                {
+                    new StandbyCandidate
+                    {
+                        NodeId = target.NodeId,
+                        EndpointKey = "x",
+                        Country = "",
+                        SourceFamilyId = "",
+                        Cost = 1,
+                        FreshOnEpoch = true,
+                    },
+                },
+            }), CancellationToken.None);
+            await engine.HandleAsync(Request(IpcOperations.ReportHealth, new HealthPayload
+            {
+                FailureKind = nameof(FailureKind.CoreExit),
+                ConsecutiveFailures = 3,
+                NetworkEpoch = catalogue.NetworkEpoch,
+            }), CancellationToken.None);
+            Assert.Equal(TunnelPhase.Connecting, engine.State.Phase);
+            engine.ConfirmProduction(true, null);
+            active = engine.State.ActiveNodeId!;
+        }
+
+        var before = engine.State.ActiveNodeId;
+        var held = await engine.HandleAsync(Request(IpcOperations.ReportHealth, new HealthPayload
+        {
+            FailureKind = nameof(FailureKind.CoreExit),
+            ConsecutiveFailures = 3,
+            NetworkEpoch = catalogue.NetworkEpoch,
+        }), CancellationToken.None);
+        Assert.True(held.Ok);
+        Assert.Equal(TunnelPhase.Connected, engine.State.Phase);
+        Assert.Equal(before, engine.State.ActiveNodeId);
+        var outage = await engine.HandleAsync(Request(IpcOperations.ReportHealth, new HealthPayload
+        {
+            FailureKind = nameof(FailureKind.TargetOutage),
+            ConsecutiveFailures = 1,
+            NetworkEpoch = catalogue.NetworkEpoch,
+        }), CancellationToken.None);
+        Assert.Equal(TunnelPhase.Connected, engine.State.Phase);
+        Assert.Contains("не переключена", outage.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnsupportedJournalSchemaIsLeftUntouched()
+    {
+        var directory = Directory.CreateTempSubdirectory("autovpn-journal-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "effects.sqlite");
+            using (var created = EffectJournal.Open(path))
+            {
+                created.Record(new OwnedEffect("e1", "route", "synthetic"));
+            }
+
+            using (var connection = new SqliteConnection($"Data Source={path}"))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "UPDATE meta SET value='0' WHERE key='schema_version';";
+                command.ExecuteNonQuery();
+            }
+
+            var error = Assert.Throws<CatalogueStoreException>(() => EffectJournal.Open(path));
+            Assert.Contains("untouched", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(Directory.GetFiles(directory.FullName, "*.quarantine-*"));
+            using var check = new SqliteConnection($"Data Source={path};Mode=ReadOnly");
+            check.Open();
+            using var version = check.CreateCommand();
+            version.CommandText = "SELECT value FROM meta WHERE key='schema_version';";
+            Assert.Equal("0", version.ExecuteScalar() as string);
+            using var open = check.CreateCommand();
+            open.CommandText = "SELECT count(*) FROM effects WHERE removed_utc IS NULL;";
+            Assert.Equal(1L, (long)open.ExecuteScalar()!);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     private static MemoryCatalogue PreparedCatalogue()
@@ -554,12 +829,13 @@ public class BehaviorTests
         return new EligibilityContext { NowUtc = Now, NetworkEpoch = 1, AllowInsecureCertificates = false };
     }
 
-    private static IpcRequest Request(string operation, object payload, string? id = null)
+    private static IpcRequest Request(string operation, object payload, string? id = null, long revision = 0)
     {
         return new IpcRequest
         {
             ProtocolVersion = ProductLimits.IpcProtocolVersion,
             RequestId = id ?? Guid.NewGuid().ToString("N"),
+            ExpectedStateRevision = revision,
             Operation = operation,
             Payload = JsonSerializer.SerializeToElement(payload, IpcJson.Options),
         };
@@ -621,6 +897,54 @@ public class BehaviorTests
         public GuardResult Recover(IReadOnlyList<OwnedEffect> effects)
         {
             return new GuardResult(true, false, null, effects.Select(effect => effect.Id).ToArray());
+        }
+    }
+
+    private sealed class RecordingGuard : INetworkGuard
+    {
+        public long ArmedGeneration { get; private set; }
+        public long DisarmedGeneration { get; private set; } = -1;
+
+        public GuardResult Arm(GuardRequest request)
+        {
+            ArmedGeneration = request.Generation;
+            return new GuardResult(true, true, null, []);
+        }
+
+        public GuardResult Disarm(long generation)
+        {
+            DisarmedGeneration = generation;
+            return new GuardResult(true, false, null, []);
+        }
+
+        public GuardResult Recover(IReadOnlyList<OwnedEffect> effects)
+        {
+            return new GuardResult(true, false, null, effects.Select(effect => effect.Id).ToArray());
+        }
+    }
+
+    private sealed class GateCore : ICoreController
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Stopped { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Stops { get; private set; }
+        public string Yaml { get; private set; } = "";
+
+        public async Task<CoreStartResult> StartAsync(string yaml, CancellationToken cancellationToken)
+        {
+            Yaml = yaml;
+            Started.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return new CoreStartResult(true, null);
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Stops++;
+            Stopped.TrySetResult();
+            return Task.CompletedTask;
         }
     }
 

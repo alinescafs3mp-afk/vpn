@@ -72,20 +72,47 @@ public static class ForbiddenPayload
     public static bool ContainsForbidden(JsonElement payload, out string name)
     {
         name = "";
-        if (payload.ValueKind != JsonValueKind.Object)
+        return Walk(payload, 0, ref name);
+    }
+
+    private static bool Walk(JsonElement element, int depth, ref string name)
+    {
+        if (depth > 32)
         {
-            return false;
+            name = "depth";
+            return true;
         }
 
-        foreach (var property in payload.EnumerateObject())
+        switch (element.ValueKind)
         {
-            if (Names.Contains(property.Name, StringComparer.OrdinalIgnoreCase))
-            {
-                name = property.Name;
-                return true;
-            }
-        }
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (Names.Contains(property.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        name = property.Name;
+                        return true;
+                    }
 
-        return false;
+                    if (Walk(property.Value, depth + 1, ref name))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (Walk(item, depth + 1, ref name))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            default:
+                return false;
+        }
     }
 }

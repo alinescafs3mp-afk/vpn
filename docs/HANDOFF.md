@@ -2,13 +2,13 @@
 
 ## Для владельца
 
-Срез 0.1.0 лежит в этом дереве. Выпуска нет. Установщика нет. Туннель Windows не проверялся. Публичные узлы не измерялись. Архив и его сумма описаны в `docs/IMPLEMENTATION_STATUS.md`. Коммит реализации: `9258f6c0eef8f7e7ad5ea6b2eaa8355abd7e95cd`. Следующий коммит только записывает этот SHA. `origin/main` после отправки — тот записывающий коммит.
+Аудит 2026-10-02 лежит в этом дереве. Выпуска нет. Установщика нет. Туннель Windows не проверялся. Публичные узлы не измерялись. Папка `for_fix/` пустая и ждёт директивы Астры. Архив и его сумма описаны в `docs/IMPLEMENTATION_STATUS.md`. SHA коммита аудита записывает следующий коммит. `origin/main` после отправки — тот записывающий коммит.
 
 ## Last verified commit
 
-Implementation commit: `9258f6c0eef8f7e7ad5ea6b2eaa8355abd7e95cd`
+Parent before the audit: `4425ce4a6fa93589ff8e2974fc1f84b3b156d3a0`
 
-This handoff edit is a child of that commit. `origin/main` after the push is the child. Verify with:
+This handoff does not name the audit commit yet. The next commit records that SHA. Verify with:
 
 ```bash
 git fetch origin
@@ -33,9 +33,9 @@ AUTOVPN_MIHOMO_PATH=<linux mihomo v1.19.32> dotnet test tests/AutoVpn.UnitTests 
 dotnet publish (Service, Recovery, Inventory, Desktop) -c Release -r win-x64 --self-contained true
 ```
 
-Results: build 0 warnings; unit tests 29 passed and 0 failed with Mihomo unset; filtered core test 1 passed (`mihomo -t`, non-TUN, documentation address); publish produced PE32+ executables. Details and the archive hash are in `docs/evidence/build-manifest.json`.
+Results: build 0 warnings; unit tests 36 passed and 0 failed with Mihomo unset; filtered core test 1 passed (`mihomo -t`, non-TUN, documentation address); publish produced PE32+ executables. Details and the archive hash are in `docs/evidence/build-manifest.json`.
 
-`scripts/test-windows-admin.ps1` and `scripts/verify-release.ps1` exit 2 on purpose. They were not used as a green gate.
+`scripts/test-windows-admin.ps1` and `scripts/verify-release.ps1` exit 2 on purpose. They were not used as a green gate. `scripts/package.ps1` was not executed.
 
 ## Do not
 
@@ -43,11 +43,13 @@ Results: build 0 warnings; unit tests 29 passed and 0 failed with Mihomo unset; 
 - Commit `artifacts/`, subscription bodies, or databases.
 - Force-push.
 - Report Connected, a country, or a latency that a probe did not measure.
-- Treat `PipeOptions.CurrentUserOnly` as a completed Windows ACL test. The service still stamps a fixed caller id.
+- Treat `PipeOptions.CurrentUserOnly` as a completed Windows ACL test. On Linux `SO_PEERCRED` matches the service uid. On Windows the service still stamps `windows-user`.
+- Put Astra directives anywhere except `for_fix/`.
 
 ## Pins
 
 - SDK 10.0.112
 - Mihomo `v1.19.32` commit `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`
 - Source tree `20c38289c29e4dba6b8f01ddd3273ec9ec169b46`
-- Archive SHA-256 `bd314673d6947e7d14a385d1f5bdbe624e541a096053cd79fb9aa7ad2948baee`
+- Archive SHA-256 `a4c142f9d88c85849278c6e7b0e13cdfc7a26975bdd3bf565d944a3ecd0c64cf`
+- Archive bytes 134272704, packed 2026-10-02T19:58:42Z

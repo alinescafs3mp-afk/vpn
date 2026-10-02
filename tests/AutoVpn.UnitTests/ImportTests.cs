@@ -206,4 +206,13 @@ public class ImportTests
         var twice = CanonicalIdentity.CanonicalJson(CanonicalIdentity.Normalize(batch.Records[0].Semantics!));
         Assert.Equal(once, twice);
     }
+
+    [Fact]
+    public void BrokenJsonIsNotReportedAsADuplicateKey()
+    {
+        var broken = SubscriptionImporter.Import("{");
+        Assert.Equal(ReasonCodes.InvalidUri, broken.Records[0].ReasonCode);
+        var duplicate = SubscriptionImporter.Import("""{"outbounds":[],"outbounds":[]}""");
+        Assert.Equal(ReasonCodes.DuplicateKey, duplicate.Records[0].ReasonCode);
+    }
 }

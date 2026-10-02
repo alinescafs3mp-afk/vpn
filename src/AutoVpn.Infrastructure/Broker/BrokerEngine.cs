@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using AutoVpn.Application;
 using AutoVpn.Contracts;
@@ -18,7 +19,9 @@ public sealed class BrokerEngine
     private long _sequence;
     private bool _coreRunning;
     private List<StandbyCandidate> _standbys = [];
-    private int _switchesInWindow;
+    private readonly Queue<DateTimeOffset> _switchTimes = new();
+    private DateTimeOffset? _cooldownUntil;
+    private bool _switchBusy;
 
     public BrokerEngine(ICatalogue catalogue, INetworkGuard guard, ICoreController core, EffectJournal? journal = null)
     {
@@ -43,12 +46,19 @@ public sealed class BrokerEngine
     {
         try
         {
+            if (IpcOperations.ChangesState(request.Operation) &&
+                request.ExpectedStateRevision != 0 &&
+                request.ExpectedStateRevision != Snapshot().Revision)
+            {
+                return Fail(request, ReasonCodes.StaleRevision, "Состояние службы уже изменилось.");
+            }
+
             return request.Operation switch
             {
                 IpcOperations.GetSnapshot => Ok(request, Snapshot()),
                 IpcOperations.Connect => await ConnectAsync(request, cancellationToken).ConfigureAwait(false),
                 IpcOperations.Disconnect => await DisconnectAsync(request, cancellationToken).ConfigureAwait(false),
-                IpcOperations.ReportHealth => ReportHealth(request),
+                IpcOperations.ReportHealth => await ReportHealthAsync(request, cancellationToken).ConfigureAwait(false),
                 IpcOperations.ApplyRuntimeSet => ApplyRuntimeSet(request),
                 IpcOperations.RecoverOwned => Recover(request),
                 _ => Fail(request, "UNKNOWN_OPERATION", "Операция не разрешена."),
@@ -117,11 +127,34 @@ public sealed class BrokerEngine
             return Fail(request, ReasonCodes.NoEligibleServer, Ru.NoServer);
         }
 
+        string yaml;
+        try
+        {
+            yaml = MihomoProfileGenerator.Build(new ProfileBuildRequest
+            {
+                Secret = NewSecret(),
+                ControllerPort = 12789,
+                SocksPort = null,
+                Tun = true,
+                LanAccess = LanAccess(request, payload),
+                AllowInsecureCertificates = _catalogue.Settings.AllowInsecureCertificates,
+                Nodes = [NodeWireFactory.FromCatalogue(selected)],
+                SelectedNodeId = selected.NodeId,
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Fail(request, string.IsNullOrWhiteSpace(ex.Message) ? ReasonCodes.CoreConfigRejected : ex.Message,
+                "Профиль ядра отклонён до изменения сети.");
+        }
+
         var alreadyRunning = false;
         string? refusal = null;
+        var didArm = false;
+        long armedGeneration = 0;
         lock (_gate)
         {
-            if (_state.Phase is TunnelPhase.Connected or TunnelPhase.Connecting or TunnelPhase.PreparingProtection)
+            if (_state.ProtectionArmed || _state.Phase is TunnelPhase.Connected or TunnelPhase.Connecting or TunnelPhase.PreparingProtection or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
             {
                 alreadyRunning = true;
             }
@@ -129,7 +162,8 @@ public sealed class BrokerEngine
             {
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Connect, _state.Generation, selected.NodeId));
                 _sequence++;
-                var armed = _guard.Arm(new GuardRequest(_state.Generation, _catalogue.Settings.LanAccess, _catalogue.Settings.ProtectionOnConnect));
+                armedGeneration = _state.Generation;
+                var armed = _guard.Arm(new GuardRequest(armedGeneration, LanAccess(request, payload), true));
                 if (!armed.Armed)
                 {
                     _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.ProtectionFailed, _state.Generation, selected.NodeId, armed.ReasonCode));
@@ -138,6 +172,7 @@ public sealed class BrokerEngine
                 }
                 else
                 {
+                    didArm = true;
                     _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.ProtectionArmed, _state.Generation, selected.NodeId));
                     _sequence++;
                 }
@@ -155,21 +190,17 @@ public sealed class BrokerEngine
             return Fail(request, refusal, BlockMessage(refusal));
         }
 
-        var yaml = MihomoProfileGenerator.Build(new ProfileBuildRequest
-        {
-            Secret = NewSecret(),
-            ControllerPort = 12789,
-            SocksPort = null,
-            Tun = true,
-            LanAccess = _catalogue.Settings.LanAccess,
-            Nodes = [NodeWireFactory.FromCatalogue(selected)],
-            SelectedNodeId = selected.NodeId,
-        });
         var started = await _core.StartAsync(yaml, cancellationToken).ConfigureAwait(false);
+        var abandon = false;
         string? startRefusal = null;
         lock (_gate)
         {
-            if (!started.Started)
+            abandon = _state.Generation != armedGeneration || _state.DisconnectCommitted;
+            if (abandon)
+            {
+                _coreRunning = false;
+            }
+            else if (!started.Started)
             {
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.VerifyFailed, _state.Generation, selected.NodeId, started.ReasonCode));
                 _sequence++;
@@ -184,9 +215,26 @@ public sealed class BrokerEngine
             }
         }
 
+        if (abandon || startRefusal is not null)
+        {
+            await _core.StopAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         if (startRefusal is not null)
         {
+            if (didArm)
+            {
+                ReleaseProtection(armedGeneration);
+            }
+
+            _catalogue.SetActiveNode(null);
             return Fail(request, startRefusal, "Ядро не запущено. Подключение не объявлено.");
+        }
+
+        if (abandon)
+        {
+            _catalogue.SetActiveNode(null);
+            return Fail(request, ReasonCodes.Canceled, "Подключение отменено. Ядро остановлено.");
         }
 
         _catalogue.SetActiveNode(selected.NodeId);
@@ -215,16 +263,22 @@ public sealed class BrokerEngine
 
     private async Task<IpcResponse> DisconnectAsync(IpcRequest request, CancellationToken cancellationToken)
     {
+        long armedGeneration;
         lock (_gate)
         {
-            _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Disconnect, _state.Generation));
+            armedGeneration = _state.Generation;
+            _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Disconnect, armedGeneration));
             _sequence++;
         }
 
         await _core.StopAsync(cancellationToken).ConfigureAwait(false);
-        _coreRunning = false;
+        lock (_gate)
+        {
+            _coreRunning = false;
+        }
+
         _catalogue.SetActiveNode(null);
-        var disarm = _guard.Disarm(_state.Generation);
+        var disarm = _guard.Disarm(armedGeneration);
         var recovery = _journal?.Recover(_guard);
         var unfinished = recovery is { Completed: false } || !disarm.Completed;
         if (unfinished)
@@ -242,7 +296,7 @@ public sealed class BrokerEngine
         return Ok(request, Snapshot(), "Подключение остановлено.");
     }
 
-    private IpcResponse ReportHealth(IpcRequest request)
+    private async Task<IpcResponse> ReportHealthAsync(IpcRequest request, CancellationToken cancellationToken)
     {
         var payload = request.Payload.Deserialize<HealthPayload>(IpcJson.RequestOptions);
         if (payload is null)
@@ -260,9 +314,13 @@ public sealed class BrokerEngine
             return Fail(request, "MALFORMED", "Неизвестный тип сбоя.");
         }
 
+        var now = DateTimeOffset.UtcNow;
         var stayed = false;
+        CatalogueNode? switchTarget = null;
+        long switchGeneration = 0;
         lock (_gate)
         {
+            PruneSwitches(now);
             var decision = FailoverPolicy.Decide(new FailoverContext
             {
                 Generation = _state.Generation,
@@ -273,30 +331,114 @@ public sealed class BrokerEngine
                 ActiveNodeId = _state.ActiveNodeId,
                 Failure = failure,
                 ConsecutiveHealthFailures = payload.ConsecutiveFailures,
-                SwitchesInLastMinute = _switchesInWindow,
-                CooldownActive = false,
+                SwitchesInLastMinute = _switchTimes.Count,
+                CooldownActive = _cooldownUntil is DateTimeOffset until && until > now,
                 Standbys = _standbys,
             });
-            if (decision.Action is FailoverAction.Stay or FailoverAction.IgnoreStale)
+            if (decision.Action is FailoverAction.Stay or FailoverAction.IgnoreStale or FailoverAction.WaitCooldown or FailoverAction.DiagnoseTargets)
             {
                 stayed = true;
+                if (decision.Action == FailoverAction.WaitCooldown && _cooldownUntil is null)
+                {
+                    _cooldownUntil = now.AddSeconds(ProductLimits.SwitchCooldownSeconds);
+                }
             }
             else if (decision.Action == FailoverAction.BlockOffline)
             {
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.UplinkLost, _state.Generation, _state.ActiveNodeId));
                 _sequence++;
             }
-            else if (decision.Action == FailoverAction.Switch && decision.NodeId is not null && _state.Phase == TunnelPhase.Connected)
+            else if (decision.Action == FailoverAction.Switch && decision.NodeId is not null && _state.Phase == TunnelPhase.Connected && !_switchBusy)
             {
-                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.HealthFailed, _state.Generation, _state.ActiveNodeId, decision.ReasonCode));
-                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.SwitchCommitted, _state.Generation, decision.NodeId));
-                _switchesInWindow++;
-                _sequence++;
+                var candidate = _catalogue.Nodes.FirstOrDefault(node => node.NodeId == decision.NodeId);
+                if (candidate is null || !IsCurrentlyEligible(candidate, now))
+                {
+                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, ReasonCodes.NoEligibleServer));
+                    _sequence++;
+                }
+                else
+                {
+                    _switchBusy = true;
+                    switchTarget = candidate;
+                    switchGeneration = _state.Generation;
+                }
             }
             else
             {
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, decision.ReasonCode));
                 _sequence++;
+            }
+        }
+
+        if (switchTarget is not null)
+        {
+            var switched = false;
+            try
+            {
+                var yaml = MihomoProfileGenerator.Build(new ProfileBuildRequest
+                {
+                    Secret = NewSecret(),
+                    ControllerPort = 12789,
+                    Tun = true,
+                    LanAccess = _catalogue.Settings.LanAccess,
+                    AllowInsecureCertificates = _catalogue.Settings.AllowInsecureCertificates,
+                    Nodes = [NodeWireFactory.FromCatalogue(switchTarget)],
+                    SelectedNodeId = switchTarget.NodeId,
+                });
+                var started = await _core.StartAsync(yaml, cancellationToken).ConfigureAwait(false);
+                var abandon = false;
+                lock (_gate)
+                {
+                    abandon = _state.Generation != switchGeneration || _state.DisconnectCommitted || _state.Phase != TunnelPhase.Connected;
+                    if (!abandon && started.Started)
+                    {
+                        _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.HealthFailed, _state.Generation, _state.ActiveNodeId));
+                        _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.SwitchCommitted, _state.Generation, switchTarget.NodeId));
+                        _switchTimes.Enqueue(now);
+                        if (_switchTimes.Count >= ProductLimits.MaxSwitchesPerMinute)
+                        {
+                            _cooldownUntil = now.AddSeconds(ProductLimits.SwitchCooldownSeconds);
+                        }
+
+                        _coreRunning = true;
+                        _sequence++;
+                        switched = true;
+                    }
+                    else if (!abandon)
+                    {
+                        _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, started.ReasonCode ?? ReasonCodes.CoreConfigRejected));
+                        _sequence++;
+                        _coreRunning = false;
+                    }
+                }
+
+                if (!switched)
+                {
+                    await _core.StopAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                lock (_gate)
+                {
+                    if (_state.Generation == switchGeneration && _state.Phase == TunnelPhase.Connected)
+                    {
+                        _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, ReasonCodes.CoreConfigRejected));
+                        _sequence++;
+                    }
+                }
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    _switchBusy = false;
+                }
+            }
+
+            if (switched)
+            {
+                _catalogue.SetActiveNode(switchTarget.NodeId);
             }
         }
 
@@ -318,15 +460,39 @@ public sealed class BrokerEngine
             return Fail(request, "MALFORMED", "Список запасных серверов повреждён.");
         }
 
+        var now = DateTimeOffset.UtcNow;
+        var accepted = new List<StandbyCandidate>();
+        foreach (var item in standbys)
+        {
+            var node = _catalogue.Nodes.FirstOrDefault(candidate => candidate.NodeId == item.NodeId);
+            if (node is null || !IsCurrentlyEligible(node, now) || !CountryAllows(node))
+            {
+                continue;
+            }
+
+            accepted.Add(new StandbyCandidate
+            {
+                NodeId = node.NodeId,
+                EndpointKey = node.Semantics.Host + ":" + node.Semantics.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Country = node.AdvertisedCountry ?? "",
+                SourceFamilyId = node.CurrentFamilies.FirstOrDefault() ?? node.HistoricalFamilies.FirstOrDefault() ?? "",
+                Cost = Ranker.Cost(Rank(node)),
+                FreshOnEpoch = true,
+            });
+        }
+
         lock (_gate)
         {
-            _standbys = standbys;
+            _standbys = accepted;
             _sequence++;
         }
 
-        var message = Snapshot().Phase == nameof(TunnelPhase.Connected)
-            ? "Список запасных обновлён. Текущая сессия не перезапущена."
-            : "Список запасных сохранён.";
+        var connected = Snapshot().Phase == nameof(TunnelPhase.Connected);
+        var message = accepted.Count == 0 && standbys.Count > 0
+            ? "Запасные серверы не приняты: нет локально проверенных кандидатов."
+            : connected
+                ? "Список запасных обновлён. Текущая сессия не перезапущена."
+                : "Список запасных сохранён.";
         return Ok(request, Snapshot(), message);
     }
 
@@ -374,9 +540,82 @@ public sealed class BrokerEngine
 
         return _catalogue.Eligible(context)
             .Where(CountryAllows)
-            .OrderBy(node => node.Assessment?.MedianLatencyMs ?? int.MaxValue)
+            .OrderBy(node => Ranker.Cost(Rank(node)))
             .ThenBy(node => node.NodeId, StringComparer.Ordinal)
             .FirstOrDefault();
+    }
+
+    private void ReleaseProtection(long generation)
+    {
+        var disarm = _guard.Disarm(generation);
+        var recovery = _journal?.Recover(_guard);
+        if (!disarm.Completed || recovery is { Completed: false })
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            if (_state.Generation == generation && _state.Phase == TunnelPhase.Blocked)
+            {
+                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.ProtectionReleased, generation));
+                _sequence++;
+            }
+        }
+    }
+
+    private void PruneSwitches(DateTimeOffset now)
+    {
+        while (_switchTimes.Count > 0 && now - _switchTimes.Peek() >= TimeSpan.FromMinutes(1))
+        {
+            _switchTimes.Dequeue();
+        }
+
+        if (_cooldownUntil is DateTimeOffset until && until <= now)
+        {
+            _cooldownUntil = null;
+        }
+    }
+
+    private bool IsCurrentlyEligible(CatalogueNode node, DateTimeOffset now)
+    {
+        var settings = _catalogue.Settings;
+        return MemoryCatalogue.IsEligible(node, new EligibilityContext
+        {
+            NowUtc = now,
+            NetworkEpoch = _catalogue.NetworkEpoch,
+            AllowInsecureCertificates = settings.AllowInsecureCertificates,
+            Purpose = SelectionPurpose.Automatic,
+            AllowedAge = TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes),
+            MaxAcceptableLatencyMs = settings.MaxAcceptableLatencyMs,
+            DisabledFamilies = settings.DisabledFamilyIds.ToHashSet(StringComparer.Ordinal),
+        });
+    }
+
+    private bool LanAccess(IpcRequest request, ConnectPayload payload)
+    {
+        _ = payload;
+        if (request.Payload.ValueKind == JsonValueKind.Object &&
+            request.Payload.TryGetProperty("lanAccess", out var property) &&
+            property.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return property.GetBoolean();
+        }
+
+        return _catalogue.Settings.LanAccess;
+    }
+
+    private static RankSample Rank(CatalogueNode node)
+    {
+        return new RankSample
+        {
+            NodeId = node.NodeId,
+            EndpointKey = node.Semantics.Host + ":" + node.Semantics.Port.ToString(CultureInfo.InvariantCulture),
+            MedianLatencyMs = node.Assessment?.MedianLatencyMs,
+            SampleCount = node.Assessment?.MedianLatencyMs is int ? 1 : 0,
+            FailureCount = node.Assessment?.ConsecutiveFailures ?? 0,
+            FlapsLastHour = 0,
+        };
     }
 
     private bool CountryAllows(CatalogueNode node)

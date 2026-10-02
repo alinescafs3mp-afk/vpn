@@ -19,4 +19,22 @@ public static class SessionText
     {
         return phase == nameof(TunnelPhase.Connected);
     }
+
+    /// <summary>
+    /// Disconnect stays available while a session or armed protection exists.
+    /// Connecting is not Connected.
+    /// </summary>
+    public static bool OffersDisconnect(string? phase, bool protectionArmed = false)
+    {
+        if (protectionArmed)
+        {
+            return true;
+        }
+
+        return phase is nameof(TunnelPhase.Connected)
+            or nameof(TunnelPhase.Connecting)
+            or nameof(TunnelPhase.PreparingProtection)
+            or nameof(TunnelPhase.Reconnecting)
+            or nameof(TunnelPhase.RestoringNetwork);
+    }
 }

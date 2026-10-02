@@ -41,7 +41,9 @@ Production secrets use DPAPI current-user on Windows. Off Windows, `UnavailableS
 
 Frame: 4-byte little-endian length plus UTF-8 JSON, maximum 256 KiB, protocol version 1. Unknown operations, a bad version, a replayed id (64 remembered), a remote pipe, a second SID, and forbidden payload fields fail closed.
 
-`LocalIpcServer` accepts one connection at a time until cancelled, then waits again. `PipeOptions.CurrentUserOnly` is set. That flag was not verified against a second Windows user (`NOT_RUN`). The service still passes a fixed caller identity (`windows-user` on Windows, `uid:<pid>` off Windows). It does not read the connected client's SID.
+`LocalIpcServer` accepts one connection at a time until cancelled, then waits again. `PipeOptions.CurrentUserOnly` is set. On Linux the server also requires `SO_PEERCRED` to match its own effective uid and then stamps `uid:<uid>`. That check passed for same-user sequential clients in the unit test. It was not verified against a second Windows user (`NOT_RUN`). On Windows the service still passes the fixed caller `windows-user` and does not read the connected client's SID.
+
+A non-zero `ExpectedStateRevision` that does not match the broker is rejected with `STALE_REVISION`. Zero means the caller did not pin a revision. Nested forbidden fields fail closed. Cooldown and target-outage health reports do not move a connected session to `Blocked`.
 
 ## What is not wired
 

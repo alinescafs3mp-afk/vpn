@@ -18,13 +18,13 @@ The controller listens on loopback with a random secret of 24 bytes when a profi
 
 ## IPC abuse
 
-The dispatcher tests cover a remote pipe, a replayed request id, a forbidden `yaml` field, and an unknown operation. They fail closed. A second sequential snapshot on the local pipe succeeds for the same configured caller. That is not a Windows ACL test.
+The dispatcher tests cover a remote pipe, a replayed request id, a forbidden `yaml` field, a nested `profilePath`, and an unknown operation. They fail closed. A second sequential snapshot on the local pipe succeeds for the same Linux uid. That is not a Windows ACL test. Profile fields that contain a control character are rejected before the guard runs. An HTTPS URL with userinfo is rejected even when the host is allow-listed.
 
 Payloads are not logged by the pipe server. SQLite tests use an XOR stand-in and check that the raw file does not contain the fixture password. DPAPI itself is `NOT_RUN`.
 
 ## Network effects
 
-No filter, route, or DNS change is installed by this build. Recovery of a journal that still has open rows returns not completed and does not mark them removed. A corrupt journal is quarantined and reported as unreadable, not as an empty success.
+No filter, route, or DNS change is installed by this build. Recovery of a journal that still has open rows returns not completed and does not mark them removed. A corrupt journal is quarantined and reported as unreadable, not as an empty success. A journal whose schema is not version 1 is left untouched and the recovery tool exits 2. Disconnect removes effects for the generation that was armed. A connect that is cancelled while the core is starting does not leave that start reported as success.
 
 ## Supply chain
 

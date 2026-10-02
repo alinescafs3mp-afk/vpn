@@ -155,9 +155,12 @@ public sealed class EffectJournal : IDisposable
         try
         {
             var value = version.ExecuteScalar() as string;
-            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var schema) && schema > SchemaVersion)
+            if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var schema) || schema != SchemaVersion)
             {
-                throw new CatalogueStoreException("Effect journal was written by a newer AutoVPN. It was left untouched.");
+                var newer = schema > SchemaVersion;
+                throw new CatalogueStoreException(newer
+                    ? "Effect journal was written by a newer AutoVPN. It was left untouched."
+                    : "Effect journal schema is not supported. It was left untouched.");
             }
         }
         catch (SqliteException)

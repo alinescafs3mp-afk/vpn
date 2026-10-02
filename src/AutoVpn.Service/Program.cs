@@ -12,8 +12,8 @@ Console.WriteLine("Каталог данных: " + root);
 Console.WriteLine("Сетевые фильтры и TUN на этом запуске не устанавливаются: " + UnavailableNetworkGuard.PlatformReason());
 
 // SQLite secrets use DPAPI current-user and are refused off Windows.
-// The connected client's Windows SID is not read here. PipeOptions.CurrentUserOnly
-// is requested; its ACL was not verified on Windows (NOT_RUN).
+// Linux accepts the pipe only after SO_PEERCRED matches the service uid.
+// The Windows SID of the connected client is still not read (NOT_RUN).
 ICatalogue catalogue = OperatingSystem.IsWindows()
     ? SqliteCatalogue.Open(Path.Combine(root, "catalogue.sqlite"), SecretProtectors.ForProductionHost())
     : new MemoryCatalogue();

@@ -11,8 +11,20 @@ if (!File.Exists(path))
     return 0;
 }
 
-using var journal = EffectJournal.Open(path);
-var recovery = journal.Recover(new UnavailableNetworkGuard());
+EffectJournal journal;
+try
+{
+    journal = EffectJournal.Open(path);
+}
+catch (CatalogueStoreException ex)
+{
+    Console.WriteLine(ex.Message);
+    Console.WriteLine("Файл журнала не изменён. Правила не считаются снятыми. Сеть не изменялась.");
+    return 2;
+}
+
+using var open = journal;
+var recovery = open.Recover(new UnavailableNetworkGuard());
 if (recovery.QuarantinePath is not null)
 {
     Console.WriteLine("Журнал не прочитан и отложен: " + recovery.QuarantinePath);

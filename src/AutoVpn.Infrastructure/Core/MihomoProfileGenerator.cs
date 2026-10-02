@@ -17,6 +17,7 @@ public sealed record ProfileBuildRequest
     public string TunAddress6 { get; init; } = "fdfe:dcba:9876::1/126";
     public int Mtu { get; init; } = 1500;
     public string Stack { get; init; } = "mixed";
+    public bool AllowInsecureCertificates { get; init; }
     public required IReadOnlyList<NodeWire> Nodes { get; init; }
     public string? SelectedNodeId { get; init; }
 }
@@ -61,13 +62,13 @@ public static class MihomoProfileGenerator
             builder.AppendLine("tun:");
             builder.AppendLine("  enable: true");
             builder.AppendLine($"  device: '{Yaml(request.TunDeviceName)}'");
-            builder.AppendLine($"  stack: {request.Stack}");
+            builder.AppendLine($"  stack: '{Yaml(request.Stack)}'");
             builder.AppendLine("  auto-route: true");
             builder.AppendLine("  auto-detect-interface: true");
             builder.AppendLine("  strict-route: true");
             builder.AppendLine($"  mtu: {request.Mtu.ToString(CultureInfo.InvariantCulture)}");
-            builder.AppendLine($"  inet4-address: ['{request.TunAddress}']");
-            builder.AppendLine($"  inet6-address: ['{request.TunAddress6}']");
+            builder.AppendLine($"  inet4-address: ['{Yaml(request.TunAddress)}']");
+            builder.AppendLine($"  inet6-address: ['{Yaml(request.TunAddress6)}']");
             builder.AppendLine("  dns-hijack:");
             builder.AppendLine("    - any:53");
             builder.AppendLine("    - tcp://any:53");
@@ -91,16 +92,28 @@ public static class MihomoProfileGenerator
 
         foreach (var node in request.Nodes)
         {
-            AppendProxy(builder, node);
+            AppendProxy(builder, node, request.AllowInsecureCertificates);
         }
 
-        var names = request.Nodes.Select(CoreNodeName).ToArray();
+        var names = new List<string>(request.Nodes.Count);
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var node in request.Nodes)
+        {
+            var name = CoreNodeName(node);
+            if (name.Length < 2 || !seenNames.Add(name))
+            {
+                throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+            }
+
+            names.Add(name);
+        }
+
         var selected = request.Nodes.FirstOrDefault(node => node.NodeId == request.SelectedNodeId);
         builder.AppendLine("proxy-groups:");
         builder.AppendLine("  - name: AUTO_SELECT");
         builder.AppendLine("    type: select");
         builder.AppendLine("    proxies:");
-        if (names.Length == 0)
+        if (names.Count == 0)
         {
             builder.AppendLine("      - REJECT");
         }
@@ -132,7 +145,7 @@ public static class MihomoProfileGenerator
             builder.AppendLine("  - IP-CIDR6,::1/128,DIRECT,no-resolve");
         }
 
-        builder.AppendLine(names.Length == 0 ? "  - MATCH,REJECT" : "  - MATCH,AUTO_SELECT");
+        builder.AppendLine(names.Count == 0 ? "  - MATCH,REJECT" : "  - MATCH,AUTO_SELECT");
         return builder.ToString();
     }
 
@@ -147,15 +160,26 @@ public static class MihomoProfileGenerator
         return yaml.Contains("tun:", StringComparison.Ordinal) && yaml.Contains("enable: true", StringComparison.Ordinal);
     }
 
-    private static void AppendProxy(StringBuilder builder, NodeWire node)
+    private static void AppendProxy(StringBuilder builder, NodeWire node, bool allowInsecureCertificates)
     {
         if (EndpointSafety.IsNonPublicHost(node.Host))
         {
             throw new InvalidOperationException(ReasonCodes.NonPublicEndpoint);
         }
 
+        if (node.SkipCertVerify && !allowInsecureCertificates)
+        {
+            throw new InvalidOperationException(ReasonCodes.CertVerificationDisabled);
+        }
+
+        var type = TypeName(node.Protocol);
+        if (type.Length == 0 || type.Any(ch => !char.IsAsciiLetterOrDigit(ch)))
+        {
+            throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+        }
+
         builder.AppendLine($"  - name: '{CoreNodeName(node)}'");
-        builder.AppendLine($"    type: {TypeName(node.Protocol)}");
+        builder.AppendLine($"    type: {type}");
         builder.AppendLine($"    server: '{Yaml(node.Host)}'");
         builder.AppendLine($"    port: {node.Port.ToString(CultureInfo.InvariantCulture)}");
         Write(builder, "uuid", node.UserId);
@@ -194,6 +218,11 @@ public static class MihomoProfileGenerator
             {
                 builder.AppendLine($"      short-id: '{Yaml(node.ShortId)}'");
             }
+
+            if (node.SpiderX is not null)
+            {
+                builder.AppendLine($"      spider-x: '{Yaml(node.SpiderX)}'");
+            }
         }
 
         if (node.Alpn is { Length: > 0 })
@@ -227,6 +256,11 @@ public static class MihomoProfileGenerator
         }
 
         Write(builder, "plugin", node.Plugin);
+        if (!string.IsNullOrEmpty(node.PluginOpts))
+        {
+            AppendPluginOpts(builder, node.PluginOpts);
+        }
+
         Write(builder, "obfs", node.Obfs);
         Write(builder, "obfs-password", node.ObfsPassword);
         Write(builder, "congestion-controller", node.Congestion);
@@ -251,8 +285,37 @@ public static class MihomoProfileGenerator
         }
     }
 
+    private static void AppendPluginOpts(StringBuilder builder, string opts)
+    {
+        builder.AppendLine("    plugin-opts:");
+        foreach (var part in opts.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var eq = part.IndexOf('=');
+            if (eq <= 0)
+            {
+                throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+            }
+
+            var key = part[..eq];
+            if (key is not ("obfs" or "obfs-host" or "mode" or "host" or "path" or "tls"))
+            {
+                throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+            }
+
+            builder.AppendLine($"      {key}: '{Yaml(part[(eq + 1)..])}'");
+        }
+    }
+
     private static string Yaml(string value)
     {
+        foreach (var ch in value)
+        {
+            if (char.IsControl(ch) || ch is '\u2028' or '\u2029' or '\u0085')
+            {
+                throw new InvalidOperationException(ReasonCodes.CoreConfigRejected);
+            }
+        }
+
         return value.Replace("'", "''", StringComparison.Ordinal);
     }
 }

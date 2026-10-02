@@ -12,6 +12,7 @@ public partial class MainWindow : Window
 {
     private readonly NotifyIcon _tray;
     private bool _exit;
+    private bool _protectionArmed;
 
     public MainWindow()
     {
@@ -64,7 +65,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (SessionText.IsConnected(PhaseText.Tag as string))
+            if (SessionText.OffersDisconnect(PhaseText.Tag as string, _protectionArmed))
             {
                 await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
                 return;
@@ -98,31 +99,29 @@ public partial class MainWindow : Window
             }, CancellationToken.None).ConfigureAwait(true);
             if (response?.Snapshot is null)
             {
-                PhaseText.Text = Ru.Disconnected;
-                PhaseText.Tag = nameof(TunnelPhase.Disconnected);
-                DetailText.Text = Ru.ServiceMissing;
-                ConnectButton.Content = Ru.Connect;
+                ShowLocal(nameof(TunnelPhase.Disconnected), Ru.ServiceMissing, false);
                 return;
             }
 
-            var phase = response.Snapshot.Phase;
-            PhaseText.Tag = phase;
-            PhaseText.Text = SessionText.Phase(phase);
-            DetailText.Text = response.Message ?? Ru.WindowsGate;
-            ConnectButton.Content = SessionText.IsConnected(phase) ? Ru.Disconnect : Ru.Connect;
+            ShowLocal(response.Snapshot.Phase, response.Message ?? Ru.WindowsGate, response.Snapshot.ProtectionArmed);
         }
         catch (TimeoutException)
         {
-            PhaseText.Text = Ru.Disconnected;
-            PhaseText.Tag = nameof(TunnelPhase.Disconnected);
-            DetailText.Text = Ru.ServiceMissing;
+            ShowLocal(nameof(TunnelPhase.Disconnected), Ru.ServiceMissing, false);
         }
         catch (IOException)
         {
-            PhaseText.Text = Ru.Disconnected;
-            PhaseText.Tag = nameof(TunnelPhase.Disconnected);
-            DetailText.Text = Ru.ServiceMissing;
+            ShowLocal(nameof(TunnelPhase.Disconnected), Ru.ServiceMissing, false);
         }
+    }
+
+    private void ShowLocal(string phase, string detail, bool protectionArmed)
+    {
+        _protectionArmed = protectionArmed;
+        PhaseText.Tag = phase;
+        PhaseText.Text = SessionText.Phase(phase);
+        DetailText.Text = detail;
+        ConnectButton.Content = SessionText.OffersDisconnect(phase, protectionArmed) ? Ru.Disconnect : Ru.Connect;
     }
 
     private void ShowPage(UIElement page)

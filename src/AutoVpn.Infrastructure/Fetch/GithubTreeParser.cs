@@ -32,7 +32,7 @@ public static class GithubTreeParser
 
                 var path = pathElement.GetString() ?? "";
                 var type = item.TryGetProperty("type", out var typeElement) ? typeElement.GetString() : "blob";
-                if (type == "tree")
+                if (!string.Equals(type, "blob", StringComparison.Ordinal))
                 {
                     continue;
                 }

@@ -20,7 +20,7 @@ public sealed class PolicyHttpFetcher
     public PolicyHttpFetcher(HttpMessageHandler handler, IReadOnlySet<string> allowedHosts)
     {
         _handler = handler;
-        _allowedHosts = allowedHosts;
+        _allowedHosts = new HashSet<string>(allowedHosts, StringComparer.OrdinalIgnoreCase);
     }
 
     public async Task<FetchResult> GetAsync(Uri url, string? etag, int maxBytes, CancellationToken cancellationToken)
@@ -116,12 +116,12 @@ public sealed class PolicyHttpFetcher
 
     private bool IsAllowed(Uri uri)
     {
-        if (uri.Scheme != Uri.UriSchemeHttps)
+        if (uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo))
         {
             return false;
         }
 
-        return _allowedHosts.Contains(uri.Host);
+        return _allowedHosts.Contains(uri.IdnHost);
     }
 
     private static bool IsRedirect(HttpStatusCode status)

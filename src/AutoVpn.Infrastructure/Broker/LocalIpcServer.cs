@@ -182,7 +182,37 @@ public sealed class LocalIpcServer : IAsyncDisposable
         }
         else
         {
-            response = _dispatcher.Dispatch(request, _caller, incoming => _engine.HandleAsync(incoming, cancellationToken).GetAwaiter().GetResult());
+            var peer = PipePeer.Inspect(server);
+            if (!peer.Accepted)
+            {
+                response = new IpcResponse
+                {
+                    RequestId = request.RequestId,
+                    Ok = false,
+                    ErrorCode = "PEER",
+                    Message = "Владелец канала не совпадает с пользователем службы.",
+                };
+            }
+            else
+            {
+                var caller = peer.Verified
+                    ? new CallerIdentity { Sid = peer.Identity, SessionId = 0, IsRemotePipe = false }
+                    : _caller;
+                try
+                {
+                    response = _dispatcher.Dispatch(request, caller, incoming => _engine.HandleAsync(incoming, cancellationToken).GetAwaiter().GetResult());
+                }
+                catch (Exception)
+                {
+                    response = new IpcResponse
+                    {
+                        RequestId = request.RequestId,
+                        Ok = false,
+                        ErrorCode = "INTERNAL",
+                        Message = "Запрос отклонён.",
+                    };
+                }
+            }
         }
 
         var encoded = IpcFrames.Encode(response);

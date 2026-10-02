@@ -26,6 +26,7 @@ public enum TunnelCommandKind
     CoreExited = 10,
     UplinkLost = 11,
     Block = 12,
+    ProtectionReleased = 13,
 }
 
 public sealed record TunnelState
@@ -139,6 +140,11 @@ public static class TunnelReducer
                 Revision = state.Revision + 1,
                 ProtectionArmed = false,
                 DisconnectCommitted = false,
+            },
+            TunnelCommandKind.ProtectionReleased when state.Phase == TunnelPhase.Blocked && state.ProtectionArmed => state with
+            {
+                Revision = state.Revision + 1,
+                ProtectionArmed = false,
             },
             _ => state,
         };

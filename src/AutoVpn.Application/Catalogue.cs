@@ -62,9 +62,25 @@ public sealed class MemoryCatalogue : ICatalogue
 {
     private readonly List<CatalogueNode> _nodes = [];
     private long _epoch = 1;
+    private ProductSettings _settings = new();
 
     public long NetworkEpoch => _epoch;
-    public ProductSettings Settings { get; set; } = new();
+
+    public ProductSettings Settings
+    {
+        get => _settings;
+        set
+        {
+            var error = value.Validate();
+            if (error is not null)
+            {
+                throw new InvalidOperationException(error);
+            }
+
+            _settings = value;
+        }
+    }
+
     public IReadOnlyList<CatalogueNode> Nodes => _nodes;
 
     public void SetNetworkEpoch(long epoch)
@@ -121,11 +137,7 @@ public sealed class MemoryCatalogue : ICatalogue
             }
 
             existing.ArtifactFamilies[commit.ArtifactId] = commit.FamilyId;
-            if (item.PolicyBlocked)
-            {
-                existing.PolicyReason = item.ReasonCode;
-            }
-
+            existing.PolicyReason = item.PolicyBlocked ? item.ReasonCode : null;
             RebuildFamilies(existing);
         }
 
