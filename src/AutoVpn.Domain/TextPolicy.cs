@@ -105,7 +105,7 @@ public static partial class CountryLabels
         string? code = null;
         for (var i = 0; i < label.Length; i++)
         {
-            if (!char.IsHighSurrogate(label[i]) || i + 1 >= label.Length)
+            if (!char.IsHighSurrogate(label[i]) || i + 1 >= label.Length || !char.IsLowSurrogate(label[i + 1]))
             {
                 continue;
             }
@@ -196,6 +196,7 @@ public static partial class SecretRedactor
         }
 
         var result = UserInfo().Replace(text, "$1//<redacted>@");
+        result = JsonSecret().Replace(result, "\"$1\":\"<redacted>\"");
         result = SecretField().Replace(result, "$1<redacted>");
         if (canaries is not null)
         {
@@ -214,8 +215,11 @@ public static partial class SecretRedactor
     [GeneratedRegex(@"(?i)\b([a-z][a-z0-9+.-]*:)//[^\s/@]+@", RegexOptions.None, 100)]
     private static partial Regex UserInfo();
 
-    [GeneratedRegex(@"(?i)\b(password|uuid|public-key|publickey|short-id|shortid|auth)(\s*[:=]\s*)([^\s,;]+)", RegexOptions.None, 100)]
+    [GeneratedRegex(@"(?i)\b(password|secret|token|uuid|public-key|publickey|short-id|shortid|auth|private-key|controller-secret)(\s*[:=]\s*)([^\s,;]+)", RegexOptions.None, 100)]
     private static partial Regex SecretField();
+
+    [GeneratedRegex("(?i)\"(password|secret|token|uuid|public-key|publickey|short-id|shortid|auth|private-key|controller-secret)\"\\s*:\\s*\"[^\"]*\"", RegexOptions.None, 100)]
+    private static partial Regex JsonSecret();
 }
 
 public static class TrafficMath

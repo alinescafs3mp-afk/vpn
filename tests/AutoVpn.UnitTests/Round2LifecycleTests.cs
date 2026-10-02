@@ -146,6 +146,7 @@ public sealed class Round2LifecycleTests
 
         var allowed = ReadyCatalogue();
         allowed.Settings = allowed.Settings with { AllowInsecureCertificates = true, Revision = allowed.Settings.Revision + 1 };
+        var allowedSemantics = allowed.Nodes[0].Semantics with { SkipCertVerify = true, Port = 8443 };
         allowed.ApplySnapshot(new SnapshotCommit
         {
             ArtifactId = "skip-allowed",
@@ -157,8 +158,8 @@ public sealed class Round2LifecycleTests
             [
                 new SnapshotNode
                 {
-                    Digest = "skip-allowed-digest",
-                    Semantics = allowed.Nodes[0].Semantics with { SkipCertVerify = true, Port = 8443 },
+                    Digest = CanonicalIdentity.Digest(allowedSemantics),
+                    Semantics = allowedSemantics,
                     Label = "skip-allowed",
                     FamilyId = "black-vless",
                     ArtifactId = "skip-allowed",
@@ -230,7 +231,8 @@ public sealed class Round2LifecycleTests
         switchCore.Release.TrySetResult();
         var held = await health;
         Assert.True(held.Ok);
-        Assert.Equal(TunnelPhase.Connected, switchEngine.State.Phase);
+        Assert.NotEqual(TunnelPhase.Connected, switchEngine.State.Phase);
+        Assert.False(switchEngine.Snapshot().CoreRunning);
         Assert.Equal(active, switchEngine.State.ActiveNodeId);
         Assert.True(switchCore.Stops >= 1);
     }
@@ -272,7 +274,9 @@ public sealed class Round2LifecycleTests
             var nextDay = ProbeByteBudget.Load(path, 5, day.AddDays(1));
             Assert.False(nextDay.Exhausted(day.AddDays(1)));
             File.WriteAllText(path, "corrupt");
-            Assert.Equal(0, ProbeByteBudget.Load(path, 5, day).Spent);
+            var corrupt = ProbeByteBudget.Load(path, 5, day);
+            Assert.True(corrupt.Exhausted(day));
+            Assert.Equal(5, corrupt.Spent);
 
             var healthy = ReadyCatalogue();
             var latency = healthy.Nodes[0].Assessment!.MedianLatencyMs;

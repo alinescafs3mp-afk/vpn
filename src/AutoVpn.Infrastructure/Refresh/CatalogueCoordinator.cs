@@ -157,11 +157,7 @@ public static class SpeedMeasurement
             return null;
         }
 
-        var node = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        var assessment = node?.Assessment;
-        if (assessment?.Health is not (HealthState.Healthy or HealthState.Degraded)
-            || !string.Equals(assessment.Digest, binding.Value.Digest, StringComparison.Ordinal)
-            || assessment.NetworkEpoch != binding.Value.NetworkEpoch)
+        if (!SpeedStillBound(catalogue, nodeId, binding.Value, cancellationToken))
         {
             return null;
         }
@@ -171,7 +167,29 @@ public static class SpeedMeasurement
             ProductLimits.ManualDownloadBytes,
             TimeSpan.FromSeconds(ProductLimits.ManualDownloadSeconds),
             cancellationToken).ConfigureAwait(false);
+        if (!SpeedStillBound(catalogue, nodeId, binding.Value, cancellationToken))
+        {
+            return null;
+        }
+
         return SpeedSample.From(read);
+    }
+
+    private static bool SpeedStillBound(ICatalogue catalogue, string nodeId, MeasurementBinding binding, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested || catalogue.NetworkEpoch != binding.NetworkEpoch)
+        {
+            return false;
+        }
+
+        var node = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
+        var assessment = node?.Assessment;
+        return node is not null
+            && !node.Excluded
+            && assessment?.Health is (HealthState.Healthy or HealthState.Degraded)
+            && string.Equals(assessment.Digest, binding.Digest, StringComparison.Ordinal)
+            && assessment.NetworkEpoch == binding.NetworkEpoch
+            && assessment.NetworkEpoch == catalogue.NetworkEpoch;
     }
 }
 
@@ -188,6 +206,7 @@ public sealed class CatalogueCoordinator
     private readonly IReadOnlySet<string> _probeTargets;
     private readonly RefreshFence _fence;
     private readonly ProbeByteBudget? _byteBudget;
+    private int _refreshCursor;
 
     public CatalogueCoordinator(
         ICatalogue catalogue,
@@ -296,7 +315,7 @@ public sealed class CatalogueCoordinator
                 continue;
             }
 
-            var urls = ReviewedRegistryLoader.ContentUrls(registry, path.Path, parsed.CommitSha);
+            var urls = ReviewedRegistryLoader.ContentUrls(registry, path.Path, CommitRef(registry, parsed));
             if (urls.Count == 0)
             {
                 unmatched++;
@@ -311,7 +330,21 @@ public sealed class CatalogueCoordinator
             });
         }
 
-        return new DiscoveryOutcome(true, parsed.CommitSha, items, null, unmatched);
+        var commit = CommitRef(registry, parsed);
+        return new DiscoveryOutcome(true, commit, items, null, unmatched);
+    }
+
+    private static string? CommitRef(ReviewedRegistry registry, TreeDiscovery parsed)
+    {
+        var path = registry.TreeApi.AbsolutePath.TrimEnd('/');
+        var slash = path.LastIndexOf('/');
+        var requested = slash >= 0 ? path[(slash + 1)..] : path;
+        if (requested.Length == 40 && requested.All(Uri.IsHexDigit))
+        {
+            return requested;
+        }
+
+        return parsed.CommitSha;
     }
 
     public async Task<RefreshOutcome> RefreshAsync(
@@ -325,9 +358,13 @@ public sealed class CatalogueCoordinator
         var gate = new SemaphoreSlim(ProductLimits.SourceDownloadConcurrency, ProductLimits.SourceDownloadConcurrency);
         var downloads = new List<Task<DownloadResult>>(items.Count);
         var budgetSkipped = new List<RefreshWorkItem>();
+        var count = items.Count;
+        var origin = count == 0 ? 0 : _refreshCursor % count;
         long reserved = 0;
-        foreach (var item in items)
+        var started = 0;
+        for (var index = 0; index < count; index++)
         {
+            var item = items[(origin + index) % count];
             if (reserved > 0 && reserved + ProductLimits.MaxArtifactBytes > ProductLimits.MaxRefreshBytes)
             {
                 budgetSkipped.Add(item);
@@ -335,7 +372,13 @@ public sealed class CatalogueCoordinator
             }
 
             reserved += ProductLimits.MaxArtifactBytes;
+            started++;
             downloads.Add(DownloadAsync(item, gate, cancellationToken, attemptTimeout, maxRetries));
+        }
+
+        if (count > 0)
+        {
+            _refreshCursor = (origin + Math.Max(started, 1)) % count;
         }
 
         DownloadResult[] finished;

@@ -453,7 +453,7 @@ public static class EndpointSafety
             100 when v4[1] is >= 64 and <= 127 => true,
             192 when v4[1] == 0 && v4[2] == 0 => true,
             192 when v4[1] == 0 && v4[2] == 2 => false,
-            198 when v4[1] == 18 => true,
+            198 when v4[1] is 18 or 19 => true,
             255 => true,
             _ when v4[0] >= 224 => true,
             _ => false,

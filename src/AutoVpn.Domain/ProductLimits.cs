@@ -16,6 +16,7 @@ public static class ProductLimits
     public const int IpcWriteTimeoutMs = 2000;
     public const int IpcRoundTripTimeoutMs = 15000;
     public const int IpcIdempotencyEntries = 256;
+    public const int IpcRetiredEntries = 8192;
     public const int MaxRedirects = 3;
     public const int MaxBase64Depth = 2;
     public const int MaxYamlDepth = 32;

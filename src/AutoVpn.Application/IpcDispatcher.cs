@@ -13,6 +13,9 @@ public sealed class IpcDispatcher
 
     private readonly object _gate = new();
     private readonly Dictionary<string, CacheEntry> _mutations = new(StringComparer.Ordinal);
+    private readonly Queue<string> _mutationOrder = new();
+    private readonly HashSet<string> _retired = new(StringComparer.Ordinal);
+    private readonly Queue<string> _retiredOrder = new();
     private readonly Dictionary<string, CacheEntry> _reads = new(StringComparer.Ordinal);
     private readonly Queue<string> _readOrder = new();
     private readonly Dictionary<string, CacheEntry> _safety = new(StringComparer.Ordinal);
@@ -68,6 +71,11 @@ public sealed class IpcDispatcher
                 return Fail(request, "OWNER", "Сессия не владеет службой.");
             }
 
+            if (_retired.Contains(request.RequestId))
+            {
+                return Fail(request, ReasonCodes.ReplayExpired, "Идентификатор запроса уже вышел из окна повтора и не выполняется снова.");
+            }
+
             if (TryCached(request.RequestId, fingerprint, out var cached, out var conflict))
             {
                 return conflict
@@ -87,10 +95,6 @@ public sealed class IpcDispatcher
             else if (!safety && !read && _busyInflight >= InflightLimit)
             {
                 return Fail(request, "BUSY", "Слишком много одновременных команд. Повторите запрос.");
-            }
-            else if (!safety && !read && _mutations.Count >= ProductLimits.IpcIdempotencyEntries)
-            {
-                return Fail(request, "REPLAY_WINDOW", "Журнал идемпотентности заполнен. Повтор не выполняется заново.");
             }
             else
             {
@@ -149,6 +153,9 @@ public sealed class IpcDispatcher
             _ownerSid = null;
             _ownerSession = null;
             _mutations.Clear();
+            _mutationOrder.Clear();
+            _retired.Clear();
+            _retiredOrder.Clear();
             _reads.Clear();
             _readOrder.Clear();
             _safety.Clear();
@@ -173,7 +180,7 @@ public sealed class IpcDispatcher
             }
             else
             {
-                _mutations[id] = entry;
+                RememberMutation(id, entry);
             }
         }
 
@@ -210,6 +217,49 @@ public sealed class IpcDispatcher
             }
 
             response = entry.Response;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void RememberMutation(string id, CacheEntry entry)
+    {
+        if (!_mutations.ContainsKey(id))
+        {
+            while (_mutations.Count >= ProductLimits.IpcIdempotencyEntries)
+            {
+                if (!RetireOldest())
+                {
+                    break;
+                }
+            }
+
+            _mutationOrder.Enqueue(id);
+        }
+
+        _mutations[id] = entry;
+    }
+
+    private bool RetireOldest()
+    {
+        while (_mutationOrder.Count > 0)
+        {
+            var old = _mutationOrder.Dequeue();
+            if (!_mutations.Remove(old))
+            {
+                continue;
+            }
+
+            if (_retired.Add(old))
+            {
+                _retiredOrder.Enqueue(old);
+                while (_retired.Count > ProductLimits.IpcRetiredEntries && _retiredOrder.Count > 0)
+                {
+                    _retired.Remove(_retiredOrder.Dequeue());
+                }
+            }
+
             return true;
         }
 

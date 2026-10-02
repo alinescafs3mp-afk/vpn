@@ -136,6 +136,11 @@ public static class ProbeCoordinator
                 gate.Release();
             }
 
+            if (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+
             var payloadBytes = Math.Max(0, observation.PayloadBytes);
             bytes += payloadBytes;
             if (spent is not null && observation.Class != ProbeClass.Canceled && observation.ReasonCode != ReasonCodes.Canceled)
@@ -160,7 +165,23 @@ public static class ProbeCoordinator
                 break;
             }
 
-            if (observation.Class is ProbeClass.CoreFailure or ProbeClass.Unsupported)
+            if (observation.Class == ProbeClass.Unsupported)
+            {
+                failed++;
+                TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
+                {
+                    Digest = digest,
+                    NetworkEpoch = epoch,
+                    Health = HealthState.Failed,
+                    LastSuccessUtc = node.Assessment?.LastSuccessUtc,
+                    LastFailureUtc = nowUtc,
+                    MedianLatencyMs = node.Assessment?.MedianLatencyMs,
+                    ConsecutiveFailures = (node.Assessment?.ConsecutiveFailures ?? 0) + 1,
+                });
+                continue;
+            }
+
+            if (observation.Class == ProbeClass.CoreFailure)
             {
                 return new ProbeReport(attempted, succeeded, failed, false);
             }
@@ -180,7 +201,7 @@ public static class ProbeCoordinator
                 return new ProbeReport(attempted, succeeded, failed, true);
             }
 
-            if (observation.Success && observation.LatencyMs is int latency && latency >= 0)
+            if (observation.Success && observation.LatencyMs is int latency && latency >= 0 && ProofAccepts(observation, digest, target) && !cancellationToken.IsCancellationRequested)
             {
                 TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
                 {
@@ -281,13 +302,31 @@ public static class ProbeCoordinator
             return false;
         }
 
-        if (observation.Class == ProbeClass.Canceled || observation.ReasonCode == ReasonCodes.Canceled)
+        if (cancellationToken.IsCancellationRequested
+            || observation.Class is ProbeClass.Canceled or ProbeClass.Environment or ProbeClass.CoreFailure
+            || observation.ReasonCode == ReasonCodes.Canceled
+            || observation.UplinkOffline)
         {
             return false;
         }
 
-        if (!observation.Success || observation.LatencyMs is not int latency || latency < 0)
+        if (!observation.Success || observation.LatencyMs is not int latency || latency < 0 || !ProofAccepts(observation, digest, target))
         {
+            if (catalogue.NetworkEpoch != epoch || !PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure))
+            {
+                return false;
+            }
+
+            catalogue.ApplyAssessment(nodeId, new AssessmentSnapshot
+            {
+                Digest = digest,
+                NetworkEpoch = epoch,
+                Health = HealthState.Failed,
+                LastSuccessUtc = node.Assessment?.LastSuccessUtc,
+                LastFailureUtc = nowUtc,
+                MedianLatencyMs = node.Assessment?.MedianLatencyMs,
+                ConsecutiveFailures = (node.Assessment?.ConsecutiveFailures ?? 0) + 1,
+            });
             return false;
         }
 
@@ -344,6 +383,23 @@ public static class ProbeCoordinator
 
         if (settings.CountryMode == CountryConstraint.Strict
             && !string.Equals(node.AdvertisedCountry, settings.Country, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool ProofAccepts(ProbeObservation observation, string digest, Uri target)
+    {
+        if (observation.CandidateDigest is not null &&
+            !string.Equals(observation.CandidateDigest, digest, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (observation.TargetUri is not null &&
+            !string.Equals(observation.TargetUri, target.AbsoluteUri, StringComparison.Ordinal))
         {
             return false;
         }

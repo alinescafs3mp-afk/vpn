@@ -527,13 +527,20 @@ public sealed class Round2SliceATests
 
         var replay = dispatcher.Dispatch(Request(IpcOperations.Connect, new { n = 0 }, "mut-0"), caller, _ => throw new InvalidOperationException("replay"));
         Assert.Equal("stored", replay.Message);
-        var blocked = dispatcher.Dispatch(Request(IpcOperations.Connect, new { n = 999 }, "mut-new"), caller, _ => throw new InvalidOperationException("window"));
-        Assert.Equal("REPLAY_WINDOW", blocked.ErrorCode);
-        var safety = dispatcher.Dispatch(Request(IpcOperations.RecoverOwned, new { }, "recover-1"), caller, request => new IpcResponse { RequestId = request.RequestId, Ok = true, Message = "recovered" });
-        Assert.Equal("recovered", safety.Message);
-
         var conflict = dispatcher.Dispatch(Request(IpcOperations.Connect, new { n = 1 }, "mut-0"), caller, _ => throw new InvalidOperationException("conflict"));
         Assert.Equal(ReasonCodes.RequestConflict, conflict.ErrorCode);
+        var safety = dispatcher.Dispatch(Request(IpcOperations.RecoverOwned, new { }, "recover-1"), caller, request => new IpcResponse { RequestId = request.RequestId, Ok = true, Message = "recovered" });
+        Assert.Equal("recovered", safety.Message);
+        var continued = dispatcher.Dispatch(Request(IpcOperations.Connect, new { n = 999 }, "mut-new"), caller, request => new IpcResponse { RequestId = request.RequestId, Ok = true, Message = "continued" });
+        Assert.Equal("continued", continued.Message);
+        var expiredCalls = 0;
+        var expired = dispatcher.Dispatch(Request(IpcOperations.Connect, new { n = 0 }, "mut-0"), caller, _ =>
+        {
+            expiredCalls++;
+            return new IpcResponse { RequestId = "mut-0", Ok = true, Message = "resurrected" };
+        });
+        Assert.Equal(0, expiredCalls);
+        Assert.Equal(ReasonCodes.ReplayExpired, expired.ErrorCode);
 
         var busyDispatcher = new IpcDispatcher();
         var blockers = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

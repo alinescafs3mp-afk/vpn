@@ -4,8 +4,10 @@ namespace AutoVpn.Infrastructure.Probe;
 
 /// <summary>
 /// Daily probe byte counter shared by later cycles and process restarts.
-/// A new UTC day starts again at zero. A corrupt file does not grant a fresh unlimited day
-/// beyond the supplied limit; it starts the current day at zero.
+/// A new UTC day starts again at zero. A missing file is a new counter.
+/// A corrupt, negative, or unreadable file does not grant a fresh allowance:
+/// the current day stays exhausted at the limit. A charge for an earlier day
+/// cannot move the counter backward. Addition saturates at long.MaxValue.
 /// </summary>
 public sealed class ProbeByteBudget
 {
@@ -30,12 +32,13 @@ public sealed class ProbeByteBudget
             }
 
             var lines = File.ReadAllLines(path);
+            var bounded = limit < 1 ? 1 : limit;
             if (lines.Length < 2
                 || !DateOnly.TryParseExact(lines[0], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)
                 || !long.TryParse(lines[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var spent)
                 || spent < 0)
             {
-                return new ProbeByteBudget(today, 0, limit);
+                return new ProbeByteBudget(today, bounded, bounded);
             }
 
             return day == today
@@ -44,7 +47,8 @@ public sealed class ProbeByteBudget
         }
         catch (IOException)
         {
-            return new ProbeByteBudget(today, 0, limit);
+            var bounded = limit < 1 ? 1 : limit;
+            return new ProbeByteBudget(today, bounded, bounded);
         }
     }
 
@@ -60,13 +64,19 @@ public sealed class ProbeByteBudget
 
     public void Charge(int payloadBytes, DateOnly today)
     {
-        if (Day != today)
+        if (today < Day)
+        {
+            return;
+        }
+
+        if (today > Day)
         {
             Day = today;
             Spent = 0;
         }
 
-        Spent += Math.Max(1, payloadBytes);
+        var charge = Math.Max(1L, payloadBytes);
+        Spent = Spent > long.MaxValue - charge ? long.MaxValue : Spent + charge;
     }
 
     public void Save(string path)

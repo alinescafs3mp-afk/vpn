@@ -27,6 +27,7 @@ public enum TunnelCommandKind
     UplinkLost = 11,
     Block = 12,
     ProtectionReleased = 13,
+    UnprotectedAccepted = 14,
 }
 
 public sealed record TunnelState
@@ -83,6 +84,12 @@ public static class TunnelReducer
                 Phase = TunnelPhase.Connecting,
                 Revision = state.Revision + 1,
                 ProtectionArmed = true,
+            },
+            TunnelCommandKind.UnprotectedAccepted when state.Phase == TunnelPhase.PreparingProtection => state with
+            {
+                Phase = TunnelPhase.Connecting,
+                Revision = state.Revision + 1,
+                ProtectionArmed = false,
             },
             TunnelCommandKind.ProtectionFailed when state.Phase == TunnelPhase.PreparingProtection => state with
             {

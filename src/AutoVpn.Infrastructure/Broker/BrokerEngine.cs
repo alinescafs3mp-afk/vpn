@@ -29,6 +29,7 @@ public sealed class BrokerEngine
     private string? _operationId;
     private long _operationGeneration;
     private long _operationEpoch;
+    private PolicyStamp? _commitPolicy;
     private bool _cleanupPending;
     private bool _cleanupBusy;
     private string _cleanupOperationId = "";
@@ -132,6 +133,7 @@ public sealed class BrokerEngine
 
     private async Task<IpcResponse> ConnectAsync(IpcRequest request, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var payload = request.Payload.ValueKind == JsonValueKind.Undefined
             ? new ConnectPayload { NodeId = "", Digest = "", NetworkEpoch = _catalogue.NetworkEpoch }
             : request.Payload.Deserialize<ConnectPayload>(IpcJson.RequestOptions);
@@ -200,11 +202,23 @@ public sealed class BrokerEngine
             }
             else
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Connect, _state.Generation, selected.NodeId));
                 _sequence++;
                 armedGeneration = _state.Generation;
-                var armed = _guard.Arm(new GuardRequest(armedGeneration, LanAccess(request, payload), ProtectionRequired(request, payload)));
-                if (!armed.Armed)
+                var protectionRequired = ProtectionRequired(request, payload);
+                var explicitUnprotected = !protectionRequired && !_catalogue.Settings.ProtectionOnConnect;
+                var armed = _guard.Arm(new GuardRequest(armedGeneration, LanAccess(request, payload), protectionRequired));
+                if (explicitUnprotected)
+                {
+                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.UnprotectedAccepted, _state.Generation, selected.NodeId));
+                    _sequence++;
+                    operationId = Guid.NewGuid().ToString("N");
+                    _operationId = operationId;
+                    _operationGeneration = armedGeneration;
+                    _operationEpoch = _catalogue.NetworkEpoch;
+                }
+                else if (!armed.Armed)
                 {
                     _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.ProtectionFailed, _state.Generation, selected.NodeId, armed.ReasonCode));
                     _sequence++;
@@ -258,7 +272,7 @@ public sealed class BrokerEngine
             {
                 abandon = true;
             }
-            else if (policyChanged)
+            else if (policyChanged || !SelectionHeld(selected))
             {
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.VerifyFailed, _state.Generation, selected.NodeId, ReasonCodes.PolicyChanged));
                 _sequence++;
@@ -277,6 +291,7 @@ public sealed class BrokerEngine
             else
             {
                 _coreRunning = true;
+                _commitPolicy = PolicyStamp.Capture(_catalogue.Settings);
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.CoreStarted, _state.Generation, selected.NodeId));
                 _sequence++;
             }
@@ -339,6 +354,21 @@ public sealed class BrokerEngine
                 !_coreRunning ||
                 _state.Phase is not (TunnelPhase.Connecting or TunnelPhase.Reconnecting))
             {
+                return;
+            }
+
+            var current = _catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
+            var settings = _catalogue.Settings;
+            var policyMoved = _commitPolicy is PolicyStamp committed && !committed.Equals(PolicyStamp.Capture(settings));
+            var blocked = current is null
+                || current.Excluded
+                || (current.Semantics.SkipCertVerify && !settings.AllowInsecureCertificates);
+            if (policyMoved || blocked)
+            {
+                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.VerifyFailed, _state.Generation, _state.ActiveNodeId, ReasonCodes.PolicyChanged));
+                _sequence++;
+                _coreRunning = false;
+                _operationId = null;
                 return;
             }
 
@@ -530,9 +560,21 @@ public sealed class BrokerEngine
                     {
                         _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, ReasonCodes.NoEligibleServer));
                         _sequence++;
+                        if (failure == FailureKind.CoreExit)
+                        {
+                            _coreRunning = false;
+                            _operationId = null;
+                        }
                     }
                     else
                     {
+                        if (failure == FailureKind.CoreExit && _state.Phase == TunnelPhase.Connected)
+                        {
+                            _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.CoreExited, _state.Generation, _state.ActiveNodeId, decision.ReasonCode));
+                            _sequence++;
+                            _coreRunning = false;
+                        }
+
                         _switchBusy = true;
                         switchTarget = candidate;
                         switchGeneration = _state.Generation;
@@ -597,6 +639,7 @@ public sealed class BrokerEngine
                         }
 
                         _coreRunning = true;
+                        _commitPolicy = PolicyStamp.Capture(_catalogue.Settings);
                         _sequence++;
                         switched = true;
                     }
@@ -885,6 +928,20 @@ public sealed class BrokerEngine
         {
             _cooldownUntil = null;
         }
+    }
+
+    private bool SelectionHeld(CatalogueNode selected)
+    {
+        if (_catalogue.NetworkEpoch != _operationEpoch)
+        {
+            return false;
+        }
+
+        var live = _catalogue.Nodes.FirstOrDefault(item => item.NodeId == selected.NodeId);
+        return live is not null
+            && !live.Excluded
+            && string.Equals(live.Digest, selected.Digest, StringComparison.Ordinal)
+            && IsCurrentlyEligible(live, NowUtc());
     }
 
     private bool IsCurrentlyEligible(CatalogueNode node, DateTimeOffset now)

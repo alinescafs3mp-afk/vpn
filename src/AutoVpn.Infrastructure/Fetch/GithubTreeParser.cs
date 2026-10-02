@@ -61,7 +61,15 @@ public static class GithubTreeParser
                 }
 
                 long? size = item.TryGetProperty("size", out sizeElement) && sizeElement.TryGetInt64(out var parsed) ? parsed : null;
-                paths.Add(new DiscoveredPath(path, ArtifactClassifier.ClassifyPath(path), SeedFamilies.MatchFamily(path), size));
+                var mode = item.TryGetProperty("mode", out var modeElement) && modeElement.ValueKind == JsonValueKind.String
+                    ? modeElement.GetString()
+                    : null;
+                var symlink = mode is "120000" or "120777";
+                paths.Add(new DiscoveredPath(
+                    path,
+                    symlink ? ArtifactClass.Unknown : ArtifactClassifier.ClassifyPath(path),
+                    symlink ? null : SeedFamilies.MatchFamily(path),
+                    size));
             }
 
             return new TreeDiscovery(true, sha, false, paths, null);

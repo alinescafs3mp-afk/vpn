@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -214,10 +215,10 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             }
 
             var worker = session.WorkerId + ":" + node.Host + ":" + node.Port.ToString(CultureInfo.InvariantCulture);
-            if (!exchange.Authenticated || exchange.Status is not (200 or 204))
+            if (!exchange.Authenticated || exchange.Failure is not null || exchange.Status != 204)
             {
                 LastDiagnostic = exchange.Failure + " " + session.OutputTail;
-                return new ProbeObservation(false, null, false, ReasonCodes.ProbeFailed, exchange.PayloadBytes, ProbeClass.CandidateFailure, target.AbsoluteUri, digest, worker);
+                return new ProbeObservation(false, null, false, exchange.Failure ?? ReasonCodes.ProbeFailed, exchange.PayloadBytes, ProbeClass.CandidateFailure, target.AbsoluteUri, digest, worker);
             }
 
             var latency = (int)Math.Clamp(watch.ElapsedMilliseconds, 0, int.MaxValue);
@@ -388,34 +389,102 @@ public static class Socks5Client
             }
 
             var head = text[..split];
-            var lineEnd = head.IndexOf("\r\n", StringComparison.Ordinal);
-            var statusLine = lineEnd > 0 ? head[..lineEnd] : head;
-            var parts = statusLine.Split(' ');
-            if (parts.Length < 2 || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var status))
-            {
-                return new TlsProbeExchange(true, 0, read, "STATUS");
-            }
-
-            if (head.Contains("\r\nLocation:", StringComparison.OrdinalIgnoreCase) || status is >= 300 and < 400)
-            {
-                return new TlsProbeExchange(true, status, read, "REDIRECT");
-            }
-
-            var body = text[(split + 4)..];
-            if (body.TrimStart().StartsWith('<'))
-            {
-                return new TlsProbeExchange(true, status, read, "UNEXPECTED_BODY");
-            }
-
-            if (status is not (200 or 204))
-            {
-                return new TlsProbeExchange(true, status, read, "STATUS");
-            }
-
-            return new TlsProbeExchange(true, status, read, null);
+            var parsed = await ReadProbeResponseAsync(ssl, head, text[(split + 4)..], linked.Token).ConfigureAwait(false);
+            return parsed with { PayloadBytes = read };
         }
 
         return new TlsProbeExchange(true, 0, read, "STATUS");
+    }
+
+    private static async Task<TlsProbeExchange> ReadProbeResponseAsync(SslStream stream, string head, string bufferedBody, CancellationToken cancellationToken)
+    {
+        var lineEnd = head.IndexOf("\r\n", StringComparison.Ordinal);
+        var statusLine = lineEnd >= 0 ? head[..lineEnd] : head;
+        if (!(statusLine.StartsWith("HTTP/1.0 ", StringComparison.Ordinal) || statusLine.StartsWith("HTTP/1.1 ", StringComparison.Ordinal))
+            || statusLine.Length < 12
+            || !int.TryParse(statusLine.AsSpan(9, 3), NumberStyles.None, CultureInfo.InvariantCulture, out var status)
+            || (statusLine.Length > 12 && statusLine[12] != ' '))
+        {
+            return new TlsProbeExchange(true, 0, 0, "STATUS");
+        }
+
+        if (head.Contains("\r\nLocation:", StringComparison.OrdinalIgnoreCase) || status is >= 300 and < 400)
+        {
+            return new TlsProbeExchange(true, status, 0, "REDIRECT");
+        }
+
+        if (head.Contains("Content-Type:", StringComparison.OrdinalIgnoreCase)
+            && head.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+        {
+            return new TlsProbeExchange(true, status, 0, "UNEXPECTED_BODY");
+        }
+
+        var length = ContentLength(head);
+        if (length is < 0 or > 8192)
+        {
+            return new TlsProbeExchange(true, status, 0, "STATUS");
+        }
+
+        var expected = length ?? (status == 204 ? 0 : bufferedBody.Length);
+        var body = bufferedBody;
+        if (body.Length < expected)
+        {
+            var extra = new byte[expected - body.Length];
+            var filled = 0;
+            try
+            {
+                while (filled < extra.Length)
+                {
+                    var count = await stream.ReadAsync(extra.AsMemory(filled, extra.Length - filled), cancellationToken).ConfigureAwait(false);
+                    if (count == 0)
+                    {
+                        return new TlsProbeExchange(true, status, 0, "INCOMPLETE");
+                    }
+
+                    filled += count;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return new TlsProbeExchange(true, status, 0, "INCOMPLETE");
+            }
+
+            body += Encoding.ASCII.GetString(extra);
+        }
+
+        if (body.TrimStart().StartsWith('<'))
+        {
+            return new TlsProbeExchange(true, status, body.Length, "UNEXPECTED_BODY");
+        }
+
+        if (status != 204)
+        {
+            return new TlsProbeExchange(true, status, body.Length, "STATUS");
+        }
+
+        return new TlsProbeExchange(true, status, body.Length, null);
+    }
+
+    private static int? ContentLength(string head)
+    {
+        int? length = null;
+        foreach (var line in head.Split("\r\n"))
+        {
+            if (!line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var text = line["Content-Length:".Length..].Trim();
+            if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) || length is not null)
+            {
+                return -1;
+            }
+
+            length = parsed;
+        }
+
+        return length;
     }
 
     private static async Task<byte[]> ReadExactAsync(NetworkStream stream, int length, CancellationToken cancellationToken)
@@ -551,6 +620,11 @@ public sealed class ProbeWorker : IAsyncDisposable
 
     public static bool ProcessOwnsLoopbackPort(int pid, int port)
     {
+        if (OperatingSystem.IsWindows())
+        {
+            return WindowsOwnsLoopbackPort(pid, port);
+        }
+
         try
         {
             var needle = "0100007F:" + port.ToString("X4", CultureInfo.InvariantCulture);
@@ -607,6 +681,57 @@ public sealed class ProbeWorker : IAsyncDisposable
         }
 
         return false;
+    }
+
+    private static bool WindowsOwnsLoopbackPort(int pid, int port)
+    {
+        var size = 0;
+        var probe = NativeMethods.GetExtendedTcpTable(IntPtr.Zero, ref size, false, NativeMethods.AfInet, NativeMethods.TcpTableOwnerPidListener, 0);
+        if (probe != NativeMethods.ErrorInsufficientBuffer || size <= 0)
+        {
+            return false;
+        }
+
+        var buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            var result = NativeMethods.GetExtendedTcpTable(buffer, ref size, false, NativeMethods.AfInet, NativeMethods.TcpTableOwnerPidListener, 0);
+            if (result != 0)
+            {
+                return false;
+            }
+
+            var count = Marshal.ReadInt32(buffer);
+            var row = 24;
+            for (var index = 0; index < count; index++)
+            {
+                var address = IntPtr.Add(buffer, 4 + (index * row));
+                var localAddress = unchecked((uint)Marshal.ReadInt32(address, 4));
+                var localPort = unchecked((uint)Marshal.ReadInt32(address, 8));
+                var owner = Marshal.ReadInt32(address, 20);
+                var hostPort = ((int)(localPort & 0xFF) << 8) | (int)((localPort >> 8) & 0xFF);
+                if (owner == pid && hostPort == port && localAddress == 0x0100007F)
+                {
+                    return true;
+                }
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+
+        return false;
+    }
+
+    private static class NativeMethods
+    {
+        public const uint AfInet = 2;
+        public const int TcpTableOwnerPidListener = 3;
+        public const uint ErrorInsufficientBuffer = 122;
+
+        [DllImport("iphlpapi.dll", SetLastError = true)]
+        public static extern uint GetExtendedTcpTable(IntPtr table, ref int size, bool order, uint family, int tableClass, uint reserved);
     }
 
     public async ValueTask DisposeAsync()
@@ -668,7 +793,7 @@ public sealed class ProbeWorker : IAsyncDisposable
                     break;
                 }
 
-                total += count;
+                total = total > int.MaxValue - count ? int.MaxValue : total + count;
                 if (tail is not null && tail.Length < 2000)
                 {
                     lock (tail)
@@ -679,11 +804,6 @@ public sealed class ProbeWorker : IAsyncDisposable
                             tail.Append(buffer, 0, Math.Min(count, room));
                         }
                     }
-                }
-
-                if (total > 1024 * 1024)
-                {
-                    break;
                 }
             }
         }
