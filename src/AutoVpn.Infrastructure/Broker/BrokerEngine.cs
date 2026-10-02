@@ -29,6 +29,11 @@ public sealed class BrokerEngine
     private string? _operationId;
     private long _operationGeneration;
     private long _operationEpoch;
+    private bool _cleanupPending;
+    private bool _cleanupBusy;
+    private string _cleanupOperationId = "";
+    private long _cleanupGeneration;
+    private int _lifecycle;
 
     public string BootId { get; } = Guid.NewGuid().ToString("N");
 
@@ -175,6 +180,7 @@ public sealed class BrokerEngine
 
         var alreadyRunning = false;
         string? refusal = null;
+        var recoveryBusy = false;
         var staleRevision = false;
         long armedGeneration = 0;
         var operationId = "";
@@ -183,6 +189,10 @@ public sealed class BrokerEngine
             if (request.ExpectedStateRevision != _state.Revision)
             {
                 staleRevision = true;
+            }
+            else if (_lifecycle != 0)
+            {
+                recoveryBusy = true;
             }
             else if (_state.ProtectionArmed || _state.Phase is TunnelPhase.Connected or TunnelPhase.Connecting or TunnelPhase.PreparingProtection or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
             {
@@ -215,6 +225,11 @@ public sealed class BrokerEngine
         if (staleRevision)
         {
             return Fail(request, ReasonCodes.StaleRevision, "Состояние службы уже изменилось.");
+        }
+
+        if (recoveryBusy)
+        {
+            return Fail(request, "RECOVERY_BLOCKED", "Подключение не начинается, пока идёт сверка своих правил.");
         }
 
         if (alreadyRunning)
@@ -324,22 +339,36 @@ public sealed class BrokerEngine
 
     private async Task<IpcResponse> DisconnectAsync(IpcRequest request, CancellationToken cancellationToken)
     {
-        long armedGeneration = 0;
-        var operationId = "";
+        _ = cancellationToken;
+        long cleanupGeneration = 0;
+        var cleanupOperation = "";
         var staleRevision = false;
+        var busy = false;
         lock (_gate)
         {
             if (request.ExpectedStateRevision != _state.Revision)
             {
                 staleRevision = true;
             }
+            else if (_cleanupBusy)
+            {
+                busy = true;
+            }
             else
             {
-                armedGeneration = _state.Generation;
-                operationId = _operationId ?? "";
-                _operationId = null;
-                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Disconnect, armedGeneration));
-                _sequence++;
+                _cleanupBusy = true;
+                if (!_cleanupPending)
+                {
+                    _cleanupOperationId = _operationId ?? "";
+                    _cleanupGeneration = _state.Generation;
+                    _cleanupPending = true;
+                    _operationId = null;
+                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Disconnect, _state.Generation));
+                    _sequence++;
+                }
+
+                cleanupGeneration = _cleanupGeneration;
+                cleanupOperation = _cleanupOperationId;
             }
         }
 
@@ -348,29 +377,65 @@ public sealed class BrokerEngine
             return Fail(request, ReasonCodes.StaleRevision, "Состояние службы уже изменилось.");
         }
 
-        await _core.StopAsync(armedGeneration, operationId, cancellationToken).ConfigureAwait(false);
-        lock (_gate)
+        if (busy)
         {
-            _coreRunning = false;
+            return Fail(request, "BUSY", "Отключение уже выполняется.");
         }
 
-        _catalogue.SetActiveNode(null);
-        var disarm = _guard.Disarm(armedGeneration);
-        var recovery = _journal?.Recover(_guard);
-        var unfinished = recovery is { Completed: false } || !disarm.Completed;
-        if (unfinished)
+        try
         {
-            return Fail(request, recovery?.ReasonCode ?? ReasonCodes.WindowsNotValidated,
-                "Отключение запрошено, но свои сетевые правила не подтверждены как снятые.");
-        }
+            try
+            {
+                await _core.StopAsync(cleanupGeneration, cleanupOperation, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                return Fail(request, "CLEANUP_UNCERTAIN", "Остановка ядра не подтверждена. Повтор отключения снимает те же ресурсы.");
+            }
 
-        lock (_gate)
+            lock (_gate)
+            {
+                if (_cleanupGeneration == cleanupGeneration)
+                {
+                    _coreRunning = false;
+                }
+            }
+
+            var recovery = _journal?.Recover(_guard);
+            if (recovery is { Completed: false })
+            {
+                return Fail(request, recovery.ReasonCode ?? ReasonCodes.WindowsNotValidated,
+                    recovery.QuarantinePath is null
+                        ? "Отключение запрошено, но свои сетевые правила не подтверждены как снятые."
+                        : "Журнал эффектов повреждён и отложен. Правила из него не считаются снятыми: " + recovery.QuarantinePath);
+            }
+
+            var disarm = _guard.Disarm(cleanupGeneration);
+            if (!disarm.Completed)
+            {
+                return Fail(request, disarm.ReasonCode ?? "CLEANUP_UNCERTAIN", "Снятие защиты не подтверждено. Повтор отключения снимает те же ресурсы.");
+            }
+
+            _catalogue.SetActiveNode(null);
+            lock (_gate)
+            {
+                if (_cleanupPending && _cleanupGeneration == cleanupGeneration && _state.Phase == TunnelPhase.RestoringNetwork)
+                {
+                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.RestoreFinished, _state.Generation));
+                    _sequence++;
+                    _cleanupPending = false;
+                }
+            }
+
+            return Ok(request, Snapshot(), "Подключение остановлено.");
+        }
+        finally
         {
-            _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.RestoreFinished, _state.Generation));
-            _sequence++;
+            lock (_gate)
+            {
+                _cleanupBusy = false;
+            }
         }
-
-        return Ok(request, Snapshot(), "Подключение остановлено.");
     }
 
     private async Task<IpcResponse> ReportHealthAsync(IpcRequest request, CancellationToken cancellationToken)
@@ -636,9 +701,13 @@ public sealed class BrokerEngine
             {
                 staleRevision = true;
             }
-            else if (_state.ProtectionArmed || _state.Phase is TunnelPhase.PreparingProtection or TunnelPhase.Connecting or TunnelPhase.Connected or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
+            else if (_lifecycle != 0 || _cleanupPending || _cleanupBusy || _state.ProtectionArmed || _state.Phase is TunnelPhase.PreparingProtection or TunnelPhase.Connecting or TunnelPhase.Connected or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
             {
                 blocked = true;
+            }
+            else
+            {
+                _lifecycle = 1;
             }
         }
 
@@ -652,7 +721,19 @@ public sealed class BrokerEngine
             return Fail(request, "RECOVERY_BLOCKED", "Восстановление не снимает защиту активной сессии.");
         }
 
-        var recovery = _journal?.Recover(_guard) ?? new JournalRecovery(true, null, null, 0, 0);
+        JournalRecovery recovery;
+        try
+        {
+            recovery = _journal?.Recover(_guard) ?? new JournalRecovery(true, null, null, 0, 0);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _lifecycle = 0;
+            }
+        }
+
         if (!recovery.Completed)
         {
             return Fail(request, recovery.ReasonCode ?? ReasonCodes.WindowsNotValidated,
@@ -756,9 +837,14 @@ public sealed class BrokerEngine
 
     private void ReleaseProtection(long generation)
     {
-        var disarm = _guard.Disarm(generation);
         var recovery = _journal?.Recover(_guard);
-        if (!disarm.Completed || recovery is { Completed: false })
+        if (recovery is { Completed: false })
+        {
+            return;
+        }
+
+        var disarm = _guard.Disarm(generation);
+        if (!disarm.Completed)
         {
             return;
         }

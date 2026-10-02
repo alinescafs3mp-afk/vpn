@@ -113,19 +113,23 @@ public static class SubscriptionImporter
                 continue;
             }
 
-            if (Encoding.UTF8.GetByteCount(line) > ProductLimits.MaxLineBytes)
-            {
-                nonEmpty.Add("\0OVERSIZE");
-                continue;
-            }
-
             nonEmpty.Add(line);
         }
 
-        if (nonEmpty.Count == 1 && !nonEmpty[0].Contains("://", StringComparison.Ordinal) && nonEmpty[0] != "\0OVERSIZE" &&
+        if (nonEmpty.Count == 1 && !nonEmpty[0].Contains("://", StringComparison.Ordinal) &&
+            Encoding.UTF8.GetByteCount(nonEmpty[0]) <= ProductLimits.MaxArtifactBytes &&
             Base64Text.TryDecode(nonEmpty[0], out var decoded))
         {
-            return ImportLines(decoded, options, depth + 1);
+            var inner = decoded.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+            return ImportLines(inner, options, depth + 1);
+        }
+
+        for (var index = 0; index < nonEmpty.Count; index++)
+        {
+            if (Encoding.UTF8.GetByteCount(nonEmpty[index]) > ProductLimits.MaxLineBytes)
+            {
+                nonEmpty[index] = "\0OVERSIZE";
+            }
         }
 
         var records = new List<ImportRecord>();
@@ -259,6 +263,13 @@ public static class SubscriptionImporter
                     return Single(RecordDisposition.Invalid, ReasonCodes.InvalidUri);
                 }
 
+                var proxiesOnly = !document.RootElement.TryGetProperty("outbounds", out _) &&
+                                  document.RootElement.TryGetProperty("proxies", out _);
+                if (proxiesOnly && LooksLikeClash(list))
+                {
+                    return ImportClashJson(list, options, document.RootElement);
+                }
+
                 nodes = list.EnumerateArray();
             }
             else
@@ -285,10 +296,10 @@ public static class SubscriptionImporter
                     break;
                 }
 
-                ParsedNode? parsed;
+                IReadOnlyList<ParsedNode> parsedNodes;
                 try
                 {
-                    parsed = XrayOutboundParser.Parse(node, ref stripped);
+                    parsedNodes = XrayOutboundParser.ParseAll(node, ref stripped);
                 }
                 catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
                 {
@@ -296,12 +307,21 @@ public static class SubscriptionImporter
                     continue;
                 }
 
-                if (parsed is null)
+                foreach (var parsed in parsedNodes)
                 {
-                    continue;
+                    if (records.Count >= options.MaxRecords)
+                    {
+                        limit = true;
+                        break;
+                    }
+
+                    records.Add(Finish(parsed, options, seen));
                 }
 
-                records.Add(Finish(parsed, options, seen));
+                if (limit)
+                {
+                    break;
+                }
             }
 
             return new ImportBatch
@@ -324,6 +344,64 @@ public static class SubscriptionImporter
         {
             return Single(RecordDisposition.Invalid, ReasonCodes.InvalidUri);
         }
+    }
+
+    private static bool LooksLikeClash(JsonElement list)
+    {
+        var any = false;
+        foreach (var item in list.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (item.TryGetProperty("protocol", out _) || item.TryGetProperty("settings", out _) || item.TryGetProperty("streamSettings", out _))
+            {
+                return false;
+            }
+
+            if (item.TryGetProperty("type", out _) && item.TryGetProperty("server", out _))
+            {
+                any = true;
+            }
+        }
+
+        return any;
+    }
+
+    private static ImportBatch ImportClashJson(JsonElement list, ImportOptions options, JsonElement root)
+    {
+        var records = new List<ImportRecord>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var stripped = 0;
+        foreach (var property in root.EnumerateObject())
+        {
+            if (property.Name != "proxies")
+            {
+                stripped++;
+            }
+        }
+
+        var limit = false;
+        foreach (var item in list.EnumerateArray())
+        {
+            if (records.Count >= options.MaxRecords)
+            {
+                limit = true;
+                break;
+            }
+
+            records.Add(Finish(ClashProxyParser.ParseJson(item), options, seen));
+        }
+
+        return new ImportBatch
+        {
+            Records = records,
+            EmptyValidDocument = records.Count == 0 && !limit,
+            LimitExceeded = limit,
+            ClientPolicyStripped = stripped,
+        };
     }
 
     private static ImportRecord Finish(ParsedNode parsed, ImportOptions options, HashSet<string> seen)
@@ -490,7 +568,7 @@ public static class Base64Text
         {
             var bytes = Convert.FromBase64String(padded);
             decoded = Encoding.UTF8.GetString(bytes);
-            return decoded.Length > 0 && decoded.All(ch => ch == '\n' || ch == '\t' || !char.IsControl(ch));
+            return decoded.Length > 0 && decoded.All(ch => ch is '\n' or '\r' or '\t' || !char.IsControl(ch));
         }
         catch (FormatException)
         {

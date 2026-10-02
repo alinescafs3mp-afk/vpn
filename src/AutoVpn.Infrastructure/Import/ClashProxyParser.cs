@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using AutoVpn.Domain;
 using YamlDotNet.RepresentationModel;
 
@@ -137,6 +138,68 @@ public static class ClashProxyParser
             PacketEncoding = Scalar(values, "packet-encoding"),
         };
         return new ParsedNode { Semantics = semantics, DisplayName = name, Disposition = RecordDisposition.Pending };
+    }
+
+    public static ParsedNode ParseJson(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return Invalid(ReasonCodes.InvalidUri);
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!seen.Add(property.Name))
+            {
+                return Invalid(ReasonCodes.DuplicateKey, property.Name);
+            }
+        }
+
+        try
+        {
+            return Parse(ToYaml(element));
+        }
+        catch (InvalidOperationException)
+        {
+            return Invalid(ReasonCodes.YamlLimit);
+        }
+    }
+
+    private static YamlMappingNode ToYaml(JsonElement element)
+    {
+        var map = new YamlMappingNode();
+        foreach (var property in element.EnumerateObject())
+        {
+            map.Add(new YamlScalarNode(property.Name), ToNode(property.Value));
+        }
+
+        return map;
+    }
+
+    private static YamlNode ToNode(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => new YamlScalarNode(element.GetString()),
+            JsonValueKind.Number => new YamlScalarNode(element.GetRawText()),
+            JsonValueKind.True => new YamlScalarNode("true"),
+            JsonValueKind.False => new YamlScalarNode("false"),
+            JsonValueKind.Object => ToYaml(element),
+            JsonValueKind.Array => ToSequence(element),
+            _ => throw new InvalidOperationException("JSON value is not a Clash field."),
+        };
+    }
+
+    private static YamlSequenceNode ToSequence(JsonElement element)
+    {
+        var sequence = new YamlSequenceNode();
+        foreach (var item in element.EnumerateArray())
+        {
+            sequence.Add(ToNode(item));
+        }
+
+        return sequence;
     }
 
     private static string? Scalar(IReadOnlyDictionary<string, YamlNode>? values, string name)

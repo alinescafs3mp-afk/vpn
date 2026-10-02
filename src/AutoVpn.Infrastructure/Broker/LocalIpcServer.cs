@@ -30,6 +30,19 @@ public sealed class LocalIpcServer : IAsyncDisposable
 
     public string? PipeFault { get; private set; }
 
+    public int RetainedSessionCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _sessions.Count;
+            }
+        }
+    }
+
+    public int ActiveStreamCount => ActiveStreams();
+
     public Task Completion => _completed.Task;
 
     public static LocalIpcServer Start(
@@ -46,6 +59,14 @@ public sealed class LocalIpcServer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _stop.CancelAsync().ConfigureAwait(false);
+        try
+        {
+            await _loop.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException or TimeoutException)
+        {
+        }
+
         NamedPipeServerStream[] streams;
         Task[] sessions;
         lock (_gate)
@@ -61,17 +82,9 @@ public sealed class LocalIpcServer : IAsyncDisposable
 
         try
         {
-            await _loop.ConfigureAwait(false);
+            await Task.WhenAll(sessions).WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
-        {
-        }
-
-        try
-        {
-            await Task.WhenAll(sessions).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException or TimeoutException)
         {
         }
 
@@ -125,6 +138,21 @@ public sealed class LocalIpcServer : IAsyncDisposable
         {
             while (!_stop.IsCancellationRequested)
             {
+                PruneSessions();
+                if (ActiveStreams() >= ProductLimits.IpcPipeInstances)
+                {
+                    try
+                    {
+                        await Task.Delay(50, _stop.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+
                 NamedPipeServerStream server;
                 try
                 {
@@ -187,6 +215,7 @@ public sealed class LocalIpcServer : IAsyncDisposable
                 var session = ServeAndCloseAsync(server);
                 lock (_gate)
                 {
+                    PruneSessionsUnlocked();
                     _sessions.Add(session);
                 }
             }
@@ -211,6 +240,7 @@ public sealed class LocalIpcServer : IAsyncDisposable
         {
             Forget(server);
             server.Dispose();
+            PruneSessions();
         }
     }
 
@@ -292,6 +322,27 @@ public sealed class LocalIpcServer : IAsyncDisposable
         {
             _streams.Remove(server);
         }
+    }
+
+    private int ActiveStreams()
+    {
+        lock (_gate)
+        {
+            return _streams.Count;
+        }
+    }
+
+    private void PruneSessions()
+    {
+        lock (_gate)
+        {
+            PruneSessionsUnlocked();
+        }
+    }
+
+    private void PruneSessionsUnlocked()
+    {
+        _sessions.RemoveAll(session => session.IsCompleted);
     }
 
     private static NamedPipeServerStream OpenDefault(string pipeName)

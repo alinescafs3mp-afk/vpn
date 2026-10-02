@@ -29,11 +29,13 @@ Console.CancelKeyPress += (_, eventArgs) =>
     stop.Cancel();
 };
 Console.WriteLine("Канал autovpn-broker слушает локально. Остановка не меняет системную сеть.");
-try
+var stopTask = Task.Delay(Timeout.Infinite, stop.Token);
+var finished = await Task.WhenAny(server.Completion, stopTask).ConfigureAwait(false);
+if (finished == server.Completion && !stop.IsCancellationRequested)
 {
-    await Task.Delay(Timeout.Infinite, stop.Token).ConfigureAwait(false);
+    Console.WriteLine("Канал остановился: " + (server.PipeFault ?? "UNKNOWN") + ". Служба не остаётся выглядеть живой.");
+    return 2;
 }
-catch (OperationCanceledException)
-{
-    Console.WriteLine("Брокер остановлен.");
-}
+
+Console.WriteLine("Брокер остановлен.");
+return 0;

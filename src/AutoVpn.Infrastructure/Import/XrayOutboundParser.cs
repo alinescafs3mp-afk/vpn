@@ -5,6 +5,46 @@ namespace AutoVpn.Infrastructure.Import;
 
 public static class XrayOutboundParser
 {
+    public static IReadOnlyList<ParsedNode> ParseAll(JsonElement node, ref int stripped)
+    {
+        var parsed = Parse(node, ref stripped);
+        if (parsed is null)
+        {
+            return [];
+        }
+
+        if (parsed.Semantics is null)
+        {
+            return [parsed];
+        }
+
+        var endpoints = ReadEndpoints(node);
+        if (endpoints.Count <= 1)
+        {
+            return [parsed];
+        }
+
+        var nodes = new List<ParsedNode>(endpoints.Count);
+        foreach (var endpoint in endpoints)
+        {
+            nodes.Add(parsed with
+            {
+                Semantics = parsed.Semantics with
+                {
+                    Host = endpoint.Host,
+                    Port = endpoint.Port,
+                    UserId = endpoint.User ?? parsed.Semantics.UserId,
+                    Password = endpoint.Password ?? parsed.Semantics.Password,
+                    Encryption = endpoint.Encryption ?? parsed.Semantics.Encryption,
+                    Flow = endpoint.Flow ?? parsed.Semantics.Flow,
+                    AlterId = endpoint.AlterId ?? parsed.Semantics.AlterId,
+                },
+            });
+        }
+
+        return nodes;
+    }
+
     public static ParsedNode? Parse(JsonElement node, ref int stripped)
     {
         if (node.ValueKind != JsonValueKind.Object)
@@ -156,6 +196,50 @@ public static class XrayOutboundParser
                 Transport = network,
             },
         };
+    }
+
+    private readonly record struct Endpoint(string Host, int Port, string? User, string? Password, string? Encryption, string? Flow, int? AlterId);
+
+    private static List<Endpoint> ReadEndpoints(JsonElement node)
+    {
+        var endpoints = new List<Endpoint>();
+        if (!node.TryGetProperty("settings", out var settings) || settings.ValueKind != JsonValueKind.Object)
+        {
+            return endpoints;
+        }
+
+        if (settings.TryGetProperty("vnext", out var vnext) && vnext.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in vnext.EnumerateArray())
+            {
+                var host = GetString(item, "address") ?? "";
+                var port = item.TryGetProperty("port", out var portNode) && portNode.TryGetInt32(out var parsedPort) ? parsedPort : 0;
+                if (item.TryGetProperty("users", out var users) && users.ValueKind == JsonValueKind.Array && users.GetArrayLength() > 0)
+                {
+                    foreach (var userNode in users.EnumerateArray())
+                    {
+                        int? alterId = userNode.TryGetProperty("alterId", out var aid) && aid.TryGetInt32(out var aidValue) ? aidValue : null;
+                        endpoints.Add(new Endpoint(host, port, GetString(userNode, "id"), GetString(userNode, "password"), GetString(userNode, "encryption"), GetString(userNode, "flow"), alterId));
+                    }
+                }
+                else
+                {
+                    endpoints.Add(new Endpoint(host, port, null, null, null, null, null));
+                }
+            }
+        }
+
+        if (endpoints.Count == 0 && settings.TryGetProperty("servers", out var servers) && servers.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in servers.EnumerateArray())
+            {
+                var host = GetString(item, "address") ?? GetString(item, "server") ?? "";
+                var port = item.TryGetProperty("port", out var portNode) && portNode.TryGetInt32(out var parsedPort) ? parsedPort : 0;
+                endpoints.Add(new Endpoint(host, port, GetString(item, "id"), GetString(item, "password"), GetString(item, "method") ?? GetString(item, "encryption"), null, null));
+            }
+        }
+
+        return endpoints;
     }
 
     private static string? GetString(JsonElement element, string name)
