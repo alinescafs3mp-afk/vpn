@@ -3,15 +3,16 @@
 Baseline: `0b79fb9c135ffb5a510b41319fc3c53cea2d3ac6` (tree audited as `e2b02f9f179d6f2e9a170812c2e34adc054972b7`), plus the directive commit `2edd057c52fb47111e206b379704f4e6a6292977`. The directive file is unchanged.
 
 Package A fix commit: `2b46431693fe58eb02c40a36a0b192ce000b6fed`.
+Package B fix commit: `1ba3cf78dd242141d8605286ac2a45101ad737c0`.
 
-Executed on this host after that commit's tree was built: Linux, .NET SDK 10.0.112.
+Executed on this host against the package B tree: Linux, .NET SDK 10.0.112, 2026-10-03.
 
 ```text
 dotnet build AutoVpn.slnx -c Release
-dotnet test AutoVpn.slnx -c Release
+dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release
 ```
 
-`AUTOVPN_MIHOMO_PATH` was unset. Result: build 0 warnings, 0 errors; tests 47 passed, 1 skipped, 0 failed. The skip is `PinnedLinuxCoreValidatesSyntheticNonTunProfileWhenProvided`: native `mihomo -t` is NOT_RUN, not a pass. The same suite was repeated three more times on the parent tree before the Reality `spiderX` line; the final full run is the one above. No Windows process was started. The local archive `a4c142f9…` does not contain this commit.
+`AUTOVPN_MIHOMO_PATH` was unset. Result of the unit-test project: 57 passed, 1 skipped, 0 failed, duration 1 s. The skip is `PinnedLinuxCoreValidatesSyntheticNonTunProfileWhenProvided`: native `mihomo -t` is NOT_RUN, not a pass. This command is not `dotnet test AutoVpn.slnx`. The earlier package A solution run was 47 passed and 1 skipped. The Release build of the solution after package B was 0 warnings and 0 errors; Desktop was compiled and not executed. No Windows process was started. The local archive `a4c142f9…` predates both commits.
 
 States used here: `OPEN`, `IN_PROGRESS`, `IMPLEMENTED_NOT_VALIDATED`, `BLOCKED`, `VERIFIED`.
 
@@ -33,35 +34,35 @@ Remaining limitation: closure needs an authorized disposable Windows machine, a 
 
 ## F02
 
-Status: `OPEN`
+Status: `IN_PROGRESS`
 
-Fix commit: none for the workflow. `GithubTreeParser` type checks landed in the package A commit as part of F17.
+Fix commit: `1ba3cf78dd242141d8605286ac2a45101ad737c0`. Tree-shape checks remain in the package A commit.
 
-Production paths: `src/AutoVpn.Infrastructure/Fetch/GithubTreeParser.cs`, `PolicyHttpFetcher.cs`. No desktop or service loop calls them.
+Production paths: `src/AutoVpn.Infrastructure/Refresh/CatalogueCoordinator.cs`, `SourceLedger.cs`, `src/AutoVpn.Infrastructure/Fetch/ReviewedRegistry.cs`, `PolicyHttpFetcher.cs`, `src/AutoVpn.Infrastructure/Probe/NonTunCoreProbeTransport.cs`, `src/AutoVpn.Desktop/MainWindow.xaml.cs`. The privileged service in `src/AutoVpn.Service/Program.cs` still does not parse subscriptions or call the coordinator.
 
-Regression IDs: AT01 not written. `BehaviorTests.TruncatedTreeIsNotACompleteCatalogue` still holds.
+Regression IDs: AT01 not written as a fresh-install journey. `PackageBTests.FreshImportStaysPendingUntilARealCoreProbeAndConsentSurvivesRestart`, `RefreshDownloadConcurrencyStaysBounded`, `IncompleteDiscoveryDoesNotBecomeASubscriptionRefresh`, `MissingCoreDoesNotReportASuccessfulProbe`. `BehaviorTests.TruncatedTreeIsNotACompleteCatalogue` still holds.
 
-Environment: Linux unit tests.
+Environment: Linux unit tests, SDK 10.0.112, Mihomo unset. The import used an in-process HTTP handler. No public endpoint was contacted. The desktop process was not started.
 
-Evidence: service composition in `src/AutoVpn.Service/Program.cs`.
+Evidence: those tests in the 57-pass run above. A fresh SQLite catalogue stored one `Pending` node, `Eligible` was empty, and a probe with no runnable core left `Attempted` at 0. Raw 500 then GitLab 200 was the mirror fallback inside that handler. Download concurrency stayed in 1..3. A non-executable stand-in returned `CORE_START_FAILED`. The probe YAML contained `listen: 127.0.0.1` and did not contain `tun:`.
 
-Remaining limitation: discovery, fetch, parse, reconcile, and probe are not one running unelevated workflow.
+Remaining limitation: no node became `Healthy`. The success path that starts the pinned Mihomo and reads a probe target through its SOCKS port was not run. The service catalogue is still separate from the desktop catalogue. AT01's unseeded connect journey is open.
 
 ## F03
 
-Status: `OPEN`
+Status: `IN_PROGRESS`
 
-Fix commit: none
+Fix commit: `1ba3cf78dd242141d8605286ac2a45101ad737c0`
 
-Production paths: `src/AutoVpn.Desktop/MainWindow.xaml.cs`. Disclosure is not written to the catalogue.
+Production paths: `src/AutoVpn.Application/UiSession.cs`, `src/AutoVpn.Desktop/MainWindow.xaml`, `MainWindow.xaml.cs`. Consent is `Consent.AcceptDisclosure` into the catalogue. IPC null, timeout, and `IOException` use `UiSessionReducer.BrokerUnreachable`.
 
-Regression IDs: AT01, AT30, AT33 not written.
+Regression IDs: AT01, AT30, AT33 not written as UI journeys. `PackageBTests.FreshImportStaysPendingUntilARealCoreProbeAndConsentSurvivesRestart` and `ScheduleClampAndUnknownSessionDoNotClaimDisconnect`.
 
-Environment: not executed. The WPF project compiles and was not run.
+Environment: Linux unit tests. WPF was compiled in the Release solution build and not executed. No click or keyboard pass.
 
-Evidence: none beyond the static UI.
+Evidence: disclosure starts false and survives a SQLite reopen after `AcceptDisclosure`. Unchecking the box is not a revoke. `ConnectAllowed(false, true)` is false. A connected protected session that then loses the broker stays phase `Unknown`, `ClaimsVerifiedDisconnect` false, and `PlanExit` refuses to close. A later snapshot with phase `Disconnected` and protection disarmed is the verified disconnect.
 
-Remaining limitation: first-run consent, settings, and live session state are not persisted or shown from the broker.
+Remaining limitation: the desktop and the broker still have separate catalogues. A live pipe loss while the service remained connected was not executed. First-run was not clicked. Explicit Exit in the window was not exercised.
 
 ## F04
 
@@ -257,19 +258,19 @@ Remaining limitation: AT17 is not implemented. A broken candidate can still not 
 
 ## F16
 
-Status: `IN_PROGRESS`
+Status: `VERIFIED`
 
-Fix commit: `2b46431693fe58eb02c40a36a0b192ce000b6fed`
+Fix commit: `2b46431693fe58eb02c40a36a0b192ce000b6fed` for snapshot validity. Refetch: `1ba3cf78dd242141d8605286ac2a45101ad737c0`.
 
-Production paths: `src/AutoVpn.Infrastructure/Refresh/RefreshMerge.cs`, `src/AutoVpn.Infrastructure/Import/SubscriptionImporter.cs` (`DocumentValid`, `EmptyValidDocument`).
+Production paths: `src/AutoVpn.Infrastructure/Refresh/RefreshMerge.cs`, `CatalogueCoordinator.cs`, `src/AutoVpn.Infrastructure/Import/SubscriptionImporter.cs` (`DocumentValid`, `EmptyValidDocument`).
 
-Regression IDs: AT18. `At18InvalidSnapshotsKeepLastGoodMembershipAndRecognizedEmptyDoesNot`.
+Regression IDs: AT18. `At18InvalidSnapshotsKeepLastGoodMembershipAndRecognizedEmptyDoesNot`. `PackageBTests.NotModifiedWithoutMembershipRefetchesAndCancellationDoesNotPublish`.
 
-Environment: Linux unit tests.
+Environment: Linux unit tests. The refetch used an in-process handler, not a public host.
 
-Evidence: that test.
+Evidence: AT18 keeps family A and family B across malformed JSON, HTML, a truncated object, `{}`, a non-list `proxies` document, and an invalid URI. `proxies: []` removes only family A. The coordinator test stored an etag with no artifact membership, received 304, refetched without that etag, and published one `Pending` node (`RefetchPerformed`). Cancelling a blocked download published nothing.
 
-Remaining limitation: a 304 with no stored artifact sets `RefetchRequired` and does not delete membership. The HTTP refetch itself is not implemented.
+Remaining limitation: the refetch ran through the coordinator and an in-process handler. A public upstream was not fetched.
 
 ## F17
 
@@ -353,19 +354,19 @@ Remaining limitation: host header and ALPN tokens are still trimmed. They are tr
 
 ## F22
 
-Status: `OPEN`
+Status: `VERIFIED`
 
-Fix commit: none
+Fix commit: `1ba3cf78dd242141d8605286ac2a45101ad737c0`
 
-Production paths: `src/AutoVpn.Infrastructure/Fetch/PolicyHttpFetcher.cs`.
+Production paths: `src/AutoVpn.Infrastructure/Fetch/PolicyHttpFetcher.cs`. `CreateProductionHandler` sets `AllowAutoRedirect` false, `UseProxy` false, and leaves the certificate callback unset. `HttpClient.Timeout` is infinite. One linked token bounds `SendAsync` and the body read. A redirect drops the previous etag. 429 is `RATE_LIMITED` and is not retried.
 
-Regression IDs: AT23 not written.
+Regression IDs: AT23. `PackageBTests.ProductionHandlerCancelsAStalledBodyAndDoesNotFollowAnOffRegistryRedirect`, `RateLimitIsNotTreatedAsADocument`. `BehaviorTests.FetcherRejectsHtmlOversizedAndOffRegistryRedirects` still passes.
 
-Environment: not executed for a stalled body.
+Environment: Linux unit tests against loopback HTTPS. The production callback was null before the test pinned a fixture certificate. Certificate validation was not disabled in product code.
 
-Evidence: none new.
+Evidence: an off-registry path and an approved path that redirected to a second loopback port both returned `OFF_REGISTRY_REDIRECT` with a null body. The second server stayed at 0 requests. A separate handler with `AllowAutoRedirect` true, which the production constructor rejects, did reach that second server. After headers, a stalled body returned `FETCH_TIMEOUT` with a null body in under 4 seconds. Three allowed retries of HTTP 429 produced one call, a null body, and `RetryAfterSeconds` 9.
 
-Remaining limitation: body reads are still only bound by the caller token. Package B.
+Remaining limitation: the attempt deadline is the caller's `TimeSpan`. The product coordinator passes it through. This test does not cover a public mirror.
 
 ## F23
 
@@ -401,19 +402,19 @@ Remaining limitation: one assessment still rewrites the catalogue.
 
 ## F25
 
-Status: `OPEN`
+Status: `IN_PROGRESS`
 
-Fix commit: none. The F16 flag `RefetchRequired` is only a report field.
+Fix commit: `1ba3cf78dd242141d8605286ac2a45101ad737c0`. The ingest flag remains in the package A commit.
 
-Production paths: `RefreshMerge.cs`.
+Production paths: `src/AutoVpn.Infrastructure/Fetch/ReviewedRegistry.cs`, `src/AutoVpn.Infrastructure/Refresh/CatalogueCoordinator.cs`, `SourceLedger.cs`, `config/source-manifest.json`, `config/mirrors.json`.
 
-Regression IDs: AT26 not written. The 304-without-cache half is inside AT18 and does not perform HTTP.
+Regression IDs: AT26 partial. `PackageBTests.ReviewedRegistryRejectsUnsafePathsAndRejectedHosts`, `IncompleteDiscoveryDoesNotBecomeASubscriptionRefresh`, `NotModifiedWithoutMembershipRefetchesAndCancellationDoesNotPublish`.
 
-Environment: Linux unit test for the flag only.
+Environment: Linux unit tests. The registry was the repository `config/` directory. Discovery and refetch used stub HTTP, not `api.github.com`.
 
-Evidence: `At18InvalidSnapshotsKeepLastGoodMembershipAndRecognizedEmptyDoesNot`.
+Evidence: `..`, absolute paths, and backslashes are rejected. `bitbucket.org`, `raw.githack.com`, and `translate.yandex.ru` are not emitted. An incomplete tree produced no refresh work and did not delete a seeded node. A probe URI outside the approved target file returned `Attempted` 0. A 304 without membership refetched once.
 
-Remaining limitation: no durable discovery run, no mirror disagreement check, no unconditional refetch client.
+Remaining limitation: no live GitHub discovery, no comparison of disagreeing mirror bodies, and no proof that an added or removed upstream family changes only that family. AT26 is not closed.
 
 ## F26
 
@@ -433,35 +434,35 @@ Remaining limitation: conflicting country labels are not retained as evidence.
 
 ## F27
 
-Status: `OPEN`
+Status: `IN_PROGRESS`
 
-Fix commit: none
+Fix commit: `1ba3cf78dd242141d8605286ac2a45101ad737c0` for the measurement gate only. Ranking and standby selection were not replaced.
 
-Production paths: `src/AutoVpn.Domain/Ranking.cs`, failover standby picker.
+Production paths: `src/AutoVpn.Domain/BoundedTransfer.cs`, `src/AutoVpn.Infrastructure/Refresh/CatalogueCoordinator.cs` (`SpeedMeasurement`), `src/AutoVpn.Application/UiSession.cs`.
 
-Regression IDs: AT27 not written.
+Regression IDs: AT27 not written. `PackageBTests.SocksClientReadsALocalStatusAndSpeedStaysUnknownWithoutHealth`.
 
-Environment: not a measured ranking run.
+Environment: Linux unit tests. A local TCP listener returned HTTP 204. A local SOCKS5 relay forwarded CONNECT to it. No VPN node was dialed.
 
-Evidence: none new.
+Evidence: `Socks5Client.GetStatusAsync` read 204. `SpeedMeasurement.MeasureHealthyDownloadAsync` on an empty catalogue returned null. `BoundedTransfer` stopped a blocking stream. The presentation text for an unmeasured node contains «не измерялась».
 
-Remaining limitation: the UI does not show a bounded measured standby set. No speed was invented.
+Remaining limitation: a direct or SOCKS 204 is not node eligibility. Healthy/Degraded ranking, the standby cap, and dwell were not implemented. No speed was stored for a pending node.
 
 ## F28
 
-Status: `OPEN`
+Status: `IN_PROGRESS`
 
-Fix commit: none
+Fix commit: `1ba3cf78dd242141d8605286ac2a45101ad737c0` for the refresh-interval clamp. Probe budgets were not rewritten here.
 
-Production paths: probe loop uses `Stopwatch` for the cycle budget and `DateTimeOffset` for freshness.
+Production paths: `src/AutoVpn.Domain/Scheduling.cs`, `src/AutoVpn.Domain/Settings.cs`.
 
-Regression IDs: AT28 not written.
+Regression IDs: AT28 partial. `PackageBTests.ScheduleClampAndUnknownSessionDoNotClaimDisconnect`. `BehaviorTests.ScheduleDoesNotHonorOneMinuteAdvisoryOrReplayAGap` still expects `Interval(1, 0, 0)` to be 15 minutes.
 
-Environment: not executed against a stepped clock.
+Environment: Linux unit tests, no stepped clock and no NIC event.
 
-Evidence: none new.
+Evidence: seeds 0, 1, -1, -100, `int.MinValue`, and `int.MaxValue` keep a 120-minute base with 10-minute jitter inside 110..130. `ProductSettings.Validate` rejects 8 days. The 15-minute floor still holds.
 
-Remaining limitation: sleep, NIC events, and a self-TUN epoch storm are not covered.
+Remaining limitation: monotonic probe budgets, sleep, NIC changes, and a self-TUN epoch storm are not covered. AT28 is not closed.
 
 ## F29
 
@@ -507,7 +508,7 @@ Regression IDs: AT31 partial. Connect expects `PlatformReason()`. Missing-binary
 
 Environment: Linux. CI still sets `AUTOVPN_MIHOMO_PATH` to an empty string, which is a skip.
 
-Evidence: the test run above, 47 passed and 1 skipped.
+Evidence: the package A solution run was 47 passed and 1 skipped. The package B unit-test run was 57 passed and 1 skipped. Neither run is a Windows pass.
 
 Remaining limitation: the second-owner pipe test is still the same user. Admin scripts still exit 2. Windows expectations were not executed on Windows. Seeded consent in broker tests remains.
 
@@ -531,7 +532,7 @@ Remaining limitation: the notice, SBOM, and component license list are not corre
 
 Status: `OPEN`
 
-Fix commit: none for a new artifact. `docs/evidence/build-manifest.json` is updated by the docs commit that follows `2b46431` and does not claim the old archive contains that commit.
+Fix commit: none for a new artifact. `docs/evidence/build-manifest.json` names code commit `1ba3cf78dd242141d8605286ac2a45101ad737c0` and does not claim the archive contains it.
 
 Production paths: `docs/evidence/build-manifest.json`.
 

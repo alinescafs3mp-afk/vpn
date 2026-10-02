@@ -2,13 +2,13 @@
 
 ## Для владельца
 
-Выпуска нет. Установщика нет. Туннель Windows не проверялся. Публичные узлы не измерялись. Пакет A директивы из `for_fix/` записан в `2b46431693fe58eb02c40a36a0b192ce000b6fed`. Статус каждой находки F01–F34: `docs/AUDIT_FIX_STATUS.md`. Архив и его сумма описаны в `docs/IMPLEMENTATION_STATUS.md`; архив не содержит пакет A. Этот коммит только именует тот SHA.
+Выпуска нет. Установщика нет. Туннель Windows не проверялся. Публичные узлы не измерялись и не стали `Healthy`. Пакет A записан в `2b46431693fe58eb02c40a36a0b192ce000b6fed`. Пакет B записан в `1ba3cf78dd242141d8605286ac2a45101ad737c0`. Статус каждой находки F01–F34: `docs/AUDIT_FIX_STATUS.md`. Архив и его сумма описаны в `docs/IMPLEMENTATION_STATUS.md`; архив не содержит ни пакет A, ни пакет B. Этот коммит только именует SHA пакета B.
 
 ## Last verified commit
 
-Package A commit: `2b46431693fe58eb02c40a36a0b192ce000b6fed`
+Package B code commit: `1ba3cf78dd242141d8605286ac2a45101ad737c0`
 
-This handoff edit is a child of that commit. `origin/main` after the push is the child. Verify with:
+Package A remains `2b46431693fe58eb02c40a36a0b192ce000b6fed`. This handoff edit is a child of the package B commit. `origin/main` after the push is the child. Verify with:
 
 ```bash
 git fetch origin
@@ -20,9 +20,9 @@ The two published SHAs must match each other. Do not treat a Linux test log as a
 
 ## Active milestone
 
-Milestone 1 is not closed. The next concrete Windows step is W4 in `docs/WINDOWS_TEST_PLAN.md` on an authorized disposable machine: hash-check the pinned Mihomo exe and Wintun DLL, replace `UnavailableNetworkGuard` only after a recovery path can remove the effects it creates, and connect one synthetic profile. Do not do that on the Linux build host.
+Milestone 1 is not closed. The next code slice is package C: bounded real-pipe deadlines, a second client that can disconnect while start is blocked, and attempt-scoped confirmation. Windows identity (F05), TUN, and the installer stay blocked without a disposable Windows machine. W4 in `docs/WINDOWS_TEST_PLAN.md` still requires that machine. Do not start it on the Linux build host.
 
-Before that, the useful code gap is wiring the desktop to the catalogue and the refresh loop, still without claiming Connected.
+The desktop now calls the unelevated coordinator. That process was not executed. The service still refuses the network and keeps its own catalogue. Do not mark a node `Connected` from this wiring.
 
 ## Commands already run
 
@@ -33,7 +33,7 @@ AUTOVPN_MIHOMO_PATH=<linux mihomo v1.19.32> dotnet test tests/AutoVpn.UnitTests 
 dotnet publish (Service, Recovery, Inventory, Desktop) -c Release -r win-x64 --self-contained true
 ```
 
-Results after package A: build 0 warnings; unit tests 47 passed, 0 failed, 1 skipped with Mihomo unset. The skip is native `mihomo -t`, not a pass. The earlier filtered core test is not re-run for this commit. The archive was not rebuilt. Details are in `docs/evidence/build-manifest.json` and `docs/AUDIT_FIX_STATUS.md`.
+Results after package B, re-run 2026-10-03: solution build 0 warnings; `dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release` was 57 passed, 0 failed, 1 skipped with Mihomo unset. The skip is native `mihomo -t`, not a pass. The earlier filtered core test is not re-run for this commit. The archive was not rebuilt. Details are in `docs/evidence/build-manifest.json` and `docs/AUDIT_FIX_STATUS.md`.
 
 `scripts/test-windows-admin.ps1` and `scripts/verify-release.ps1` exit 2 on purpose. They were not used as a green gate. `scripts/package.ps1` was not executed.
 

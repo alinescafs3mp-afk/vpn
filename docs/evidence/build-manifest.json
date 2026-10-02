@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "applicationVersion": "0.1.0",
-  "gitCommit": "2b46431693fe58eb02c40a36a0b192ce000b6fed",
+  "gitCommit": "1ba3cf78dd242141d8605286ac2a45101ad737c0",
   "workingTreeClean": true,
-  "gitCommitNote": "gitCommit is the package A code commit. This file is the following docs-only amendment. The archive was packed from an older tree and does not contain this commit.",
+  "gitCommitNote": "gitCommit is the package B code commit. This file is the following docs-only amendment. The archive was packed from an older tree and does not contain this commit or package A.",
   "builtUtc": "2026-10-02T19:58:42Z",
   "build": {
     "sdk": "10.0.112",
@@ -32,21 +32,21 @@
     {
       "command": "dotnet build AutoVpn.slnx -c Release",
       "environment": "Linux, SDK 10.0.112",
-      "timestampUtc": "2026-10-02",
+      "timestampUtc": "2026-10-03",
       "exitCode": 0,
       "warnings": 0,
       "errors": 0,
-      "note": "Includes Desktop (net10.0-windows), Service, Recovery, and Inventory. Desktop was not executed."
+      "note": "Includes Desktop (net10.0-windows), Service, Recovery, and Inventory. Desktop was not executed. Recorded against package B."
     },
     {
-      "command": "dotnet test AutoVpn.slnx -c Release",
+      "command": "dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release",
       "environment": "Linux, SDK 10.0.112, AUTOVPN_MIHOMO_PATH unset",
-      "timestampUtc": "2026-10-02",
+      "timestampUtc": "2026-10-03",
       "exitCode": 0,
-      "passed": 47,
+      "passed": 57,
       "failed": 0,
       "skipped": 1,
-      "note": "Recorded after package A on Linux with AUTOVPN_MIHOMO_PATH unset. The skipped test is PinnedLinuxCore: native mihomo -t is NOT_RUN, not a pass. This is not Windows validation. The older 36-pass count included that fact as a pass and is obsolete."
+      "note": "Re-run on the package B tree. The skipped test is PinnedLinuxCore: native mihomo -t is NOT_RUN, not a pass. This is the unit-test project, not dotnet test AutoVpn.slnx, and it is not Windows validation. The package A solution run was 47 passed and 1 skipped. The older 36-pass count included the native fact as a pass and is obsolete."
     },
     {
       "command": "AUTOVPN_MIHOMO_PATH=<pinned linux binary> dotnet test tests/AutoVpn.UnitTests -c Release --filter FullyQualifiedName~PinnedLinuxCore",
@@ -77,10 +77,10 @@
     "Not release-ready.",
     "Windows TUN, DNS, IPv6, crash recovery, pipe ACL, UI, and installer are NOT_RUN.",
     "No public subscription node was probed.",
-    "The desktop does not yet run a refresh or show a measured catalogue.",
-    "The service does not start Mihomo and does not install filters.",
+    "The desktop refresh code was compiled and not executed. No node was marked Healthy.",
+    "The service does not start Mihomo and does not install filters. It does not call the catalogue coordinator.",
     "On Windows the service still stamps windows-user. Linux SO_PEERCRED was checked for the same uid only.",
-    "Archive is unsigned and is not an installer.",
-    "for_fix/ is empty aside from .gitkeep and is reserved for later Astra directives."
+    "Archive is unsigned, is not an installer, and does not contain 1ba3cf7.",
+    "for_fix/ holds the Astra directive and is not an implementation surface."
   ]
 }
