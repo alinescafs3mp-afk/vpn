@@ -4,15 +4,16 @@ Baseline: `0b79fb9c135ffb5a510b41319fc3c53cea2d3ac6` (tree audited as `e2b02f9f1
 
 Package A fix commit: `2b46431693fe58eb02c40a36a0b192ce000b6fed`.
 Package B fix commit: `1ba3cf78dd242141d8605286ac2a45101ad737c0`.
+Package C fix commit: `b532631694f81b438a3902da27d0a4e97f998ae6`.
 
-Executed on this host against the package B tree: Linux, .NET SDK 10.0.112, 2026-10-03.
+Executed on this host against the package C tree: Linux, .NET SDK 10.0.112, 2026-10-03.
 
 ```text
 dotnet build AutoVpn.slnx -c Release
 dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release
 ```
 
-`AUTOVPN_MIHOMO_PATH` was unset. Result of the unit-test project: 57 passed, 1 skipped, 0 failed, duration 1 s. The skip is `PinnedLinuxCoreValidatesSyntheticNonTunProfileWhenProvided`: native `mihomo -t` is NOT_RUN, not a pass. This command is not `dotnet test AutoVpn.slnx`. The earlier package A solution run was 47 passed and 1 skipped. The Release build of the solution after package B was 0 warnings and 0 errors; Desktop was compiled and not executed. No Windows process was started. The local archive `a4c142f9…` predates both commits.
+`AUTOVPN_MIHOMO_PATH` was unset. Result of the unit-test project after package C: 63 passed, 1 skipped, 0 failed, duration 1 s. The skip is `PinnedLinuxCoreValidatesSyntheticNonTunProfileWhenProvided`: native `mihomo -t` is NOT_RUN, not a pass. This command is not `dotnet test AutoVpn.slnx`. The package B run was 57 passed and 1 skipped. The package A solution run was 47 passed and 1 skipped. The Release build of the solution after package C was 0 warnings and 0 errors; Desktop was compiled and not executed. No Windows process was started. The local archive `a4c142f9…` predates these commits.
 
 States used here: `OPEN`, `IN_PROGRESS`, `IMPLEMENTED_NOT_VALIDATED`, `BLOCKED`, `VERIFIED`.
 
@@ -66,67 +67,67 @@ Remaining limitation: the desktop and the broker still have separate catalogues.
 
 ## F04
 
-Status: `OPEN`
+Status: `IN_PROGRESS`
 
-Fix commit: none
+Fix commit: `b532631694f81b438a3902da27d0a4e97f998ae6`
 
-Production paths: `src/AutoVpn.Infrastructure/Broker/LocalIpcServer.cs`.
+Production paths: `src/AutoVpn.Infrastructure/Broker/LocalIpcServer.cs`. The accept loop yields before a request and opens the next instance. Header and body reads use a 2-second budget. The write uses its own 2-second budget. The server closes after the response. Three pipe-construction failures stop the loop. `RoundTripAsync` bounds the whole exchange at 15 seconds.
 
-Regression IDs: AT02, AT03 not written.
+Regression IDs: AT02, AT03 partial. `PackageCTests.PartialOversizedAndHeldPipeClientsDoNotBlockTheNextCommand`, `SecondPipeDisconnectsAStartBlockedOnTheCore`, `PipeCreationFailureStopsInsteadOfRetryingForever`. `BehaviorTests.LocalPipeRejectsASecondOwnerAndReturnsSnapshot` still passes for the same uid.
 
-Environment: existing same-user pipe test only.
+Environment: Linux named pipes, SDK 10.0.112. Not Windows named pipes.
 
-Evidence: `BehaviorTests.LocalPipeRejectsASecondOwnerAndReturnsSnapshot` does not exercise a second Windows user or a held-open frame.
+Evidence: a 2-byte header, a length above `MaxIpcFrameBytes`, and a client that read its snapshot and stayed open each left the next snapshot under 1.5 seconds. A start blocked on a gate was disconnected by a second client; the first response was `CANCELED`, the phase was `Disconnected`, and protection was disarmed. Three `IOException` constructions set `PipeFault` and stopped.
 
-Remaining limitation: one client can still occupy the accept loop. Package C.
+Remaining limitation: the connect call still waits until that start finishes. It does not return only an operation handle and a later completion event. Windows pipe behavior was not run.
 
 ## F05
 
 Status: `BLOCKED`
 
-Fix commit: none
+Fix commit: `b532631694f81b438a3902da27d0a4e97f998ae6` removes the `windows-user` acceptance. It does not add a Windows identity.
 
-Production paths: `src/AutoVpn.Service/Program.cs` still stamps `windows-user` on Windows. Linux `SO_PEERCRED` remains same-uid.
+Production paths: `src/AutoVpn.Infrastructure/Broker/PipePeer.cs`, `LocalIpcServer.cs`, `src/AutoVpn.Service/Program.cs`. A peer that is not verified is rejected. On this host that check is Linux `SO_PEERCRED`. The service no longer passes `windows-user` as the caller.
 
 Regression IDs: AT04 not written.
 
-Environment: Linux.
+Environment: Linux same-uid pipe. Two Windows accounts were not available.
 
-Evidence: `docs/ARCHITECTURE.md` description still matches the code.
+Evidence: `PipePeer.Inspect` returns not accepted when the OS is not Linux. The pipe test on this host still accepts only the service uid.
 
-Remaining limitation: two Windows users, a real service identity, and a spoofed server were not available.
+Remaining limitation: pipe ACL, a service SID, a second Windows session, remote denial, and a spoofed server were not tested. Rejection is not an implementation of that boundary.
 
 ## F06
 
-Status: `OPEN`
+Status: `IN_PROGRESS`
 
-Fix commit: none
+Fix commit: `b532631694f81b438a3902da27d0a4e97f998ae6`
 
-Production paths: `src/AutoVpn.Application/IpcDispatcher.cs`, `src/AutoVpn.Infrastructure/Broker/BrokerEngine.cs`.
+Production paths: `src/AutoVpn.Application/IpcDispatcher.cs`, `src/AutoVpn.Infrastructure/Broker/BrokerEngine.cs`, `src/AutoVpn.Desktop/MainWindow.xaml.cs`. A state-changing request must carry the current revision, including zero against a moved revision. A stored request id returns the original response and does not run again. `RecoverOwned` is refused while protection is armed or a tunnel phase is active. The desktop sends `UiSession.StateRevision`.
 
-Regression IDs: AT05 not written.
+Regression IDs: AT05 partial. `PackageCTests.ReplayReturnsTheOriginalResultAndAStaleConnectDoesNotStartAgain`. `BehaviorTests.DispatcherRejectsRemoteReplayForbiddenAndUnknown` now expects the original snapshot for the same id. `StaleRevisionDoesNotDisconnectAndCancelDuringStartStopsTheCore` still rejects revision 50 at the initial revision.
 
-Environment: existing replay test only.
+Environment: Linux, in-process dispatcher and engine. No service-process restart.
 
-Evidence: `BehaviorTests.DispatcherRejectsRemoteReplayForbiddenAndUnknown`.
+Evidence: two dispatches of `connect-1` produced one core start and the same operation id. After disconnect, that id still returned the original response. A new connect with revision 0 was `STALE_REVISION` and did not start the core. `RecoverOwned` during `Connected` returned `RECOVERY_BLOCKED` and left protection armed.
 
-Remaining limitation: lease renewal and restart idempotency are not closed.
+Remaining limitation: the idempotency map is in memory and capped at 256 results. A full map rejects a new id instead of re-executing an evicted one. Lease renewal across a process restart and a second Windows session are not covered.
 
 ## F07
 
-Status: `OPEN`
+Status: `IN_PROGRESS`
 
-Fix commit: none
+Fix commit: `b532631694f81b438a3902da27d0a4e97f998ae6`
 
-Production paths: `src/AutoVpn.Infrastructure/Broker/BrokerEngine.cs`.
+Production paths: `src/AutoVpn.Infrastructure/Broker/BrokerEngine.cs`, `ICoreController.cs`. `ConfirmProduction` requires this boot id, generation, operation id, node id, and network epoch. `StartAsync` and `StopAsync` take the generation and operation id. A stop for a different operation does not clear the running one.
 
-Regression IDs: AT06 not written. `BehaviorTests.StaleRevisionDoesNotDisconnectAndCancelDuringStartStopsTheCore` covers one in-process cancel.
+Regression IDs: AT06 partial. `PackageCTests.OldAttemptCannotConfirmOrStopTheNextCore`, `SecondPipeDisconnectsAStartBlockedOnTheCore`. `BehaviorTests.StaleRevisionDoesNotDisconnectAndCancelDuringStartStopsTheCore` still passes.
 
-Environment: Linux unit test.
+Environment: Linux. The core was an in-process stand-in, not Mihomo. Confirmation is not an IPC message.
 
-Evidence: that test.
+Evidence: after disconnect and a second connect, the first boot/generation/operation did not move the phase to `Connected`. `StopAsync` for the first operation left the second operation running. The matching confirmation then reached `Connected`. The pipe test cancelled the blocked start.
 
-Remaining limitation: confirmation is not bound to a specific core attempt across a real process.
+Remaining limitation: there is no owned OS process handle and no delayed completion from a real core. A late success was applied by a direct method call.
 
 ## F08
 
@@ -146,19 +147,19 @@ Remaining limitation: the event is `ReportHealth`, not a watched OS process exit
 
 ## F09
 
-Status: `OPEN`
+Status: `IN_PROGRESS`
 
-Fix commit: none
+Fix commit: `b532631694f81b438a3902da27d0a4e97f998ae6` for a failed start after a successful arm. The other stages are unchanged.
 
-Production paths: `src/AutoVpn.Infrastructure/Broker/BrokerEngine.cs`, `src/AutoVpn.Domain/TunnelReducer.cs`.
+Production paths: `src/AutoVpn.Infrastructure/Broker/BrokerEngine.cs`. A core that returns not started no longer disarms the guard. The phase is `Blocked` and `ProtectionArmed` stays true. An explicit disconnect still disarms.
 
-Regression IDs: AT08 not written.
+Regression IDs: AT08 partial. `PackageCTests.FailedStartKeepsProtectionArmed`.
 
-Environment: not executed for this finding.
+Environment: Linux, in-process guard and core. No packets were observed.
 
-Evidence: none new.
+Evidence: that test. The error was `CORE_CONFIG_REJECTED`. Protection stayed armed.
 
-Remaining limitation: arm/start/verify/stop/restore failure injection and packet proof are open.
+Remaining limitation: preflight, readiness, switch, stop, and restoration failures are not injected. Packet blocking was not measured. F10 remains blocked.
 
 ## F10
 
@@ -508,7 +509,7 @@ Regression IDs: AT31 partial. Connect expects `PlatformReason()`. Missing-binary
 
 Environment: Linux. CI still sets `AUTOVPN_MIHOMO_PATH` to an empty string, which is a skip.
 
-Evidence: the package A solution run was 47 passed and 1 skipped. The package B unit-test run was 57 passed and 1 skipped. Neither run is a Windows pass.
+Evidence: the package A solution run was 47 passed and 1 skipped. The package B unit-test run was 57 passed and 1 skipped. The package C unit-test run was 63 passed and 1 skipped. None of these runs is a Windows pass.
 
 Remaining limitation: the second-owner pipe test is still the same user. Admin scripts still exit 2. Windows expectations were not executed on Windows. Seeded consent in broker tests remains.
 

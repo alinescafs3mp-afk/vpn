@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "applicationVersion": "0.1.0",
-  "gitCommit": "1ba3cf78dd242141d8605286ac2a45101ad737c0",
+  "gitCommit": "b532631694f81b438a3902da27d0a4e97f998ae6",
   "workingTreeClean": true,
-  "gitCommitNote": "gitCommit is the package B code commit. This file is the following docs-only amendment. The archive was packed from an older tree and does not contain this commit or package A.",
+  "gitCommitNote": "gitCommit is the package C code commit. This file is the following docs-only amendment. The archive was packed from an older tree and does not contain this commit, package A, or package B.",
   "builtUtc": "2026-10-02T19:58:42Z",
   "build": {
     "sdk": "10.0.112",
@@ -36,17 +36,17 @@
       "exitCode": 0,
       "warnings": 0,
       "errors": 0,
-      "note": "Includes Desktop (net10.0-windows), Service, Recovery, and Inventory. Desktop was not executed. Recorded against package B."
+      "note": "Includes Desktop (net10.0-windows), Service, Recovery, and Inventory. Desktop was not executed. Recorded against package C."
     },
     {
       "command": "dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release",
       "environment": "Linux, SDK 10.0.112, AUTOVPN_MIHOMO_PATH unset",
       "timestampUtc": "2026-10-03",
       "exitCode": 0,
-      "passed": 57,
+      "passed": 63,
       "failed": 0,
       "skipped": 1,
-      "note": "Re-run on the package B tree. The skipped test is PinnedLinuxCore: native mihomo -t is NOT_RUN, not a pass. This is the unit-test project, not dotnet test AutoVpn.slnx, and it is not Windows validation. The package A solution run was 47 passed and 1 skipped. The older 36-pass count included the native fact as a pass and is obsolete."
+      "note": "Full unit-test project on the package C tree before a whitespace-only reindent of the failover lock. The skipped test is PinnedLinuxCore: native mihomo -t is NOT_RUN, not a pass. This is not dotnet test AutoVpn.slnx and it is not Windows validation. Package B was 57 passed and 1 skipped. Package A solution run was 47 passed and 1 skipped. The older 36-pass count included the native fact as a pass and is obsolete."
     },
     {
       "command": "AUTOVPN_MIHOMO_PATH=<pinned linux binary> dotnet test tests/AutoVpn.UnitTests -c Release --filter FullyQualifiedName~PinnedLinuxCore",
@@ -80,7 +80,7 @@
     "The desktop refresh code was compiled and not executed. No node was marked Healthy.",
     "The service does not start Mihomo and does not install filters. It does not call the catalogue coordinator.",
     "On Windows the service still stamps windows-user. Linux SO_PEERCRED was checked for the same uid only.",
-    "Archive is unsigned, is not an installer, and does not contain 1ba3cf7.",
+    "Archive is unsigned, is not an installer, and does not contain b532631.",
     "for_fix/ holds the Astra directive and is not an implementation surface."
   ]
 }
