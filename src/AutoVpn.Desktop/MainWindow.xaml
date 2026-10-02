@@ -1,0 +1,66 @@
+<Window x:Class="AutoVpn.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AutoVPN"
+        Height="640"
+        Width="880"
+        MinHeight="560"
+        MinWidth="720"
+        Background="{StaticResource PaperBrush}"
+        FontFamily="Segoe UI"
+        Foreground="{StaticResource InkBrush}">
+  <Grid Margin="24">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="200"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
+    <StackPanel>
+      <TextBlock Text="AutoVPN" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,4"/>
+      <TextBlock Text="Windows-клиент" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,20"/>
+      <Button Content="Подключение" Click="ShowConnection" Style="{StaticResource NavButton}"/>
+      <Button Content="Серверы" Click="ShowServers" Style="{StaticResource NavButton}"/>
+      <Button Content="Подписки" Click="ShowSubscriptions" Style="{StaticResource NavButton}"/>
+      <Button Content="Настройки" Click="ShowSettings" Style="{StaticResource NavButton}"/>
+    </StackPanel>
+    <Border Grid.Column="1" Background="{StaticResource CardBrush}" CornerRadius="16" Padding="28" BorderBrush="{StaticResource LineBrush}" BorderThickness="1">
+      <Grid>
+        <StackPanel x:Name="ConnectionPage">
+          <TextBlock x:Name="PhaseText" Text="Не подключён" FontSize="32" FontWeight="SemiBold"/>
+          <TextBlock x:Name="DetailText" TextWrapping="Wrap" Margin="0,12,0,20" Foreground="{StaticResource MutedBrush}"
+                     Text="Служба ещё не вызывалась. Доступность серверов не измерялась."/>
+          <CheckBox x:Name="DisclosureBox" Margin="0,0,0,16">
+            <TextBlock TextWrapping="Wrap" MaxWidth="520"
+                       Text="AutoVPN подключается к публичным серверам из стороннего списка. Их операторы не проверяются. Поставщик подписки видит запросы на скачивание, а проверки серверов обращаются к публичным адресам. Приложение не обещает анонимность. Обычный HTTPS по-прежнему нужен."/>
+          </CheckBox>
+          <Button x:Name="ConnectButton" Content="Подключить" Width="180" Height="44" HorizontalAlignment="Left" Click="ConnectClick"/>
+          <TextBlock Margin="0,24,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"
+                     Text="Проверки TUN, DNS, IPv6, восстановления и установщика на Windows ещё не выполнялись."/>
+        </StackPanel>
+        <StackPanel x:Name="ServersPage" Visibility="Collapsed">
+          <TextBlock Text="Серверы" FontSize="28" FontWeight="SemiBold"/>
+          <StackPanel Orientation="Horizontal" Margin="0,16,0,12">
+            <Button Content="Рабочие" Margin="0,0,8,0" Click="ShowWorking"/>
+            <Button Content="Избранное" Margin="0,0,8,0" Click="ShowFavorites"/>
+            <Button Content="Все" Click="ShowAll"/>
+          </StackPanel>
+          <TextBlock x:Name="ServerList" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
+                     Text="Список пуст. Рабочие серверы появятся только после локальной проверки. Страна из названия — это подпись подписки, не измеренный выход."/>
+        </StackPanel>
+        <StackPanel x:Name="SubscriptionsPage" Visibility="Collapsed">
+          <TextBlock Text="Подписки" FontSize="28" FontWeight="SemiBold"/>
+          <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
+                     Text="Источник: igareck/vpn-configs-for-russia. Данные подписки не исполняются как конфиг. Интервал в файле — совет, локальный минимум 15 минут. Tor-мосты — отдельный тип и в этой версии не используются."/>
+        </StackPanel>
+        <StackPanel x:Name="SettingsPage" Visibility="Collapsed">
+          <TextBlock Text="Настройки" FontSize="28" FontWeight="SemiBold"/>
+          <TextBlock Margin="0,12,0,8" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
+                     Text="Обновление по умолчанию: 120 минут ±10. Защита при обрыве рекомендуется. Выключение защиты не включает непроверенный туннель."/>
+          <CheckBox x:Name="ProtectionBox" IsChecked="True" Content="Защита при обрыве" Margin="0,8,0,8"/>
+          <CheckBox x:Name="LanBox" IsChecked="True" Content="Разрешить доступ к локальной сети" Margin="0,0,0,8"/>
+          <CheckBox x:Name="InsecureBox" Content="Разрешить серверы без проверки сертификата" Margin="0,0,0,8"/>
+          <TextBlock Margin="0,12,0,0" Foreground="{StaticResource MutedBrush}" Text="Закрытие окна прячет его в область уведомлений. Выход — из меню значка."/>
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

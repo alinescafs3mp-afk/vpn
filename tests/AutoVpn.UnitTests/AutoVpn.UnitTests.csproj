@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>AutoVpn.UnitTests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AutoVpn.Domain\AutoVpn.Domain.csproj" />
+    <ProjectReference Include="..\..\src\AutoVpn.Contracts\AutoVpn.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\AutoVpn.Application\AutoVpn.Application.csproj" />
+    <ProjectReference Include="..\..\src\AutoVpn.Infrastructure\AutoVpn.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

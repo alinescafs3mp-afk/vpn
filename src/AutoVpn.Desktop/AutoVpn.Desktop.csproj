@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>AutoVpn.Desktop</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AutoVpn.Domain\AutoVpn.Domain.csproj" />
+    <ProjectReference Include="..\AutoVpn.Application\AutoVpn.Application.csproj" />
+    <ProjectReference Include="..\AutoVpn.Contracts\AutoVpn.Contracts.csproj" />
+    <ProjectReference Include="..\AutoVpn.Infrastructure\AutoVpn.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "retrievedUtc": "2026-10-02T19:42:00Z",
+  "product": "mihomo",
+  "upstream": "https://github.com/MetaCubeX/mihomo",
+  "version": "v1.19.32",
+  "tag": "v1.19.32",
+  "commit": "88dcbf7f1614a67c3b36b848ee3592dfa92ada36",
+  "license": "MIT",
+  "signatures": "none published on the GitHub release",
+  "attestations": "none published on the GitHub release",
+  "upstreamChecksumAsset": "none",
+  "tunStack": "mixed",
+  "note": "Hashes below were computed on the Linux build host from the downloaded files. The binaries are not in git. Linux mihomo -t accepted one synthetic non-TUN VLESS profile. That is not a connectivity test and not a Windows TUN test.",
+  "assets": [
+    {
+      "name": "mihomo-linux-amd64-v1.19.32.gz",
+      "sha256": "8451100836c9eda194331c2babfad490b2faf30cebc1a04b0e76fd8ac2d35d10"
+    },
+    {
+      "name": "mihomo-linux-amd64",
+      "sha256": "3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8",
+      "versionString": "Mihomo Meta v1.19.32 linux amd64 with go1.26.8, tags with_gvisor"
+    },
+    {
+      "name": "mihomo-windows-amd64-v1.19.32.zip",
+      "sha256": "1ac84e795b5b915446e20139677fb6cc013a0778e876e8d4c96f994750b4c4a3",
+      "containsWintun": false
+    },
+    {
+      "name": "mihomo-windows-amd64.exe",
+      "sha256": "beb9878924d7bd38c67176b441ab5e668cc378bfe751c8dc8fef3eb5aaf566d5"
+    },
+    {
+      "name": "wintun-0.14.1.zip",
+      "sha256": "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51",
+      "amd64Dll": "wintun/bin/amd64/wintun.dll",
+      "amd64DllSha256": "e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce",
+      "amd64DllBytes": 427552
+    }
+  ]
+}

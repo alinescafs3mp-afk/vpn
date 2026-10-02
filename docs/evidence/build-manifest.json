@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "applicationVersion": "0.1.0",
+  "gitCommit": "FILL_AFTER_COMMIT",
+  "workingTreeClean": false,
+  "builtUtc": "2026-10-02T19:44:00Z",
+  "build": {
+    "sdk": "10.0.112",
+    "configuration": "Release",
+    "target": "win-x64",
+    "selfContained": true,
+    "host": "linux"
+  },
+  "core": {
+    "version": "v1.19.32",
+    "commit": "88dcbf7f1614a67c3b36b848ee3592dfa92ada36",
+    "linuxBinarySha256": "3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8",
+    "windowsExeSha256": "beb9878924d7bd38c67176b441ab5e668cc378bfe751c8dc8fef3eb5aaf566d5",
+    "bundledInArchive": false
+  },
+  "windows": {
+    "editionBuild": "NOT_RUN",
+    "adminTests": "NOT_RUN",
+    "tun": "NOT_RUN",
+    "dnsIpv6": "NOT_RUN",
+    "crashRecovery": "NOT_RUN",
+    "installer": "NOT_RUN",
+    "ui": "NOT_RUN"
+  },
+  "tests": [
+    {
+      "command": "dotnet test AutoVpn.slnx -c Release",
+      "environment": "Linux, SDK 10.0.112, AUTOVPN_MIHOMO_PATH unset",
+      "timestampUtc": "before 2026-10-02T19:41:48Z",
+      "exitCode": 0,
+      "passed": 29,
+      "failed": 0,
+      "skipped": 0,
+      "note": "The Mihomo fact returns without invoking the binary when AUTOVPN_MIHOMO_PATH is unset. Count that as a unit-test pass, not as core or Windows validation."
+    },
+    {
+      "command": "dotnet build AutoVpn.slnx -c Release",
+      "environment": "Linux, SDK 10.0.112",
+      "timestampUtc": "before 2026-10-02T19:41:48Z",
+      "exitCode": 0,
+      "warnings": 0,
+      "errors": 0,
+      "note": "Includes Desktop (net10.0-windows), Service, Recovery, and Inventory. Desktop was not executed."
+    },
+    {
+      "command": "AUTOVPN_MIHOMO_PATH=<pinned linux binary> dotnet test tests/AutoVpn.UnitTests -c Release --filter FullyQualifiedName~PinnedLinuxCore",
+      "environment": "Linux, mihomo v1.19.32",
+      "timestampUtc": "before 2026-10-02T19:41:48Z",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "note": "mihomo -t on a synthetic non-TUN VLESS profile to 203.0.113.10. Hash checked. Not a connectivity test and not TUN."
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "autovpn-0.1.0-win-x64-self-contained.tar.xz",
+      "location": "local artifacts/ only; gitignored; not a GitHub release",
+      "sha256": "bd314673d6947e7d14a385d1f5bdbe624e541a096053cd79fb9aa7ad2948baee",
+      "bytes": 134320688,
+      "kind": "self-contained publish of Desktop, Service, Recovery, Inventory",
+      "installer": false,
+      "signed": false,
+      "includesMihomo": false,
+      "includesWintun": false
+    }
+  ],
+  "limitations": [
+    "Not release-ready.",
+    "Windows TUN, DNS, IPv6, crash recovery, pipe ACL, UI, and installer are NOT_RUN.",
+    "No public subscription node was probed.",
+    "The desktop does not yet run a refresh or show a measured catalogue.",
+    "The service does not start Mihomo and does not install filters.",
+    "Archive is unsigned and is not an installer."
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "observedUtc": "2026-10-02T19:41:48Z",
+  "runtimeLoadsThisFile": false,
+  "meaning": "Direct HTTPS from the Linux build host. Not a VPN path, not a latency sample, and not evidence that any subscription node works.",
+  "targets": [
+    {
+      "url": "https://cp.cloudflare.com/generate_204",
+      "httpStatus": 204,
+      "bodyBytes": 0
+    },
+    {
+      "url": "https://www.gstatic.com/generate_204",
+      "httpStatus": 204,
+      "bodyBytes": 0
+    }
+  ]
+}

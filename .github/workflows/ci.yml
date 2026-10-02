@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build and unit-test
+        run: |
+          dotnet build AutoVpn.slnx -c Release --nologo
+          dotnet test AutoVpn.slnx -c Release --nologo
+        env:
+          # Leave unset. The Mihomo fact returns immediately without this path.
+          # Setting it would still be a non-TUN config test, not a Windows gate.
+          AUTOVPN_MIHOMO_PATH: ""
