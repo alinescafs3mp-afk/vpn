@@ -2,11 +2,11 @@
 
 ## Для владельца
 
-Аудит 2026-10-02 лежит в этом дереве. Выпуска нет. Установщика нет. Туннель Windows не проверялся. Публичные узлы не измерялись. Папка `for_fix/` пустая и ждёт директивы Астры. Архив и его сумма описаны в `docs/IMPLEMENTATION_STATUS.md`. Коммит аудита: `f0f72d131e9465d9e35122c2c9699deafa667891`. Следующий коммит только записывает этот SHA. `origin/main` после отправки — тот записывающий коммит.
+Выпуска нет. Установщика нет. Туннель Windows не проверялся. Публичные узлы не измерялись. Пакет A директивы из `for_fix/` записан в `2b46431693fe58eb02c40a36a0b192ce000b6fed`. Статус каждой находки F01–F34: `docs/AUDIT_FIX_STATUS.md`. Архив и его сумма описаны в `docs/IMPLEMENTATION_STATUS.md`; архив не содержит пакет A. Этот коммит только именует тот SHA.
 
 ## Last verified commit
 
-Audit commit: `f0f72d131e9465d9e35122c2c9699deafa667891`
+Package A commit: `2b46431693fe58eb02c40a36a0b192ce000b6fed`
 
 This handoff edit is a child of that commit. `origin/main` after the push is the child. Verify with:
 
@@ -33,7 +33,7 @@ AUTOVPN_MIHOMO_PATH=<linux mihomo v1.19.32> dotnet test tests/AutoVpn.UnitTests 
 dotnet publish (Service, Recovery, Inventory, Desktop) -c Release -r win-x64 --self-contained true
 ```
 
-Results: build 0 warnings; unit tests 36 passed and 0 failed with Mihomo unset; filtered core test 1 passed (`mihomo -t`, non-TUN, documentation address); publish produced PE32+ executables. Details and the archive hash are in `docs/evidence/build-manifest.json`.
+Results after package A: build 0 warnings; unit tests 47 passed, 0 failed, 1 skipped with Mihomo unset. The skip is native `mihomo -t`, not a pass. The earlier filtered core test is not re-run for this commit. The archive was not rebuilt. Details are in `docs/evidence/build-manifest.json` and `docs/AUDIT_FIX_STATUS.md`.
 
 `scripts/test-windows-admin.ps1` and `scripts/verify-release.ps1` exit 2 on purpose. They were not used as a green gate. `scripts/package.ps1` was not executed.
 

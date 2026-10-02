@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "applicationVersion": "0.1.0",
-  "gitCommit": "f0f72d131e9465d9e35122c2c9699deafa667891",
+  "gitCommit": "2b46431693fe58eb02c40a36a0b192ce000b6fed",
   "workingTreeClean": true,
-  "gitCommitNote": "gitCommit is the audit commit. This file is the following docs-only amendment. The archive was packed before that object existed.",
+  "gitCommitNote": "gitCommit is the package A code commit. This file is the following docs-only amendment. The archive was packed from an older tree and does not contain this commit.",
   "builtUtc": "2026-10-02T19:58:42Z",
   "build": {
     "sdk": "10.0.112",
@@ -43,10 +43,10 @@
       "environment": "Linux, SDK 10.0.112, AUTOVPN_MIHOMO_PATH unset",
       "timestampUtc": "2026-10-02",
       "exitCode": 0,
-      "passed": 36,
+      "passed": 47,
       "failed": 0,
-      "skipped": 0,
-      "note": "The Mihomo fact returns without invoking the binary when AUTOVPN_MIHOMO_PATH is unset. Count that as a unit-test pass, not as core or Windows validation. Two earlier starts of this command aborted with Internal CLR error 0x80131506 before a result; this recorded run passed."
+      "skipped": 1,
+      "note": "Recorded after package A on Linux with AUTOVPN_MIHOMO_PATH unset. The skipped test is PinnedLinuxCore: native mihomo -t is NOT_RUN, not a pass. This is not Windows validation. The older 36-pass count included that fact as a pass and is obsolete."
     },
     {
       "command": "AUTOVPN_MIHOMO_PATH=<pinned linux binary> dotnet test tests/AutoVpn.UnitTests -c Release --filter FullyQualifiedName~PinnedLinuxCore",
