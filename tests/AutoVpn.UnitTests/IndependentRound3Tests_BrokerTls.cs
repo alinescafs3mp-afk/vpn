@@ -35,17 +35,18 @@ public sealed class IndependentRound3Tests_BrokerTls
     }
 
     [Fact]
-    public async Task B02_ExcludedNodeDuringStartMustNotBeCommitted()
+    public async Task B02_AutomaticallySelectedNodeExcludedDuringStartMustNotBeCommitted()
     {
         var catalogue = Catalogue();
         var core = new GateCore { GateAt = 1 };
         var engine = Engine(catalogue, core);
-        var connect = Connect(engine, catalogue);
+        var connect = engine.HandleAsync(Request(engine, IpcOperations.Connect, new ConnectPayload
+        { NodeId = "", Digest = "", NetworkEpoch = catalogue.NetworkEpoch }), CancellationToken.None);
         await core.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        catalogue.TrySetExcluded(catalogue.Nodes[0].NodeId, true);
+        catalogue.TrySetExcluded(engine.State.ActiveNodeId!, true);
         core.Release.TrySetResult();
         var response = await connect;
-        Assert.False(response.Ok, "Excluded candidate was committed after an asynchronous start.");
+        Assert.False(response.Ok, "Automatically selected candidate was committed after exclusion during asynchronous start.");
     }
 
     [Fact]
@@ -274,7 +275,14 @@ public sealed class IndependentRound3Tests_BrokerTls
                 await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
                 { ServerCertificate = _certificate, EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 }, _stop.Token);
                 var buffer = new byte[4096];
-                await ssl.ReadAsync(buffer, _stop.Token);
+                var used = 0;
+                while (used < buffer.Length)
+                {
+                    var count = await ssl.ReadAsync(buffer.AsMemory(used), _stop.Token);
+                    if (count == 0) { return; }
+                    used += count;
+                    if (Encoding.ASCII.GetString(buffer, 0, used).Contains("\r\n\r\n", StringComparison.Ordinal)) { break; }
+                }
                 await ssl.WriteAsync(Encoding.ASCII.GetBytes(response), _stop.Token);
                 await ssl.FlushAsync(_stop.Token);
                 await Task.Delay(Timeout.Infinite, _stop.Token);
