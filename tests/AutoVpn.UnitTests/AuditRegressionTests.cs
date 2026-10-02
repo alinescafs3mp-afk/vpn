@@ -573,22 +573,47 @@ public class AuditRegressionTests
             {
                 Assert.False(failing.Nodes[0].Favorite);
                 Assert.Equal(HealthState.Healthy, failing.Nodes[0].Assessment!.Health);
-                Assert.Throws<IOException>(() => failing.TrySetFavorite(nodeId, true));
-                Assert.False(failing.Nodes[0].Favorite);
-                Assert.Throws<IOException>(() => failing.ApplyAssessment(nodeId, new AssessmentSnapshot
+                Assert.True(failing.TrySetFavorite(nodeId, true));
+                Assert.True(failing.Nodes[0].Favorite);
+                failing.ApplyAssessment(nodeId, new AssessmentSnapshot
                 {
                     Digest = digest,
                     NetworkEpoch = failing.NetworkEpoch,
                     Health = HealthState.Failed,
                     LastFailureUtc = Now,
+                });
+                Assert.Equal(HealthState.Failed, failing.Nodes[0].Assessment!.Health);
+                var replacement = PendingRecord(Vless(Uuid, "203.0.113.41"));
+                Assert.Throws<IOException>(() => failing.ApplySnapshot(new SnapshotCommit
+                {
+                    ArtifactId = "replacement",
+                    FamilyId = "black-vless",
+                    ContentHash = "b",
+                    Complete = true,
+                    NowUtc = Now,
+                    Nodes =
+                    [
+                        new SnapshotNode
+                        {
+                            Digest = replacement.Digest!,
+                            Semantics = replacement.Semantics!,
+                            Label = replacement.DisplayName,
+                            FamilyId = "black-vless",
+                            ArtifactId = "replacement",
+                        },
+                    ],
                 }));
-                Assert.Equal(HealthState.Healthy, failing.Nodes[0].Assessment!.Health);
-                Assert.Null(failing.Nodes[0].Assessment!.LastFailureUtc);
+                Assert.Single(failing.Nodes);
+                Assert.Equal(nodeId, failing.Nodes[0].NodeId);
+                Assert.True(failing.Nodes[0].Favorite);
+                Assert.Equal(HealthState.Failed, failing.Nodes[0].Assessment!.Health);
+                Assert.Equal("203.0.113.40", failing.Nodes[0].Semantics.Host);
             }
 
             using var reopened = SqliteCatalogue.Open(path, new PassthroughSecretProtector());
-            Assert.False(reopened.Nodes[0].Favorite);
-            Assert.Equal(HealthState.Healthy, reopened.Nodes[0].Assessment!.Health);
+            Assert.Single(reopened.Nodes);
+            Assert.True(reopened.Nodes[0].Favorite);
+            Assert.Equal(HealthState.Failed, reopened.Nodes[0].Assessment!.Health);
             Assert.Equal("203.0.113.40", reopened.Nodes[0].Semantics.Host);
             Assert.Equal(digest, reopened.Nodes[0].Digest);
         }

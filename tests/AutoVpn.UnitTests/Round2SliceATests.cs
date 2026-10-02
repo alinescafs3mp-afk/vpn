@@ -787,6 +787,40 @@ public sealed class Round2SliceATests
         Assert.Equal(2, catalogue.Nodes.Select(node => node.Digest).Distinct(StringComparer.Ordinal).Count());
     }
 
+    [Fact]
+    public async Task Rt28InsecureProxyFlagDoesNotAuthenticateTheProbeTarget()
+    {
+        var semantics = new NodeSemantics
+        {
+            Protocol = ProtocolKind.Vless,
+            Host = "candidate.example",
+            Port = 443,
+            UserId = "11111111-1111-4111-8111-111111111111",
+            Encryption = "none",
+            Security = "tls",
+            Sni = "www.example.com",
+            SkipCertVerify = true,
+        };
+        var node = new CatalogueNode
+        {
+            NodeId = "insecure",
+            Digest = CanonicalIdentity.Digest(semantics),
+            Semantics = semantics,
+            Label = "insecure",
+            FirstSeenUtc = DateTimeOffset.UnixEpoch,
+            LastSeenUtc = DateTimeOffset.UnixEpoch,
+        };
+        var allowed = NonTunCoreProbeTransport.BuildProbeYaml(node, 9, 10, allowInsecureProxyCertificates: true);
+        Assert.Contains("skip-cert-verify: true", allowed, StringComparison.Ordinal);
+        var denied = Assert.Throws<InvalidOperationException>(() => NonTunCoreProbeTransport.BuildProbeYaml(node, 9, 10));
+        Assert.Equal(ReasonCodes.CertVerificationDisabled, denied.Message);
+
+        await using var peer = await TlsPeer.StartAsync(Issue("probe.example"), "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+        var exchange = await ExchangeAsync(await ForwardAsync(peer.Port), peer.Port, null);
+        Assert.Equal("TLS_REJECTED", exchange.Failure);
+        Assert.False(exchange.Authenticated);
+    }
+
     private static async Task chattyDisposedSibling(ProbeWorker kept, string deadMarker, string liveMarker)
     {
         await kept.DisposeAsync();
@@ -1155,7 +1189,7 @@ public sealed class Round2SliceATests
     }
 }
 
-file sealed class TlsPeer : IAsyncDisposable
+sealed class TlsPeer : IAsyncDisposable
 {
     private readonly TcpListener _listener;
     private readonly X509Certificate2 _certificate;
@@ -1375,7 +1409,7 @@ file static class BytePipe
     }
 }
 
-file sealed class ShadowsocksAeadServer : IAsyncDisposable
+sealed class ShadowsocksAeadServer : IAsyncDisposable
 {
     private readonly TcpListener _listener;
     private readonly byte[] _key;

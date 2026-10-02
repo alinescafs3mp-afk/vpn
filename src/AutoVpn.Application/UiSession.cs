@@ -69,8 +69,13 @@ public static class UiSessionReducer
         return disclosureAccepted && hasMeasuredEligible;
     }
 
-    public static ExitDecision PlanExit(UiSession session)
+    public static ExitDecision PlanExit(UiSession session, bool operationPending = false)
     {
+        if (operationPending && !session.ClaimsVerifiedDisconnect)
+        {
+            return new ExitDecision(false, "Выход остановлен: операция ещё не завершена. Нужно подтверждённое отключение.");
+        }
+
         if (session.ClaimsVerifiedDisconnect)
         {
             return new ExitDecision(true, null);
@@ -95,6 +100,76 @@ public static class UiSessionReducer
     }
 }
 
+public sealed class SessionMailbox
+{
+    public UiSession Session { get; private set; } = UiSessionReducer.Initial();
+
+    public string? BootId { get; private set; }
+
+    public long Sequence { get; private set; } = -1;
+
+    public string? LastErrorCode { get; private set; }
+
+    public bool OperationPending { get; set; }
+
+    public void NoteDisclosure(bool accepted)
+    {
+        Session = Session with { DisclosureAccepted = accepted };
+    }
+
+    public void ApplyTransportLoss()
+    {
+        LastErrorCode = null;
+        Session = UiSessionReducer.BrokerUnreachable(Session);
+    }
+
+    public bool Apply(IpcResponse response, bool disclosureAccepted)
+    {
+        if (response.Snapshot is null)
+        {
+            LastErrorCode = string.IsNullOrWhiteSpace(response.ErrorCode) ? "NO_SNAPSHOT" : response.ErrorCode;
+            var message = string.IsNullOrWhiteSpace(response.Message) ? "Ответ без снимка состояния." : response.Message;
+            Session = Session with
+            {
+                Detail = LastErrorCode + ": " + message,
+                BrokerReachable = false,
+                ClaimsVerifiedDisconnect = false,
+                DisclosureAccepted = disclosureAccepted,
+            };
+            return false;
+        }
+
+        var snapshot = response.Snapshot;
+        if (BootId is not null && string.Equals(BootId, snapshot.BootId, StringComparison.Ordinal))
+        {
+            if (snapshot.Sequence < Sequence)
+            {
+                return false;
+            }
+
+            if (snapshot.Sequence == Sequence && snapshot.Revision < Session.StateRevision)
+            {
+                return false;
+            }
+        }
+
+        BootId = snapshot.BootId;
+        Sequence = snapshot.Sequence;
+        Session = UiSessionReducer.FromSnapshot(Session, snapshot, response.Message, disclosureAccepted);
+        if (!string.IsNullOrWhiteSpace(response.ErrorCode))
+        {
+            LastErrorCode = response.ErrorCode;
+            Session = Session with { Detail = response.ErrorCode + ": " + (response.Message ?? Session.Detail) };
+        }
+        else
+        {
+            LastErrorCode = null;
+        }
+
+        return true;
+    }
+}
+
 public static class Consent
 {
     public static void AcceptDisclosure(ICatalogue catalogue)
@@ -116,7 +191,23 @@ public static class CataloguePresentation
 {
     public static string Servers(ICatalogue catalogue, string filter, DateTimeOffset nowUtc)
     {
-        var nodes = catalogue.Nodes.Where(node => Match(catalogue, node, filter, nowUtc)).OrderBy(node => node.Label, StringComparer.Ordinal).ToArray();
+        IEnumerable<CatalogueNode> selected = catalogue.Nodes;
+        if (filter == "favorites")
+        {
+            selected = catalogue.Nodes.Where(node => node.Favorite);
+        }
+        else if (filter == "working")
+        {
+            var eligible = catalogue.Eligible(new EligibilityContext
+            {
+                NowUtc = nowUtc,
+                NetworkEpoch = catalogue.NetworkEpoch,
+                AllowInsecureCertificates = catalogue.Settings.AllowInsecureCertificates,
+            }).Select(node => node.NodeId).ToHashSet(StringComparer.Ordinal);
+            selected = catalogue.Nodes.Where(node => eligible.Contains(node.NodeId));
+        }
+
+        var nodes = selected.OrderBy(node => node.Label, StringComparer.Ordinal).ToArray();
         if (nodes.Length == 0)
         {
             return filter switch
@@ -143,25 +234,5 @@ public static class CataloguePresentation
             _ => Ru.NeedsCheck,
         };
         return node.Label + " — " + health + ". Задержка: " + latency + ". Страна по подписке: " + country + ".";
-    }
-
-    private static bool Match(ICatalogue catalogue, CatalogueNode node, string filter, DateTimeOffset nowUtc)
-    {
-        if (filter == "favorites")
-        {
-            return node.Favorite;
-        }
-
-        if (filter == "working")
-        {
-            return catalogue.Eligible(new EligibilityContext
-            {
-                NowUtc = nowUtc,
-                NetworkEpoch = catalogue.NetworkEpoch,
-                AllowInsecureCertificates = catalogue.Settings.AllowInsecureCertificates,
-            }).Any(item => item.NodeId == node.NodeId);
-        }
-
-        return true;
     }
 }

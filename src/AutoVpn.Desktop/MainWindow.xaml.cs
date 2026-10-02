@@ -21,7 +21,8 @@ public partial class MainWindow : Window
     private readonly ICatalogue _catalogue;
     private readonly SourceLedger _ledger;
     private readonly string _root;
-    private UiSession _session = UiSessionReducer.Initial();
+    private readonly SessionMailbox _mailbox = new();
+    private readonly ProbeByteBudget _probeBudget;
     private readonly RefreshFence _fence = new();
     private readonly RefreshScheduler _scheduler;
     private readonly DispatcherTimer _scheduleTimer;
@@ -31,7 +32,6 @@ public partial class MainWindow : Window
     private bool _refreshActive;
     private bool _exit;
     private bool _ready;
-    private bool _connectPending;
 
     public MainWindow()
     {
@@ -40,6 +40,7 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(_root);
         _catalogue = OpenCatalogue(_root);
         _ledger = SourceLedger.Load(Path.Combine(_root, "sources.json"));
+        _probeBudget = ProbeByteBudget.Load(Path.Combine(_root, "probe-budget.txt"), ProductLimits.DailyHealthBudgetBytes, DateOnly.FromDateTime(DateTime.UtcNow));
         _scheduler = new RefreshScheduler(
             () => _catalogue.Settings,
             () => _ledger.Entries.Select(entry => entry.LastSuccessUtc).ToArray(),
@@ -76,7 +77,7 @@ public partial class MainWindow : Window
         ProtectionBox.IsChecked = _catalogue.Settings.ProtectionOnConnect;
         LanBox.IsChecked = _catalogue.Settings.LanAccess;
         InsecureBox.IsChecked = _catalogue.Settings.AllowInsecureCertificates;
-        _session = _session with { DisclosureAccepted = _catalogue.Settings.DisclosureAccepted };
+        _mailbox.NoteDisclosure(_catalogue.Settings.DisclosureAccepted);
         ShowSession();
         _ready = true;
     }
@@ -128,7 +129,7 @@ public partial class MainWindow : Window
         try
         {
             Consent.AcceptDisclosure(_catalogue);
-            _session = _session with { DisclosureAccepted = true };
+            _mailbox.NoteDisclosure(true);
             _ = _scheduler.PulseAsync(DateTimeOffset.UtcNow, CancellationToken.None);
         }
         catch (Exception ex) when (ex is InvalidOperationException or CatalogueStoreException)
@@ -164,10 +165,20 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (_connectPending || _session.SafetyDisconnectAvailable)
+            if (_mailbox.OperationPending || _mailbox.Session.SafetyDisconnectAvailable)
             {
                 await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
                 return;
+            }
+
+            if (_mailbox.Session.PhaseCode == "Unknown" || !_mailbox.Session.BrokerReachable)
+            {
+                await ResyncAsync().ConfigureAwait(true);
+                if (_mailbox.Session.SafetyDisconnectAvailable)
+                {
+                    await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
+                    return;
+                }
             }
 
             if (!_catalogue.Settings.DisclosureAccepted)
@@ -176,7 +187,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _connectPending = true;
+            _mailbox.OperationPending = true;
 
             var now = DateTimeOffset.UtcNow;
             var eligible = _catalogue.Eligible(new EligibilityContext
@@ -243,7 +254,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            _connectPending = false;
+            _mailbox.OperationPending = false;
         }
     }
 
@@ -279,7 +290,8 @@ public partial class MainWindow : Window
                 new NonTunCoreProbeTransport(Environment.GetEnvironmentVariable("AUTOVPN_MIHOMO_PATH"), ExpectedCoreHash()),
                 _ledger,
                 registry.ProbeTargets,
-                _fence);
+                _fence,
+                _probeBudget);
             var discovery = await coordinator.DiscoverAsync(registry, token).ConfigureAwait(true);
             if (!_fence.IsCurrent(cycle))
             {
@@ -309,6 +321,7 @@ public partial class MainWindow : Window
             }
 
             _ledger.Save(Path.Combine(_root, "sources.json"));
+            _probeBudget.Save(Path.Combine(_root, "probe-budget.txt"));
             var eligible = _catalogue.Eligible(new EligibilityContext
             {
                 NowUtc = DateTimeOffset.UtcNow,
@@ -350,6 +363,7 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        await ResyncAsync().ConfigureAwait(true);
         _scheduleTimer.Start();
         if (_refreshActive)
         {
@@ -368,38 +382,67 @@ public partial class MainWindow : Window
             {
                 ProtocolVersion = ProductLimits.IpcProtocolVersion,
                 RequestId = Guid.NewGuid().ToString("N"),
-                ExpectedStateRevision = _session.StateRevision,
+                ExpectedStateRevision = _mailbox.Session.StateRevision,
                 Operation = operation,
                 Payload = JsonSerializer.SerializeToElement(payload, IpcJson.Options),
             }, CancellationToken.None).ConfigureAwait(true);
-            if (response?.Snapshot is null)
+            if (response is null)
             {
-                _session = UiSessionReducer.BrokerUnreachable(_session);
+                _mailbox.ApplyTransportLoss();
                 ShowSession();
                 return;
             }
 
-            _session = UiSessionReducer.FromSnapshot(_session, response.Snapshot, response.Message, _catalogue.Settings.DisclosureAccepted);
+            _mailbox.Apply(response, _catalogue.Settings.DisclosureAccepted);
             ShowSession();
         }
         catch (TimeoutException)
         {
-            _session = UiSessionReducer.BrokerUnreachable(_session);
+            _mailbox.ApplyTransportLoss();
             ShowSession();
         }
         catch (IOException)
         {
-            _session = UiSessionReducer.BrokerUnreachable(_session);
+            _mailbox.ApplyTransportLoss();
             ShowSession();
         }
     }
 
+    private async Task ResyncAsync()
+    {
+        try
+        {
+            var response = await LocalIpcServer.RoundTripAsync("autovpn-broker", new IpcRequest
+            {
+                ProtocolVersion = ProductLimits.IpcProtocolVersion,
+                RequestId = Guid.NewGuid().ToString("N"),
+                ExpectedStateRevision = _mailbox.Session.StateRevision,
+                Operation = IpcOperations.GetSnapshot,
+                Payload = JsonSerializer.SerializeToElement(new Dictionary<string, string>(), IpcJson.Options),
+            }, CancellationToken.None).ConfigureAwait(true);
+            if (response is null)
+            {
+                _mailbox.ApplyTransportLoss();
+            }
+            else
+            {
+                _mailbox.Apply(response, _catalogue.Settings.DisclosureAccepted);
+            }
+        }
+        catch (Exception ex) when (ex is TimeoutException or IOException or OperationCanceledException)
+        {
+            _mailbox.ApplyTransportLoss();
+        }
+
+        ShowSession();
+    }
+
     private void ShowSession()
     {
-        PhaseText.Tag = _session.PhaseCode;
-        PhaseText.Text = _session.PhaseLabel;
-        DetailText.Text = _session.Detail;
-        ConnectButton.Content = _session.PrimaryAction;
+        PhaseText.Tag = _mailbox.Session.PhaseCode;
+        PhaseText.Text = _mailbox.Session.PhaseLabel;
+        DetailText.Text = _mailbox.Session.Detail;
+        ConnectButton.Content = _mailbox.Session.PrimaryAction;
     }
 
     private void ShowPage(UIElement page)
@@ -434,12 +477,12 @@ public partial class MainWindow : Window
 
     private async void ExitApplication()
     {
-        if (_session.SafetyDisconnectAvailable || _session.LastKnownProtectionArmed)
+        if (_mailbox.OperationPending || _mailbox.Session.SafetyDisconnectAvailable || _mailbox.Session.LastKnownProtectionArmed)
         {
             await SendAsync(IpcOperations.Disconnect, new DisconnectPayload()).ConfigureAwait(true);
         }
 
-        var decision = UiSessionReducer.PlanExit(_session);
+        var decision = UiSessionReducer.PlanExit(_mailbox.Session, _mailbox.OperationPending);
         if (!decision.CanClose)
         {
             DetailText.Text = decision.Reason ?? "Выход не подтверждён.";

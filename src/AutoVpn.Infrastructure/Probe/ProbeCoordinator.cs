@@ -25,9 +25,14 @@ public sealed record ProbeObservation(
     string? CandidateDigest = null,
     string? WorkerId = null);
 
+public readonly record struct ProbeAdmission(bool AllowInsecureProxyCertificates);
+
 public interface IProbeTransport
 {
     Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken);
+
+    Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, ProbeAdmission admission, CancellationToken cancellationToken)
+        => ProbeAsync(node, target, cancellationToken);
 }
 
 public sealed record ProbeReport(int Attempted, int Succeeded, int Failed, bool StoppedForUplink);
@@ -47,15 +52,17 @@ public static class ProbeCoordinator
         CancellationToken cancellationToken,
         TimeSpan? budget = null,
         TimeSpan? attemptTimeout = null,
-        long? byteBudget = null)
+        long? byteBudget = null,
+        ProbeByteBudget? spent = null)
     {
         var attempted = 0;
         var succeeded = 0;
         var failed = 0;
-        long bytes = 0;
+        var day = DateOnly.FromDateTime(nowUtc.UtcDateTime);
+        long bytes = spent?.SpentOn(day) ?? 0;
         var limit = budget ?? TimeSpan.FromSeconds(ProductLimits.NewCandidateBudgetSeconds);
         var perAttempt = attemptTimeout ?? TimeSpan.FromSeconds(ProductLimits.ProbeRequestTimeoutSeconds);
-        var byteLimit = byteBudget ?? ProductLimits.DailyHealthBudgetBytes;
+        var byteLimit = spent?.Limit ?? byteBudget ?? ProductLimits.DailyHealthBudgetBytes;
         var elapsed = Stopwatch.StartNew();
         using var gate = new SemaphoreSlim(ProductLimits.MaxProbesPerEndpoint, ProductLimits.MaxProbesPerEndpoint);
         var pending = catalogue.Nodes
@@ -71,14 +78,21 @@ public static class ProbeCoordinator
                 break;
             }
 
-            if (bytes >= byteLimit)
+            if (bytes >= byteLimit || (spent is not null && spent.Exhausted(day)))
             {
                 break;
+            }
+
+            if (!Scheduled(node, catalogue.Settings))
+            {
+                continue;
             }
 
             var epoch = catalogue.NetworkEpoch;
             var digest = node.Digest;
             var nodeId = node.NodeId;
+            var settingsRevision = catalogue.Settings.Revision;
+            var allowInsecure = catalogue.Settings.AllowInsecureCertificates;
             attempted++;
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             ProbeObservation observation;
@@ -88,10 +102,16 @@ public static class ProbeCoordinator
                 attempt.CancelAfter(perAttempt);
                 try
                 {
-                    observation = await transport.ProbeAsync(node.Semantics, target, attempt.Token).ConfigureAwait(false);
+                    observation = await transport.ProbeAsync(node.Semantics, target, new ProbeAdmission(allowInsecure), attempt.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
+                    spent?.Charge(1, day);
+                    if (!PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure))
+                    {
+                        continue;
+                    }
+
                     failed++;
                     TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
                     {
@@ -116,7 +136,19 @@ public static class ProbeCoordinator
                 gate.Release();
             }
 
-            bytes += Math.Max(0, observation.PayloadBytes);
+            var payloadBytes = Math.Max(0, observation.PayloadBytes);
+            bytes += payloadBytes;
+            if (spent is not null && observation.Class != ProbeClass.Canceled && observation.ReasonCode != ReasonCodes.Canceled)
+            {
+                spent.Charge(Math.Max(payloadBytes, 1), day);
+                bytes = spent.SpentOn(day);
+            }
+
+            if (!PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure))
+            {
+                continue;
+            }
+
             if (catalogue.NetworkEpoch != epoch || catalogue.Nodes.All(item => item.NodeId != nodeId || item.Digest != digest))
             {
                 continue;
@@ -237,10 +269,12 @@ public static class ProbeCoordinator
 
         var epoch = catalogue.NetworkEpoch;
         var digest = node.Digest;
+        var settingsRevision = catalogue.Settings.Revision;
+        var allowInsecure = catalogue.Settings.AllowInsecureCertificates;
         ProbeObservation observation;
         try
         {
-            observation = await transport.ProbeAsync(node.Semantics, target, cancellationToken).ConfigureAwait(false);
+            observation = await transport.ProbeAsync(node.Semantics, target, new ProbeAdmission(allowInsecure), cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -257,7 +291,7 @@ public static class ProbeCoordinator
             return false;
         }
 
-        if (catalogue.NetworkEpoch != epoch)
+        if (catalogue.NetworkEpoch != epoch || !PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure))
         {
             return false;
         }
@@ -288,5 +322,43 @@ public static class ProbeCoordinator
         }
 
         catalogue.ApplyAssessment(nodeId, assessment);
+    }
+
+    private static bool Scheduled(CatalogueNode node, ProductSettings settings)
+    {
+        if (node.Excluded || node.PolicyReason is not null)
+        {
+            return false;
+        }
+
+        if (node.Semantics.SkipCertVerify && !settings.AllowInsecureCertificates)
+        {
+            return false;
+        }
+
+        var families = node.CurrentFamilies.Concat(node.HistoricalFamilies).ToArray();
+        if (families.Length > 0 && families.All(family => settings.DisabledFamilyIds.Contains(family)))
+        {
+            return false;
+        }
+
+        if (settings.CountryMode == CountryConstraint.Strict
+            && !string.Equals(node.AdvertisedCountry, settings.Country, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool PolicyHeld(ICatalogue catalogue, string nodeId, int revision, bool allowInsecure)
+    {
+        if (catalogue.Settings.Revision != revision || catalogue.Settings.AllowInsecureCertificates != allowInsecure)
+        {
+            return false;
+        }
+
+        var node = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
+        return node is not null && Scheduled(node, catalogue.Settings);
     }
 }

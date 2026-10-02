@@ -68,7 +68,12 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
         }
     }
 
-    public static string BuildProbeYaml(CatalogueNode node, int controllerPort, int socksPort, IReadOnlyDictionary<string, string>? loopbackHosts = null)
+    public static string BuildProbeYaml(
+        CatalogueNode node,
+        int controllerPort,
+        int socksPort,
+        IReadOnlyDictionary<string, string>? loopbackHosts = null,
+        bool allowInsecureProxyCertificates = false)
     {
         return MihomoProfileGenerator.Build(new ProfileBuildRequest
         {
@@ -77,7 +82,7 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             SocksPort = socksPort,
             Tun = false,
             LanAccess = false,
-            AllowInsecureCertificates = false,
+            AllowInsecureCertificates = allowInsecureProxyCertificates,
             ExternalController = false,
             LoopbackHosts = loopbackHosts,
             Nodes = [NodeWireFactory.FromCatalogue(node)],
@@ -85,7 +90,12 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
         });
     }
 
-    public async Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
+    public Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
+    {
+        return ProbeAsync(node, target, new ProbeAdmission(false), cancellationToken);
+    }
+
+    public async Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, ProbeAdmission admission, CancellationToken cancellationToken)
     {
         var digest = CanonicalIdentity.Digest(node);
         if (target.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(target.UserInfo))
@@ -140,7 +150,7 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             string yaml;
             try
             {
-                yaml = BuildProbeYaml(catalogueNode, controllerPort, socksPort, _fixture?.LoopbackHosts);
+                yaml = BuildProbeYaml(catalogueNode, controllerPort, socksPort, _fixture?.LoopbackHosts, admission.AllowInsecureProxyCertificates);
             }
             catch (InvalidOperationException ex)
             {

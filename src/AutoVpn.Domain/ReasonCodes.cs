@@ -36,6 +36,7 @@ public static class ReasonCodes
     public const string NoEligibleServer = "NO_ELIGIBLE_SERVER";
     public const string StaleRevision = "STALE_REVISION";
     public const string RequestConflict = "REQUEST_CONFLICT";
+    public const string PolicyChanged = "POLICY_CHANGED";
     public const string WindowsNotValidated = "WINDOWS_NETWORK_NOT_VALIDATED";
     public const string NotWindows = "NOT_WINDOWS";
 }

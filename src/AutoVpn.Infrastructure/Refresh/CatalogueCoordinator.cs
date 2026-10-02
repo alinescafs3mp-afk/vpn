@@ -143,14 +143,25 @@ public sealed class RefreshScheduler
 
 public static class SpeedMeasurement
 {
+    public readonly record struct MeasurementBinding(string Digest, long NetworkEpoch);
+
     public static async Task<SpeedSample?> MeasureHealthyDownloadAsync(
         ICatalogue catalogue,
         string nodeId,
         Stream stream,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        MeasurementBinding? binding = null)
     {
+        if (binding is null)
+        {
+            return null;
+        }
+
         var node = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        if (node?.Assessment?.Health is not (HealthState.Healthy or HealthState.Degraded))
+        var assessment = node?.Assessment;
+        if (assessment?.Health is not (HealthState.Healthy or HealthState.Degraded)
+            || !string.Equals(assessment.Digest, binding.Value.Digest, StringComparison.Ordinal)
+            || assessment.NetworkEpoch != binding.Value.NetworkEpoch)
         {
             return null;
         }
@@ -176,6 +187,7 @@ public sealed class CatalogueCoordinator
     private readonly SourceLedger _ledger;
     private readonly IReadOnlySet<string> _probeTargets;
     private readonly RefreshFence _fence;
+    private readonly ProbeByteBudget? _byteBudget;
 
     public CatalogueCoordinator(
         ICatalogue catalogue,
@@ -183,13 +195,15 @@ public sealed class CatalogueCoordinator
         IProbeTransport probe,
         SourceLedger ledger,
         IEnumerable<Uri>? probeTargets = null,
-        RefreshFence? fence = null)
+        RefreshFence? fence = null,
+        ProbeByteBudget? byteBudget = null)
     {
         _catalogue = catalogue;
         _fetcher = fetcher;
         _probe = probe;
         _ledger = ledger;
         _fence = fence ?? new RefreshFence();
+        _byteBudget = byteBudget;
         _probeTargets = new HashSet<string>(
             (probeTargets ?? []).Select(uri => uri.AbsoluteUri),
             StringComparer.Ordinal);
@@ -415,7 +429,7 @@ public sealed class CatalogueCoordinator
             return new ProbeReport(0, 0, 0, false);
         }
 
-        return await ProbeCoordinator.RunAsync(_catalogue, _probe, target, nowUtc, cancellationToken, budget).ConfigureAwait(false);
+        return await ProbeCoordinator.RunAsync(_catalogue, _probe, target, nowUtc, cancellationToken, budget, spent: _byteBudget).ConfigureAwait(false);
     }
 
     private async Task<DownloadResult> DownloadAsync(

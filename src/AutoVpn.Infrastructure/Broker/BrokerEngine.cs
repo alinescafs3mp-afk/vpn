@@ -203,7 +203,7 @@ public sealed class BrokerEngine
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Connect, _state.Generation, selected.NodeId));
                 _sequence++;
                 armedGeneration = _state.Generation;
-                var armed = _guard.Arm(new GuardRequest(armedGeneration, LanAccess(request, payload), true));
+                var armed = _guard.Arm(new GuardRequest(armedGeneration, LanAccess(request, payload), ProtectionRequired(request, payload)));
                 if (!armed.Armed)
                 {
                     _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.ProtectionFailed, _state.Generation, selected.NodeId, armed.ReasonCode));
@@ -243,7 +243,9 @@ public sealed class BrokerEngine
             return Fail(request, refusal, BlockMessage(refusal));
         }
 
+        var policy = PolicyStamp.Capture(_catalogue.Settings);
         var started = await _core.StartAsync(yaml, armedGeneration, operationId, cancellationToken).ConfigureAwait(false);
+        var policyChanged = !policy.Equals(PolicyStamp.Capture(_catalogue.Settings));
         var abandon = false;
         string? startRefusal = null;
         lock (_gate)
@@ -255,6 +257,14 @@ public sealed class BrokerEngine
             if (!owned)
             {
                 abandon = true;
+            }
+            else if (policyChanged)
+            {
+                _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.VerifyFailed, _state.Generation, selected.NodeId, ReasonCodes.PolicyChanged));
+                _sequence++;
+                _coreRunning = false;
+                _operationId = null;
+                startRefusal = ReasonCodes.PolicyChanged;
             }
             else if (!started.Started)
             {
@@ -284,7 +294,10 @@ public sealed class BrokerEngine
                 _catalogue.SetActiveNode(null);
             }
 
-            return Fail(request, startRefusal, "Ядро не запущено. Защита остаётся включённой до подтверждённого отключения.");
+            var message = startRefusal == ReasonCodes.PolicyChanged
+                ? "Настройки изменились во время запуска. Сессия не подтверждена."
+                : "Ядро не запущено. Защита остаётся включённой до подтверждённого отключения.";
+            return Fail(request, startRefusal, message);
         }
 
         if (abandon || !Owns(operationId, armedGeneration))
@@ -562,11 +575,13 @@ public sealed class BrokerEngine
                     Nodes = [NodeWireFactory.FromCatalogue(switchTarget)],
                     SelectedNodeId = switchTarget.NodeId,
                 });
+                var policy = PolicyStamp.Capture(_catalogue.Settings);
                 var started = await _core.StartAsync(yaml, switchGeneration, switchOperation!, cancellationToken).ConfigureAwait(false);
+                var policyChanged = !policy.Equals(PolicyStamp.Capture(_catalogue.Settings));
                 var abandon = false;
                 lock (_gate)
                 {
-                    abandon = _state.Generation != switchGeneration || _state.DisconnectCommitted || _state.Phase is not (TunnelPhase.Connected or TunnelPhase.Reconnecting);
+                    abandon = policyChanged || _state.Generation != switchGeneration || _state.DisconnectCommitted || _state.Phase is not (TunnelPhase.Connected or TunnelPhase.Reconnecting);
                     if (!abandon && started.Started)
                     {
                         if (_state.Phase == TunnelPhase.Connected)
@@ -887,6 +902,18 @@ public sealed class BrokerEngine
         });
     }
 
+    private bool ProtectionRequired(IpcRequest request, ConnectPayload payload)
+    {
+        if (request.Payload.ValueKind == JsonValueKind.Object &&
+            request.Payload.TryGetProperty("protectionRequired", out var property) &&
+            property.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return property.GetBoolean();
+        }
+
+        return _catalogue.Settings.ProtectionOnConnect;
+    }
+
     private bool LanAccess(IpcRequest request, ConnectPayload payload)
     {
         _ = payload;
@@ -921,6 +948,29 @@ public sealed class BrokerEngine
         }
 
         return string.Equals(node.AdvertisedCountry, _catalogue.Settings.Country, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private readonly record struct PolicyStamp(
+        int Revision,
+        bool AllowInsecureCertificates,
+        bool LanAccess,
+        bool ProtectionOnConnect,
+        CountryConstraint CountryMode,
+        string? Country,
+        string DisabledFamilies)
+    {
+        public static PolicyStamp Capture(ProductSettings settings)
+        {
+            var disabled = string.Join('\n', settings.DisabledFamilyIds.OrderBy(id => id, StringComparer.Ordinal));
+            return new PolicyStamp(
+                settings.Revision,
+                settings.AllowInsecureCertificates,
+                settings.LanAccess,
+                settings.ProtectionOnConnect,
+                settings.CountryMode,
+                settings.Country,
+                disabled);
+        }
     }
 
     private static string NewSecret()

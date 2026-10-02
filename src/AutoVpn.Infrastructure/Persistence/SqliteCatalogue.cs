@@ -20,6 +20,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
     private readonly ISecretProtector _protector;
     private MemoryCatalogue _memory = new();
     private readonly object _gate = new();
+    private readonly Dictionary<string, (string Json, byte[] Blob)> _secrets = new(StringComparer.Ordinal);
     private long _revision;
 
     public string? QuarantinedFrom { get; }
@@ -248,7 +249,9 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
             using var reader = command.ExecuteReader();
             while (reader.Read())
             {
-                var semanticsJson = Encoding.UTF8.GetString(_protector.Unprotect((byte[])reader.GetValue(2)));
+                var protectedSemantics = (byte[])reader.GetValue(2);
+                var semanticsJson = Encoding.UTF8.GetString(_protector.Unprotect(protectedSemantics));
+                _secrets[reader.GetString(0)] = (semanticsJson, protectedSemantics);
                 var semantics = JsonSerializer.Deserialize<NodeSemantics>(semanticsJson, StoredJson.Options)
                     ?? throw new CatalogueStoreException("Stored node semantics could not be read.");
                 var node = new CatalogueNode
@@ -322,6 +325,13 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
             throw new CatalogueStoreException("CATALOGUE_CONFLICT");
         }
 
+        if (TryUpdateInPlace(source, transaction))
+        {
+            transaction.Commit();
+            _revision++;
+            return;
+        }
+
         using (var clear = _connection.CreateCommand())
         {
             clear.Transaction = transaction;
@@ -364,9 +374,10 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
                         $first, $last, $assessment, $reason);
                 """;
             var json = JsonSerializer.Serialize(node.Semantics, StoredJson.Options);
+            var semantics = ProtectedSemantics(node.NodeId, json);
             insert.Parameters.AddWithValue("$id", node.NodeId);
             insert.Parameters.AddWithValue("$digest", node.Digest);
-            insert.Parameters.Add("$semantics", SqliteType.Blob).Value = _protector.Protect(Encoding.UTF8.GetBytes(json));
+            insert.Parameters.Add("$semantics", SqliteType.Blob).Value = semantics;
             insert.Parameters.AddWithValue("$label", node.Label);
             insert.Parameters.AddWithValue("$country", (object?)node.AdvertisedCountry ?? DBNull.Value);
             insert.Parameters.AddWithValue("$favorite", node.Favorite ? 1 : 0);
@@ -413,6 +424,133 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
         transaction.Commit();
         _revision++;
+        var live = source.Nodes.Select(node => node.NodeId).ToHashSet(StringComparer.Ordinal);
+        foreach (var stale in _secrets.Keys.Where(id => !live.Contains(id)).ToArray())
+        {
+            _secrets.Remove(stale);
+        }
+    }
+
+    private bool TryUpdateInPlace(MemoryCatalogue source, Microsoft.Data.Sqlite.SqliteTransaction transaction)
+    {
+        if (!SameIdentity(_memory, source))
+        {
+            return false;
+        }
+
+        using (var count = _connection.CreateCommand())
+        {
+            count.Transaction = transaction;
+            count.CommandText = "SELECT count(*) FROM meta WHERE key='catalogue_revision';";
+            if (Convert.ToInt32(count.ExecuteScalar(), CultureInfo.InvariantCulture) == 0)
+            {
+                return false;
+            }
+        }
+
+        PutMeta(transaction, "catalogue_revision", (_revision + 1).ToString(CultureInfo.InvariantCulture));
+        PutMeta(transaction, "network_epoch", source.NetworkEpoch.ToString(CultureInfo.InvariantCulture));
+        PutMeta(transaction, "settings", JsonSerializer.Serialize(source.Settings, StoredJson.Options));
+        foreach (var node in source.Nodes)
+        {
+            var previous = _memory.Nodes.First(item => item.NodeId == node.NodeId);
+            if (!MutableDiffers(previous, node))
+            {
+                continue;
+            }
+
+            using var update = _connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE nodes
+                SET digest=$digest, label=$label, country=$country, favorite=$favorite, excluded=$excluded, active=$active,
+                    first_seen=$first, last_seen=$last, assessment_json=$assessment, policy_reason=$reason
+                WHERE node_id=$id;
+                """;
+            update.Parameters.AddWithValue("$id", node.NodeId);
+            update.Parameters.AddWithValue("$digest", node.Digest);
+            update.Parameters.AddWithValue("$label", node.Label);
+            update.Parameters.AddWithValue("$country", (object?)node.AdvertisedCountry ?? DBNull.Value);
+            update.Parameters.AddWithValue("$favorite", node.Favorite ? 1 : 0);
+            update.Parameters.AddWithValue("$excluded", node.Excluded ? 1 : 0);
+            update.Parameters.AddWithValue("$active", node.ActiveSession ? 1 : 0);
+            update.Parameters.AddWithValue("$first", node.FirstSeenUtc.ToString("O", CultureInfo.InvariantCulture));
+            update.Parameters.AddWithValue("$last", node.LastSeenUtc.ToString("O", CultureInfo.InvariantCulture));
+            update.Parameters.AddWithValue("$assessment", node.Assessment is null ? DBNull.Value : JsonSerializer.Serialize(node.Assessment, StoredJson.Options));
+            update.Parameters.AddWithValue("$reason", (object?)node.PolicyReason ?? DBNull.Value);
+            update.ExecuteNonQuery();
+        }
+
+        return true;
+    }
+
+    private void PutMeta(Microsoft.Data.Sqlite.SqliteTransaction transaction, string name, string text)
+    {
+        using var meta = _connection.CreateCommand();
+        meta.Transaction = transaction;
+        meta.CommandText = "UPDATE meta SET value=$value WHERE key=$key;";
+        meta.Parameters.AddWithValue("$key", name);
+        meta.Parameters.AddWithValue("$value", text);
+        meta.ExecuteNonQuery();
+    }
+
+    private byte[] ProtectedSemantics(string nodeId, string json)
+    {
+        if (_secrets.TryGetValue(nodeId, out var cached) && cached.Json == json)
+        {
+            return cached.Blob;
+        }
+
+        var blob = _protector.Protect(Encoding.UTF8.GetBytes(json));
+        _secrets[nodeId] = (json, blob);
+        return blob;
+    }
+
+    private static bool SameIdentity(MemoryCatalogue left, MemoryCatalogue right)
+    {
+        if (left.Nodes.Count != right.Nodes.Count)
+        {
+            return false;
+        }
+
+        var previous = left.Nodes.ToDictionary(node => node.NodeId, StringComparer.Ordinal);
+        foreach (var node in right.Nodes)
+        {
+            if (!previous.TryGetValue(node.NodeId, out var stored))
+            {
+                return false;
+            }
+
+            if (JsonSerializer.Serialize(stored.Semantics, StoredJson.Options) != JsonSerializer.Serialize(node.Semantics, StoredJson.Options))
+            {
+                return false;
+            }
+
+            if (!stored.ArtifactFamilies.OrderBy(pair => pair.Key, StringComparer.Ordinal).SequenceEqual(node.ArtifactFamilies.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                || !stored.CurrentFamilies.OrderBy(family => family, StringComparer.Ordinal).SequenceEqual(node.CurrentFamilies.OrderBy(family => family, StringComparer.Ordinal))
+                || !stored.HistoricalFamilies.OrderBy(family => family, StringComparer.Ordinal).SequenceEqual(node.HistoricalFamilies.OrderBy(family => family, StringComparer.Ordinal)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool MutableDiffers(CatalogueNode left, CatalogueNode right)
+    {
+        var leftAssessment = left.Assessment is null ? null : JsonSerializer.Serialize(left.Assessment, StoredJson.Options);
+        var rightAssessment = right.Assessment is null ? null : JsonSerializer.Serialize(right.Assessment, StoredJson.Options);
+        return left.Digest != right.Digest
+            || left.Label != right.Label
+            || left.AdvertisedCountry != right.AdvertisedCountry
+            || left.Favorite != right.Favorite
+            || left.Excluded != right.Excluded
+            || left.ActiveSession != right.ActiveSession
+            || left.PolicyReason != right.PolicyReason
+            || left.FirstSeenUtc != right.FirstSeenUtc
+            || left.LastSeenUtc != right.LastSeenUtc
+            || leftAssessment != rightAssessment;
     }
 
     private static string? InspectExisting(string path)
