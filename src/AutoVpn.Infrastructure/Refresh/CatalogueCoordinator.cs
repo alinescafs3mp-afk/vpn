@@ -30,6 +30,115 @@ public static class RefreshScheduleGate
         var interval = RefreshSchedule.Interval(settings.RefreshIntervalMinutes, settings.RefreshJitterMinutes, seed);
         return RefreshSchedule.IsDue(lastSuccessUtc, nowUtc, interval);
     }
+
+    public static bool AnyDue(IEnumerable<DateTimeOffset?> successes, DateTimeOffset nowUtc, ProductSettings settings, int seed)
+    {
+        var interval = RefreshSchedule.Interval(settings.RefreshIntervalMinutes, settings.RefreshJitterMinutes, seed);
+        var seen = false;
+        foreach (var success in successes)
+        {
+            seen = true;
+            if (RefreshSchedule.IsDue(success, nowUtc, interval))
+            {
+                return true;
+            }
+        }
+
+        return !seen;
+    }
+}
+
+/// <summary>
+/// One publication generation for every coordinator sharing a catalogue.
+/// A newer cycle rejects an older cycle's ingest even after its download has finished.
+/// </summary>
+public sealed class RefreshFence
+{
+    private readonly object _gate = new();
+    private int _cycle;
+
+    public int Begin()
+    {
+        lock (_gate)
+        {
+            return ++_cycle;
+        }
+    }
+
+    public int Capture()
+    {
+        lock (_gate)
+        {
+            return _cycle;
+        }
+    }
+
+    public bool IsCurrent(int cycle)
+    {
+        lock (_gate)
+        {
+            return cycle == _cycle;
+        }
+    }
+
+    public bool TryPublish(int cycle, Action publish)
+    {
+        lock (_gate)
+        {
+            if (cycle != _cycle)
+            {
+                return false;
+            }
+
+            publish();
+            return true;
+        }
+    }
+}
+
+/// <summary>
+/// Unelevated refresh clock. It does not download or probe until disclosure is accepted,
+/// and a fresh source does not hide another source that has never succeeded.
+/// </summary>
+public sealed class RefreshScheduler
+{
+    private readonly Func<ProductSettings> _settings;
+    private readonly Func<IReadOnlyList<DateTimeOffset?>> _successes;
+    private readonly Func<DateTimeOffset, CancellationToken, Task> _cycle;
+    private readonly int _seed;
+    private int _completed;
+
+    public RefreshScheduler(
+        Func<ProductSettings> settings,
+        Func<IReadOnlyList<DateTimeOffset?>> successes,
+        Func<DateTimeOffset, CancellationToken, Task> cycle,
+        int seed)
+    {
+        _settings = settings;
+        _successes = successes;
+        _cycle = cycle;
+        _seed = seed;
+    }
+
+    public int CompletedCycles => _completed;
+
+    public async Task<bool> PulseAsync(DateTimeOffset nowUtc, CancellationToken cancellationToken)
+    {
+        var settings = _settings();
+        if (!settings.DisclosureAccepted)
+        {
+            return false;
+        }
+
+        if (!RefreshScheduleGate.AnyDue(_successes(), nowUtc, settings, _seed))
+        {
+            return false;
+        }
+
+        await _cycle(nowUtc, cancellationToken).ConfigureAwait(false);
+        _completed++;
+        return true;
+    }
 }
 
 public static class SpeedMeasurement
@@ -66,18 +175,21 @@ public sealed class CatalogueCoordinator
     private readonly IProbeTransport _probe;
     private readonly SourceLedger _ledger;
     private readonly IReadOnlySet<string> _probeTargets;
+    private readonly RefreshFence _fence;
 
     public CatalogueCoordinator(
         ICatalogue catalogue,
         PolicyHttpFetcher fetcher,
         IProbeTransport probe,
         SourceLedger ledger,
-        IEnumerable<Uri>? probeTargets = null)
+        IEnumerable<Uri>? probeTargets = null,
+        RefreshFence? fence = null)
     {
         _catalogue = catalogue;
         _fetcher = fetcher;
         _probe = probe;
         _ledger = ledger;
+        _fence = fence ?? new RefreshFence();
         _probeTargets = new HashSet<string>(
             (probeTargets ?? []).Select(uri => uri.AbsoluteUri),
             StringComparer.Ordinal);
@@ -88,6 +200,7 @@ public sealed class CatalogueCoordinator
         CancellationToken cancellationToken,
         TimeSpan? attemptTimeout = null)
     {
+        var cycle = _fence.Capture();
         var fetch = await _fetcher.GetAsync(
             registry.TreeApi,
             _ledger.EtagFor(registry.TreeApi.AbsoluteUri),
@@ -125,6 +238,16 @@ public sealed class CatalogueCoordinator
 
         if (fetch.NotModified || fetch.Body is null || fetch.ReasonCode is not null)
         {
+            if (fetch.ReasonCode != ReasonCodes.Canceled)
+            {
+                var cached = _ledger.DiscoveryJsonFor(registry.TreeApi.AbsoluteUri);
+                var reused = string.IsNullOrWhiteSpace(cached) ? null : GithubTreeParser.Parse(cached);
+                if (reused is { Complete: true })
+                {
+                    return BuildDiscovery(registry, reused);
+                }
+            }
+
             return new DiscoveryOutcome(false, null, [], fetch.ReasonCode ?? ReasonCodes.FetchFailed, 0);
         }
 
@@ -134,7 +257,11 @@ public sealed class CatalogueCoordinator
             return new DiscoveryOutcome(false, parsed.CommitSha, [], parsed.ReasonCode ?? "DISCOVERY_INCOMPLETE", 0);
         }
 
-        _ledger.RememberDiscovery(registry.TreeApi.AbsoluteUri, fetch.Etag, fetch.Body, DateTimeOffset.UtcNow);
+        if (!_fence.TryPublish(cycle, () => _ledger.RememberDiscovery(registry.TreeApi.AbsoluteUri, fetch.Etag, fetch.Body, DateTimeOffset.UtcNow)))
+        {
+            return new DiscoveryOutcome(false, parsed.CommitSha, [], "SUPERSEDED", 0);
+        }
+
         return BuildDiscovery(registry, parsed);
     }
 
@@ -180,12 +307,21 @@ public sealed class CatalogueCoordinator
         TimeSpan? attemptTimeout = null,
         int maxRetries = 0)
     {
+        var cycle = _fence.Capture();
         var gate = new SemaphoreSlim(ProductLimits.SourceDownloadConcurrency, ProductLimits.SourceDownloadConcurrency);
-        var downloads = new Task<DownloadResult>[items.Count];
-        for (var index = 0; index < items.Count; index++)
+        var downloads = new List<Task<DownloadResult>>(items.Count);
+        var budgetSkipped = new List<RefreshWorkItem>();
+        long reserved = 0;
+        foreach (var item in items)
         {
-            var item = items[index];
-            downloads[index] = DownloadAsync(item, gate, cancellationToken, attemptTimeout, maxRetries);
+            if (reserved > 0 && reserved + ProductLimits.MaxArtifactBytes > ProductLimits.MaxRefreshBytes)
+            {
+                budgetSkipped.Add(item);
+                continue;
+            }
+
+            reserved += ProductLimits.MaxArtifactBytes;
+            downloads.Add(DownloadAsync(item, gate, cancellationToken, attemptTimeout, maxRetries));
         }
 
         DownloadResult[] finished;
@@ -203,6 +339,12 @@ public sealed class CatalogueCoordinator
         var cancelled = false;
         var refetch = false;
         var failed = false;
+        foreach (var skipped in budgetSkipped)
+        {
+            failed = true;
+            reasons.Add(skipped.ArtifactId + ":CYCLE_BUDGET");
+        }
+
         foreach (var download in finished)
         {
             if (download.Cancelled)
@@ -217,31 +359,38 @@ public sealed class CatalogueCoordinator
                 refetch = true;
             }
 
-            if (download.Result is null)
+            var accepted = _fence.TryPublish(cycle, () =>
             {
-                failed = true;
-                reasons.Add(download.Item.ArtifactId + ":" + (download.Reason ?? ReasonCodes.FetchFailed));
-                RefreshMerge.Ingest(_catalogue, [FailedArtifact(download.Item)], nowUtc, _catalogue.Settings.AllowInsecureCertificates);
-                continue;
-            }
+                if (download.Result is null)
+                {
+                    failed = true;
+                    reasons.Add(download.Item.ArtifactId + ":" + (download.Reason ?? ReasonCodes.FetchFailed));
+                    RefreshMerge.Ingest(_catalogue, [FailedArtifact(download.Item)], nowUtc, _catalogue.Settings.AllowInsecureCertificates);
+                    return;
+                }
 
-            var report = RefreshMerge.Ingest(_catalogue, [download.Result], nowUtc, _catalogue.Settings.AllowInsecureCertificates);
-            pending += report.PublishedPending;
-            var published = report.Committed && !download.Result.NotModified;
-            failed |= report.AnyFetchFailed || (!download.Result.NotModified && !report.Committed);
-            if (published && download.RememberUrl is not null)
-            {
-                _ledger.Remember(download.RememberUrl, download.Etag, download.ContentHash, nowUtc, null);
-            }
-            else if (!download.Result.NotModified && !report.Committed && download.RememberUrl is not null)
-            {
-                _ledger.RememberRejected(download.RememberUrl, download.Etag);
-            }
+                var report = RefreshMerge.Ingest(_catalogue, [download.Result], nowUtc, _catalogue.Settings.AllowInsecureCertificates);
+                pending += report.PublishedPending;
+                var published = report.Committed && !download.Result.NotModified;
+                failed |= report.AnyFetchFailed || (!download.Result.NotModified && !report.Committed);
+                if (published && download.RememberUrl is not null)
+                {
+                    _ledger.Remember(download.RememberUrl, download.Etag, download.ContentHash, nowUtc, null);
+                }
+                else if (!download.Result.NotModified && !report.Committed && download.RememberUrl is not null)
+                {
+                    _ledger.RememberRejected(download.RememberUrl, download.Etag);
+                }
 
-            var label = download.Result.NotModified
-                ? ReasonCodes.NotModified
-                : published ? "PUBLISHED" : "REJECTED";
-            reasons.Add(download.Item.ArtifactId + ":" + label);
+                var label = download.Result.NotModified
+                    ? ReasonCodes.NotModified
+                    : published ? "PUBLISHED" : "REJECTED";
+                reasons.Add(download.Item.ArtifactId + ":" + label);
+            });
+            if (!accepted)
+            {
+                reasons.Add(download.Item.ArtifactId + ":SUPERSEDED");
+            }
         }
 
         return new RefreshOutcome

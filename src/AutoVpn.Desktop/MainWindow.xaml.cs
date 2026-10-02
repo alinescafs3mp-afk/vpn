@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Forms;
+using System.Windows.Threading;
 using AutoVpn.Application;
 using AutoVpn.Contracts;
 using AutoVpn.Domain;
@@ -21,7 +22,13 @@ public partial class MainWindow : Window
     private readonly SourceLedger _ledger;
     private readonly string _root;
     private UiSession _session = UiSessionReducer.Initial();
+    private readonly RefreshFence _fence = new();
+    private readonly RefreshScheduler _scheduler;
+    private readonly DispatcherTimer _scheduleTimer;
     private CancellationTokenSource? _refresh;
+    private Task? _refreshTask;
+    private int _refreshRun;
+    private bool _refreshActive;
     private bool _exit;
     private bool _ready;
     private bool _connectPending;
@@ -33,6 +40,25 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(_root);
         _catalogue = OpenCatalogue(_root);
         _ledger = SourceLedger.Load(Path.Combine(_root, "sources.json"));
+        _scheduler = new RefreshScheduler(
+            () => _catalogue.Settings,
+            () => _ledger.Entries.Select(entry => entry.LastSuccessUtc).ToArray(),
+            (_, _) =>
+            {
+                _refreshTask = RunRefreshAsync();
+                return _refreshTask;
+            },
+            Environment.ProcessId);
+        _scheduleTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+        _scheduleTimer.Tick += async (_, _) =>
+        {
+            if (_refreshActive)
+            {
+                return;
+            }
+
+            await _scheduler.PulseAsync(DateTimeOffset.UtcNow, CancellationToken.None).ConfigureAwait(true);
+        };
         _tray = new NotifyIcon
         {
             Text = "AutoVPN",
@@ -103,6 +129,7 @@ public partial class MainWindow : Window
         {
             Consent.AcceptDisclosure(_catalogue);
             _session = _session with { DisclosureAccepted = true };
+            _ = _scheduler.PulseAsync(DateTimeOffset.UtcNow, CancellationToken.None);
         }
         catch (Exception ex) when (ex is InvalidOperationException or CatalogueStoreException)
         {
@@ -222,10 +249,25 @@ public partial class MainWindow : Window
 
     private async void RefreshClick(object sender, RoutedEventArgs e)
     {
+        _refreshTask = RunRefreshAsync();
+        await _refreshTask.ConfigureAwait(true);
+    }
+
+    private async Task RunRefreshAsync()
+    {
+        if (!_catalogue.Settings.DisclosureAccepted)
+        {
+            SubscriptionStatus.Text = "Сначала подтвердите предупреждение о подписках. Загрузка источников не начата.";
+            return;
+        }
+
+        var cycle = _fence.Begin();
+        var run = Interlocked.Increment(ref _refreshRun);
         _refresh?.Cancel();
         _refresh?.Dispose();
         _refresh = new CancellationTokenSource();
         var token = _refresh.Token;
+        _refreshActive = true;
         try
         {
             SubscriptionStatus.Text = "Обновление подписок…";
@@ -236,8 +278,14 @@ public partial class MainWindow : Window
                 fetcher,
                 new NonTunCoreProbeTransport(Environment.GetEnvironmentVariable("AUTOVPN_MIHOMO_PATH"), ExpectedCoreHash()),
                 _ledger,
-                registry.ProbeTargets);
+                registry.ProbeTargets,
+                _fence);
             var discovery = await coordinator.DiscoverAsync(registry, token).ConfigureAwait(true);
+            if (!_fence.IsCurrent(cycle))
+            {
+                return;
+            }
+
             if (!discovery.Complete)
             {
                 SubscriptionStatus.Text = "Список источников неполный: " + (discovery.ReasonCode ?? "DISCOVERY_INCOMPLETE") + ". Сохранённый каталог не удалён.";
@@ -245,9 +293,19 @@ public partial class MainWindow : Window
             }
 
             var outcome = await coordinator.RefreshAsync(discovery.Items, DateTimeOffset.UtcNow, token).ConfigureAwait(true);
+            if (!_fence.IsCurrent(cycle) || token.IsCancellationRequested)
+            {
+                return;
+            }
+
             if (registry.ProbeTargets.Count > 0)
             {
                 await coordinator.ProbeAsync(registry.ProbeTargets[0], DateTimeOffset.UtcNow, token).ConfigureAwait(true);
+            }
+
+            if (!_fence.IsCurrent(cycle))
+            {
+                return;
             }
 
             _ledger.Save(Path.Combine(_root, "sources.json"));
@@ -263,37 +321,43 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            SubscriptionStatus.Text = "Обновление отменено. Уже сохранённые записи не удалены.";
+            if (_fence.IsCurrent(cycle))
+            {
+                SubscriptionStatus.Text = "Обновление отменено. Уже сохранённые записи не удалены.";
+            }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or HttpRequestException or CatalogueStoreException)
         {
-            SubscriptionStatus.Text = "Обновление не выполнено: " + ex.Message;
+            if (_fence.IsCurrent(cycle))
+            {
+                SubscriptionStatus.Text = "Обновление не выполнено: " + ex.Message;
+            }
+        }
+        finally
+        {
+            if (Volatile.Read(ref _refreshRun) == run)
+            {
+                _refreshActive = false;
+            }
         }
     }
 
     private void CancelRefreshClick(object sender, RoutedEventArgs e)
     {
         _refresh?.Cancel();
+        _fence.Begin();
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        DateTimeOffset? lastSuccess = null;
-        foreach (var entry in _ledger.Entries)
-        {
-            if (entry.LastSuccessUtc is DateTimeOffset seen && (lastSuccess is null || seen > lastSuccess))
-            {
-                lastSuccess = seen;
-            }
-        }
-
-        if (!RefreshScheduleGate.ShouldRefresh(lastSuccess, DateTimeOffset.UtcNow, _catalogue.Settings, Environment.ProcessId))
+        _scheduleTimer.Start();
+        if (_refreshActive)
         {
             return;
         }
 
-        RefreshClick(sender, e);
-        await Task.CompletedTask;
+        _refreshTask = _scheduler.PulseAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+        await _refreshTask.ConfigureAwait(true);
     }
 
     private async Task SendAsync(string operation, object payload)
@@ -381,6 +445,19 @@ public partial class MainWindow : Window
             DetailText.Text = decision.Reason ?? "Выход не подтверждён.";
             Show();
             return;
+        }
+
+        _refresh?.Cancel();
+        _fence.Begin();
+        if (_refreshTask is not null)
+        {
+            try
+            {
+                await _refreshTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(true);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException)
+            {
+            }
         }
 
         _exit = true;

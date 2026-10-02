@@ -22,9 +22,26 @@ public sealed class EffectJournal : IDisposable
         QuarantinedFrom = quarantinedFrom;
     }
 
+    public static string UnknownMarkerPath(string path)
+    {
+        return path + ".recovery-unknown";
+    }
+
+    public static bool HasUnknownMarker(string path)
+    {
+        return File.Exists(UnknownMarkerPath(path));
+    }
+
     public static EffectJournal Open(string path)
     {
         string? quarantined = null;
+        var marker = UnknownMarkerPath(path);
+        if (File.Exists(marker))
+        {
+            var recorded = File.ReadAllText(marker).Trim();
+            quarantined = recorded.Length == 0 ? marker : recorded;
+        }
+
         if (File.Exists(path))
         {
             try
@@ -41,6 +58,7 @@ public sealed class EffectJournal : IDisposable
         {
             DataSource = path,
             Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = false,
         }.ToString());
         connection.Open();
         using (var pragma = connection.CreateCommand())
@@ -148,6 +166,7 @@ public sealed class EffectJournal : IDisposable
         {
             DataSource = path,
             Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
         }.ToString());
         probe.Open();
         using var version = probe.CreateCommand();
@@ -182,7 +201,19 @@ public sealed class EffectJournal : IDisposable
     private static string MoveAside(string path)
     {
         var destination = path + ".quarantine-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfff", CultureInfo.InvariantCulture);
+        MoveIfExists(path + "-wal", destination + "-wal");
+        MoveIfExists(path + "-shm", destination + "-shm");
+        MoveIfExists(path + "-journal", destination + "-journal");
         File.Move(path, destination);
+        File.WriteAllText(UnknownMarkerPath(path), destination);
         return destination;
+    }
+
+    private static void MoveIfExists(string source, string destination)
+    {
+        if (File.Exists(source))
+        {
+            File.Move(source, destination);
+        }
     }
 }

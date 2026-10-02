@@ -7,6 +7,13 @@ var path = args.Length > 0
 
 if (!File.Exists(path))
 {
+    if (EffectJournal.HasUnknownMarker(path))
+    {
+        Console.WriteLine("Журнал отсутствует, но предыдущее состояние не сверено: " + EffectJournal.UnknownMarkerPath(path));
+        Console.WriteLine("Правила не считаются снятыми. Сеть не изменялась.");
+        return 2;
+    }
+
     Console.WriteLine("Журнал эффектов не найден. Снимать нечего. Системная сеть не изменялась.");
     return 0;
 }
