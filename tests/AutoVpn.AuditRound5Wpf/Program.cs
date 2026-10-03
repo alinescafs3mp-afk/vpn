@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using AutoVpn.Desktop;
+using Microsoft.Data.Sqlite;
 
 internal static class Program
 {
@@ -18,16 +19,16 @@ internal static class Program
         Directory.CreateDirectory(output);
         var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.InitializeComponent();
+        app.StartupUri = null; // The harness constructs the real window explicitly; do not create a second one on dispatcher startup.
         MainWindow? window = null;
         try
         {
-            window = new MainWindow(); window.Show(); Pump(100);
-            var consent = (CheckBox)window.FindName("DisclosureBox");
-            if (consent.IsChecked == true) throw new InvalidOperationException("This audit requires a fresh unconsented runner profile.");
+            window = new MainWindow(); app.MainWindow=window; window.Show(); Pump(100);
+            if (((CheckBox)window.FindName("DisclosureBox")).IsChecked == true)
+                throw new InvalidOperationException("This audit requires a fresh unconsented runner profile.");
             var pages = new[] { "Подключение", "Серверы", "Подписки", "Настройки" };
-            var sizes = new[] { (880, 640), (1120, 760) };
             var records = new List<object>();
-            foreach (var size in sizes)
+            foreach (var size in new[] { (880, 640), (1120, 760) })
             {
                 window.Width = size.Item1; window.Height = size.Item2;
                 foreach (var page in pages)
@@ -46,21 +47,32 @@ internal static class Program
             var lan=(CheckBox)window.FindName("LanBox"); var protection=(CheckBox)window.FindName("ProtectionBox");
             var originalLan=lan.IsChecked;var originalProtection=protection.IsChecked;
             lan.IsChecked=!originalLan;protection.IsChecked=!originalProtection;Pump(20);
-            CloseHarnessWindow(window); window=new MainWindow();window.Show();Pump(50);
+            CloseHarnessWindow(window);window=null;
+            string? reopenError=null;
+            try { window=new MainWindow(); }
+            catch(IOException ex)
+            {
+                reopenError=ex.ToString();
+                // Diagnostic control only, after recording the product API failure. This is not a production fix.
+                SqliteConnection.ClearAllPools();
+                window=new MainWindow();
+            }
+            app.MainWindow=window;window.Show();Pump(50);
             var reopenedLan=((CheckBox)window.FindName("LanBox")).IsChecked;var reopenedProtection=((CheckBox)window.FindName("ProtectionBox")).IsChecked;
             var restored=reopenedLan==!originalLan && reopenedProtection==!originalProtection;
-            if (!restored) throw new InvalidOperationException("Settings did not survive catalogue/window reopen.");
             ((CheckBox)window.FindName("LanBox")).IsChecked=originalLan;
             ((CheckBox)window.FindName("ProtectionBox")).IsChecked=originalProtection;
             if (((CheckBox)window.FindName("DisclosureBox")).IsChecked==true) throw new InvalidOperationException("Audit accidentally granted consent.");
-            var report=new { sourceCommit="49e5bd54e41731b9b96b83789def31e86c701ee6", os=Environment.OSVersion.ToString(), pages=records, settingsSurviveWindowAndCatalogueReopen=restored,
-                publicNetworkConsent=false, tun=false, scope="Actual WPF navigation and two settings persisted across window/catalogue reopen in one process. Harness-controlled cleanup, not a real tray Exit, process restart, installer, theme or multi-DPI acceptance." };
+            var report=new { sourceCommit="49e5bd54e41731b9b96b83789def31e86c701ee6", os=Environment.OSVersion.ToString(), pages=records,
+                normalWindowCatalogueReopenSucceeded=reopenError is null, reopenError,
+                settingsPersisted=restored, diagnosticPoolClearRequired=reopenError is not null, publicNetworkConsent=false,tun=false,
+                scope="Actual WPF navigation and two settings across window/catalogue reopen in one process. Any pool clear is diagnostic only and occurs after recording a failing normal reopen. Harness cleanup, not a real tray Exit, process restart, installer, theme or multi-DPI acceptance." };
             File.WriteAllText(Path.Combine(output,"wpf.json"),JsonSerializer.Serialize(report,new JsonSerializerOptions { WriteIndented=true }));
-            Console.WriteLine("ROUND5_WPF: 8 actual renders; 4 navigation handlers; 2 settings persisted across catalogue/window reopen; no consent or TUN.");
-            return 0;
+            Console.WriteLine("ROUND5_WPF: 8 actual renders; normal reopen="+(reopenError is null)+"; persisted settings="+restored+"; no consent or TUN.");
+            return reopenError is null && restored ? 0 : 1;
         }
         catch(Exception ex) { File.WriteAllText(Path.Combine(output,"failure.txt"),ex.ToString());Console.Error.WriteLine(ex);return 1; }
-        finally { if(window is not null) CloseHarnessWindow(window);app.Shutdown(); }
+        finally { if(window is not null) CloseHarnessWindow(window);SqliteConnection.ClearAllPools();app.Shutdown(); }
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {
