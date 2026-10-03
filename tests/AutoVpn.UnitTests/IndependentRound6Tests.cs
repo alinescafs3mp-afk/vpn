@@ -176,7 +176,7 @@ public sealed class IndependentRound6Tests
         var c=Catalogue(true,1);c.Settings=c.Settings with {LanAccess=true,Revision=2};
         var core=new OwnedCore();var guard=new Guard {OnArm=()=>c.Settings=c.Settings with {LanAccess=false,Revision=3}};
         var e=new BrokerEngine(c,guard,core,clock:new FakeClock {UtcNow=Now});
-        await Connect(e,c);Confirm(e,c);
+        await e.HandleAsync(Request(e,IpcOperations.Connect,new {nodeId=c.Nodes[0].NodeId,digest=c.Nodes[0].Digest,networkEpoch=c.NetworkEpoch}),CancellationToken.None);Confirm(e,c);
         Assert.True(e.State.Phase!=TunnelPhase.Connected || !core.Profiles[0].Contains("192.168.0.0/16,DIRECT",StringComparison.Ordinal),"Confirmed the LAN-enabled profile after the owner policy had become LAN-disabled.");
     }
 
@@ -276,7 +276,7 @@ public sealed class IndependentRound6Tests
         private int _starts;public int ThrowOnStart {get;init;}public Action<int>? OnStart {get;init;}
         public HashSet<string> Active {get;}=new(StringComparer.Ordinal);public List<string> Profiles {get;}=[];
         public Task<CoreStartResult> StartAsync(string yaml,long generation,string id,CancellationToken token)
-        {Profiles.Add(yaml);Active.Clear();Active.Add(generation+":"+id);OnStart?.Invoke(++_starts);if(_starts==ThrowOnStart)throw new IOException("controlled partial replacement spawn");return Task.FromResult(new CoreStartResult(true,null));}
+        {Profiles.Add(yaml);Active.Clear();Active.Add(generation+":"+id);_starts++;OnStart?.Invoke(_starts);if(_starts==ThrowOnStart)throw new IOException("controlled partial replacement spawn");return Task.FromResult(new CoreStartResult(true,null));}
         public Task StopAsync(long generation,string id,CancellationToken token){Active.Remove(generation+":"+id);return Task.CompletedTask;}
     }
 }
