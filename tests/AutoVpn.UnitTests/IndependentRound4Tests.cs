@@ -114,9 +114,12 @@ public sealed class IndependentRound4Tests
         const string tree = "2222222222222222222222222222222222222222";
         var registry = new ReviewedRegistry
         {
+            Owner = "igareck", Repository = "vpn-configs-for-russia",
+            PinnedCommit = "1111111111111111111111111111111111111111",
             TreeApi = new Uri("https://api.github.com/repos/igareck/vpn-configs-for-russia/git/trees/main?recursive=1"),
-            Commit = "1111111111111111111111111111111111111111", FamilyIds = ["black-vless"],
-            FetchOrigins = [], ProbeTargets = [],
+            FamilyIds = ["black-vless"], FetchOrigins = [], ProbeTargets = [],
+            ApprovedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "raw.githubusercontent.com" },
+            RejectedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase),
         };
         using var fetcher = new PolicyHttpFetcher(new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         { Content = new StringContent("{\"sha\":\"" + tree + "\",\"truncated\":false,\"tree\":[{\"path\":\"BLACK_VLESS_RUS.txt\",\"type\":\"blob\",\"mode\":\"100644\",\"size\":30}]}") }),
