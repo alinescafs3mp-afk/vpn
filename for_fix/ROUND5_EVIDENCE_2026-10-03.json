@@ -1,0 +1,502 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-10-03",
+  "repository": "alinescafs3mp-afk/vpn",
+  "audited_commit": "49e5bd54e41731b9b96b83789def31e86c701ee6",
+  "audited_tree": "19276e45395d690414197a28355a2f0e8f8f7449",
+  "audit_branch": "audit/round5-49e5bd5-independent",
+  "canonical_regression_commit": "ff87b7dcd36c86d441edf4bcc21813a81ad54647",
+  "canonical_regression_run": 37133873472,
+  "baseline_commit": "9af96d1070d24754087cd9dd0566a18e87e2698d",
+  "baseline_run": 37133249313,
+  "additional_commit": "06f612780c146aedee9d5e8bd8f45ae9c5e93351",
+  "additional_run": 37134634399,
+  "source_scope": {
+    "commit": "49e5bd54e41731b9b96b83789def31e86c701ee6",
+    "git_tree": "19276e45395d690414197a28355a2f0e8f8f7449",
+    "tracked_files": 128,
+    "bytes": 1420962,
+    "lines": 27738,
+    "csharp_files": 65,
+    "csharp_lines": 19849,
+    "commits": 26,
+    "unique_history_blobs": 297,
+    "history_blob_bytes": 3492147,
+    "signature_categories": [
+      "github_classic",
+      "github_fine_grained",
+      "aws_access_id",
+      "private_key_pem",
+      "openai_key_like"
+    ],
+    "signature_hits": [],
+    "all_file_git_blobs_recomputed": true,
+    "root_tree_reconstructed": true,
+    "limitation": "Whole-tree inventory and byte verification; review of changed and critical unchanged code paths, not exhaustive execution coverage. History screened for listed signatures only."
+  },
+  "audit_branch_changes": {
+    "production_files": 128,
+    "audited_existing_files_modified": [],
+    "added_files": [
+      ".github/workflows/audit-round5-baseline.yml",
+      ".github/workflows/audit-round5-export.yml",
+      ".github/workflows/audit-round5-independent.yml",
+      ".github/workflows/audit-round5-ui-measure.yml",
+      "tests/AutoVpn.AuditRound5Measure/AutoVpn.AuditRound5Measure.csproj",
+      "tests/AutoVpn.AuditRound5Measure/Program.cs",
+      "tests/AutoVpn.AuditRound5Wpf/AutoVpn.AuditRound5Wpf.csproj",
+      "tests/AutoVpn.AuditRound5Wpf/Program.cs",
+      "tests/AutoVpn.UnitTests/IndependentRound5Tests.cs",
+      "tests/AutoVpn.UnitTests/IndependentRound5WireTests.cs"
+    ]
+  },
+  "environment": {
+    "dotnet_sdk": "10.0.112",
+    "dotnet_runtime": "10.0.12",
+    "linux": "Ubuntu 24.04 x64 GitHub-hosted runner",
+    "windows": "Windows Server 2025 Datacenter 10.0.26100 x64 GitHub-hosted runner, not Windows 11"
+  },
+  "release_builds": {
+    "linux": "PASSED",
+    "windows": "PASSED"
+  },
+  "suites": {
+    "baseline-linux": {
+      "total": 162,
+      "passed": 158,
+      "failed": 1,
+      "skipped": 3
+    },
+    "baseline-windows": {
+      "total": 162,
+      "passed": 144,
+      "failed": 15,
+      "skipped": 3
+    },
+    "baseline-native": {
+      "total": 162,
+      "passed": 162,
+      "failed": 0,
+      "skipped": 0
+    },
+    "independent-linux": {
+      "total": 34,
+      "passed": 5,
+      "failed": 29,
+      "skipped": 0
+    },
+    "independent-windows": {
+      "total": 34,
+      "passed": 5,
+      "failed": 29,
+      "skipped": 0
+    },
+    "native-linux": {
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    "native-windows": {
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "new_cases": {
+    "per_platform": 34,
+    "passed_per_platform": 5,
+    "failed_per_platform": 29,
+    "distinct_failed_across_platforms": 29,
+    "not_vulnerability_count": true
+  },
+  "previous_round4_cases": {
+    "native_linux": {
+      "total": 33,
+      "passed": 33
+    },
+    "windows_baseline": {
+      "total": 33,
+      "passed": 33
+    },
+    "linux_without_core": {
+      "total": 33,
+      "passed": 32,
+      "failed": 1,
+      "limitation": "Q24 chunked response variant timed out/cancelled in this run; passed in native run. Not established as a semantic production regression."
+    }
+  },
+  "baseline_failure_interpretation": {
+    "windows": {
+      "ipc": 5,
+      "file_lifetime_cleanup": 9,
+      "linux_only_process_fixture": 1
+    },
+    "linux": "One Q24 OperationCanceledException in no-core suite, not a claim of 29 old defects remaining."
+  },
+  "native_core": {
+    "version": "v1.19.32",
+    "source_commit": "88dcbf7f1614a67c3b36b848ee3592dfa92ada36",
+    "linux_archive_sha256": "8451100836c9eda194331c2babfad490b2faf30cebc1a04b0e76fd8ac2d35d10",
+    "linux_binary_sha256": "3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8",
+    "windows_archive_sha256": "1ac84e795b5b915446e20139677fb6cc013a0778e876e8d4c96f994750b4c4a3",
+    "windows_binary_sha256": "beb9878924d7bd38c67176b441ab5e668cc378bfe751c8dc8fef3eb5aaf566d5",
+    "archive_and_binary_hashes_checked_before_execution": true,
+    "native_profile_cases_per_os": 9,
+    "profiles_accepted_per_os": 9,
+    "controlled_handshake": "Shadowsocks AES-256-GCM via actual production non-TUN core transport to authenticated local TLS target; wrong-password negative did not reach target, on both OSs.",
+    "tun_enabled": false,
+    "public_proxy_nodes_probed": false
+  },
+  "wpf": {
+    "sourceCommit": "49e5bd54e41731b9b96b83789def31e86c701ee6",
+    "os": "Microsoft Windows NT 10.0.26100.0",
+    "normalWindowCatalogueReopenSucceeded": false,
+    "reopenError": "IOException in SqliteCatalogue.HasSqliteHeader: catalogue.sqlite is still in use after window/catalogue disposal. Full stack is retained in raw WPF artifact.",
+    "settingsPersisted": true,
+    "diagnosticPoolClearRequired": true,
+    "publicNetworkConsent": false,
+    "tun": false,
+    "scope": "Actual WPF navigation and two settings across window/catalogue reopen in one process. Any pool clear is diagnostic only and occurs after recording a failing normal reopen. Harness cleanup, not a real tray Exit, process restart, installer, theme or multi-DPI acceptance.",
+    "render_images": 8,
+    "images_visually_inspected": true,
+    "window_sizes": [
+      [
+        880,
+        640
+      ],
+      [
+        1120,
+        760
+      ]
+    ],
+    "dpi": 96,
+    "single_process_reopen_only": true,
+    "normal_reopen_failed": true,
+    "diagnostic_clear_not_product_fix": true
+  },
+  "measurements": {
+    "measure-linux": {
+      "measurements": [
+        {
+          "nodes": 1000,
+          "pass": 0,
+          "milliseconds": 24.3996,
+          "allocatedBytes": 3773016,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 1000,
+          "pass": 1,
+          "milliseconds": 16.1697,
+          "allocatedBytes": 3771920,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 1000,
+          "pass": 2,
+          "milliseconds": 16.0607,
+          "allocatedBytes": 3771920,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 5000,
+          "pass": 0,
+          "milliseconds": 323.0192,
+          "allocatedBytes": 18867136,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 5000,
+          "pass": 1,
+          "milliseconds": 249.9218,
+          "allocatedBytes": 18867328,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 5000,
+          "pass": 2,
+          "milliseconds": 68.2592,
+          "allocatedBytes": 18866904,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 10000,
+          "pass": 0,
+          "milliseconds": 248.8101,
+          "allocatedBytes": 37677240,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 10000,
+          "pass": 1,
+          "milliseconds": 269.3762,
+          "allocatedBytes": 37677392,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 10000,
+          "pass": 2,
+          "milliseconds": 347.9123,
+          "allocatedBytes": 37677392,
+          "protectorCalls": 0
+        }
+      ],
+      "protect": "test-only counting passthrough, no DPAPI",
+      "scope": "Three single-assessment writes at each size. No network, no TUN, no production credentials; not a soak or full UI/probe throughput benchmark."
+    },
+    "measure-windows": {
+      "measurements": [
+        {
+          "nodes": 1000,
+          "pass": 0,
+          "milliseconds": 50.0937,
+          "allocatedBytes": 3772936,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 1000,
+          "pass": 1,
+          "milliseconds": 33.9654,
+          "allocatedBytes": 3771928,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 1000,
+          "pass": 2,
+          "milliseconds": 35.6336,
+          "allocatedBytes": 3771928,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 5000,
+          "pass": 0,
+          "milliseconds": 437.7481,
+          "allocatedBytes": 18866760,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 5000,
+          "pass": 1,
+          "milliseconds": 483.6898,
+          "allocatedBytes": 18866936,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 5000,
+          "pass": 2,
+          "milliseconds": 164.4455,
+          "allocatedBytes": 18866912,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 10000,
+          "pass": 0,
+          "milliseconds": 492.158,
+          "allocatedBytes": 37677968,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 10000,
+          "pass": 1,
+          "milliseconds": 438.2353,
+          "allocatedBytes": 37678120,
+          "protectorCalls": 0
+        },
+        {
+          "nodes": 10000,
+          "pass": 2,
+          "milliseconds": 387.8418,
+          "allocatedBytes": 37678120,
+          "protectorCalls": 0
+        }
+      ],
+      "protect": "test-only counting passthrough, no DPAPI",
+      "scope": "Three single-assessment writes at each size. No network, no TUN, no production credentials; not a soak or full UI/probe throughput benchmark."
+    }
+  },
+  "nuget_advisory_query": {
+    "projects": 9,
+    "returned_vulnerable_package_entries": 0,
+    "source": "https://api.nuget.org/v3/index.json",
+    "limitation": "NuGet advisory source/time only. Native dependencies, signatures and SBOM not covered."
+  },
+  "auditor_corrections": [
+    {
+      "run": 37133249313,
+      "job": 111232434197,
+      "kind": "Auditor export workflow referenced nonexistent local main; corrected by explicit production ref in source export run37133294396. Product builds/tests unaffected."
+    },
+    {
+      "run": 37134277189,
+      "kind": "Initial WPF harness explicitly constructed a window while actual StartupUri also created one during dispatcher startup. Excluded as a harness defect; not proof that normal startup creates duplicate windows."
+    },
+    {
+      "run": 37134453958,
+      "kind": "Auditor tried StartupUri=null; setter rejects null. Corrected by allowing actual StartupUri to create the sole initial window. Excluded from product findings."
+    }
+  ],
+  "artifacts": [
+    {
+      "file": "round5-production-source.zip",
+      "artifact_id": 11277019520,
+      "run_id": 37133294396,
+      "job_id": null,
+      "bytes": 902512,
+      "sha256": "db8683c20d8b2e9d10f479dcf4e9f26c5b455f877f6202fbbd1598cd242a372c",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-baseline-linux.zip",
+      "artifact_id": 11277368867,
+      "run_id": 37133249313,
+      "job_id": 111232434311,
+      "bytes": 41704,
+      "sha256": "468a152f22dccdeb4fb34eac1f1cc778852b9dbd8ef7e90e59b2701444ac4f5f",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-baseline-windows.zip",
+      "artifact_id": 11276904487,
+      "run_id": 37133249313,
+      "job_id": 111232434238,
+      "bytes": 44291,
+      "sha256": "5cefc87a237fcb45f063a93e2db9d1bd01a1a08c9c1281063616c9d1568073df",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-baseline-native.zip",
+      "artifact_id": 11276844611,
+      "run_id": 37133249313,
+      "job_id": 111232434110,
+      "bytes": 38033,
+      "sha256": "e30dbfc0138a24102129642a6664333c1d8474b997e8f5be090010a70fbd86be",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-independent-linux.zip",
+      "artifact_id": 11277688855,
+      "run_id": 37133873472,
+      "job_id": 111234281632,
+      "bytes": 12257,
+      "sha256": "ef8e73306afcb6f75d0cccd1c8d8483309e3ba69262376058ab501614d178a66",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-independent-windows.zip",
+      "artifact_id": 11277865926,
+      "run_id": 37133873472,
+      "job_id": 111234281695,
+      "bytes": 12837,
+      "sha256": "53b15348096298d36f31ef486e807ff81f2f8d603908d0872b59652ed3f78304",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-native-linux.zip",
+      "artifact_id": 11277726598,
+      "run_id": 37133873472,
+      "job_id": 111234281635,
+      "bytes": 3055,
+      "sha256": "3bae3b4c311c6a6741400f7d0978b97678d523f39a935df005e8c4763a681134",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-native-windows.zip",
+      "artifact_id": 11278175689,
+      "run_id": 37133873472,
+      "job_id": 111234281674,
+      "bytes": 3114,
+      "sha256": "f3ee7b08e7a7092585e98f1e9c52a7348c67311cc4468dcac60906ac7b4d8780",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-independent-fixtures.zip",
+      "artifact_id": 11277249992,
+      "run_id": 37133873472,
+      "job_id": 111234281475,
+      "bytes": 389678,
+      "sha256": "70f571086f9eceeab9c57dfeb44997d64d0d9305670db8272cf25206eee6bf8f",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-wpf-final.zip",
+      "artifact_id": 11278920111,
+      "run_id": 37134634399,
+      "job_id": 111236550920,
+      "bytes": 188051,
+      "sha256": "2a4db137233f8109dd1e3bfef7793d575470999b77c2e2f3088c380108ac060f",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-measure-linux.zip",
+      "artifact_id": 11278805502,
+      "run_id": 37134634399,
+      "job_id": 111236550828,
+      "bytes": 585,
+      "sha256": "8fa69465bdbf655b5bcfa9cca472f6a8f1cc65cd8d152e371144fe9b4d947b85",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-measure-windows.zip",
+      "artifact_id": 11278231743,
+      "run_id": 37134634399,
+      "job_id": 111236550888,
+      "bytes": 607,
+      "sha256": "8a88904bb1699e77a55599150f3cedee6cbe91ef0a5e7bd3253a28b454bfafd8",
+      "downloaded_crc_sha256_verified": true
+    },
+    {
+      "file": "round5-all-fixtures.zip",
+      "artifact_id": 11278181067,
+      "run_id": 37134634399,
+      "job_id": 111236550932,
+      "bytes": 393349,
+      "sha256": "d9563400fd772011d0b2061d542c91d5130f609280ea45c6f94ee8d6a8a5ef08",
+      "downloaded_crc_sha256_verified": true
+    }
+  ],
+  "not_executed": [
+    "Installed Windows TUN/WFP/SCM end-to-end acceptance and independent crash-recovery packet observations",
+    "Windows 11 installer, upgrade, uninstall, reboot, sleep and two-user/service-account authorization",
+    "Production DNS/IPv6 and simultaneous active-TUN candidate-path packet isolation",
+    "Every supported protocol and transport actual controlled handshake; nine native -t validations are not nine handshakes",
+    "Public subscription node availability, public speed tests and live full-source refresh from the owner network",
+    "Sustained full-catalogue probe/soak, actual user-scale UI painting, keyboard/theme/multi-DPI/tray acceptance",
+    "Complete native/Go/Wintun dependency vulnerability audit, SBOM, package signatures and distribution compliance",
+    "General entropy-based credential detection and unreachable remote Git object inspection"
+  ],
+  "findings": 28,
+  "verdict": "NOT_ACCEPTED",
+  "independent_failed_cases": [
+    "IndependentRound5WireTests.W01_InvalidFieldNamesCannotAuthenticateAsValidHttp(field: \" Transfer-Encoding: chunked\")",
+    "IndependentRound5Tests.P02_OlderConcurrentCompletionMustNotOverwriteNewerObservation(olderSuccess: True)",
+    "IndependentRound5Tests.B01_ManualExclusionOverrideMustReachConfirmedConnection(ageSeconds: 0)",
+    "IndependentRound5Tests.X03_XrayExplicitCertificatePolicyMustSurviveImport",
+    "IndependentRound5Tests.B05_CanceledFailoverMustNotCommitLateReplacement",
+    "IndependentRound5Tests.D02_ClockRollbackMustNotRefundPersistedDailyBudget",
+    "IndependentRound5WireTests.W01_InvalidFieldNamesCannotAuthenticateAsValidHttp(field: \"X Bad: value\")",
+    "IndependentRound5Tests.S02_BlobShapedMetadataIsNotACommitObject",
+    "IndependentRound5Tests.B03_PartialSpawnIOExceptionMustKeepCleanupOwnership",
+    "IndependentRound5Tests.D01_NullDisabledFamilyCollectionMustBeRejectedAsSettings",
+    "IndependentRound5Tests.P02_OlderConcurrentCompletionMustNotOverwriteNewerObservation(olderSuccess: False)",
+    "IndependentRound5Tests.S05_CorruptPersistedCursorMustNotEscapeAsIndexException",
+    "IndependentRound5Tests.S01_MovingBranchMustNotMixCommitAndUnrelatedTree",
+    "IndependentRound5Tests.B01_ManualExclusionOverrideMustReachConfirmedConnection(ageSeconds: 65)",
+    "IndependentRound5Tests.B04_RejectedStartWithFailedStopMustRemainRecoverablyOwned",
+    "IndependentRound5Tests.B02_CancelAfterSpawnMustSettleConnectingState",
+    "IndependentRound5Tests.I02_UnsupportedResponseProtocolCannotReplaceUiState",
+    "IndependentRound5Tests.P04_DeadlineResultMustChargeItsConsumedTraffic",
+    "IndependentRound5WireTests.W01_InvalidFieldNamesCannotAuthenticateAsValidHttp(field: \"X\\0Bad: value\")",
+    "IndependentRound5Tests.B06_StrictCountryMustRecheckUpdatedStandbyMetadata",
+    "IndependentRound5Tests.P01_ConsumedProofFromOldNetworkMustNotBeRestampedAsFresh",
+    "IndependentRound5Tests.S04_InvalidPrimaryBodyMustNotSuppressValidReviewedMirror",
+    "IndependentRound5Tests.X01_XraySecondUserMustNotInheritFirstUsersFlow",
+    "IndependentRound5Tests.S06_Discovery304MustAdvanceItsSchedulingCheck",
+    "IndependentRound5Tests.I03_LiveCoreContradictionMustNotProveCleanDisconnect",
+    "IndependentRound5Tests.B07_ExplicitSessionLanPolicyMustSurviveFailover",
+    "IndependentRound5Tests.P03_UnsupportedObservationCannotPassOnDemandAdmission",
+    "IndependentRound5Tests.I01_ProbabilisticReplayFilterMustNotDenyFreshSafetyCommand",
+    "IndependentRound5Tests.S03_LedgerWithoutCatalogueCannotTurn304IntoUsableSnapshot"
+  ]
+}
