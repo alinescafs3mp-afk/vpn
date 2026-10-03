@@ -117,7 +117,7 @@ public sealed class IndependentRound4Tests
             Owner = "igareck", Repository = "vpn-configs-for-russia",
             PinnedCommit = "1111111111111111111111111111111111111111",
             TreeApi = new Uri("https://api.github.com/repos/igareck/vpn-configs-for-russia/git/trees/main?recursive=1"),
-            FamilyIds = ["black-vless"], FetchOrigins = [], ProbeTargets = [],
+            FamilyIds = ["black-vless"], FetchOrigins = [new ApprovedFetchOrigin("raw.githubusercontent.com", 443, "/igareck/vpn-configs-for-russia/")], ProbeTargets = [],
             ApprovedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "raw.githubusercontent.com" },
             RejectedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase),
         };
@@ -211,7 +211,7 @@ public sealed class IndependentRound4Tests
         var c = Catalogue(false);
         RefreshMerge.Ingest(c, [new IngestArtifact { ArtifactId = "insecure", FamilyId = "black-vless", Enabled = true,
             Text = Link() + "&allowInsecure=1" }], Now, false);
-        var node = Assert.Single(c.Nodes.Where(n => n.Semantics.SkipCertVerify));
+        var node = Assert.Single(c.Nodes, n => n.Semantics.SkipCertVerify);
         c.Settings = c.Settings with { AllowInsecureCertificates = true, Revision = 2 };
         Assert.True(ProbeCoordinator.NeedsProbe(node, Now, c.NetworkEpoch), "Import-time policy classification must not permanently suppress a now-authorized candidate.");
     }
