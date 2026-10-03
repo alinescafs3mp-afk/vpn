@@ -70,6 +70,17 @@ public sealed class EffectJournal : IDisposable
 
     public static EffectJournal Open(string path)
     {
+        if (!File.Exists(path) && RequiresReconciliation(path) && !HasUnknownMarker(path))
+        {
+            var parent = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(parent))
+            {
+                Directory.CreateDirectory(parent);
+            }
+
+            File.WriteAllText(UnknownMarkerPath(path), path);
+        }
+
         var presence = PresenceMarkerPath(path);
         if (!File.Exists(presence))
         {

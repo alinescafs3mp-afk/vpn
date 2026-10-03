@@ -29,6 +29,9 @@ public sealed class BrokerEngine
     private string? _operationId;
     private long _operationGeneration;
     private long _operationEpoch;
+    private string? _ownedOperationId;
+    private long _ownedGeneration;
+    private SelectionPurpose _selectionPurpose = SelectionPurpose.Automatic;
     private PolicyStamp? _commitPolicy;
     private bool _cleanupPending;
     private bool _cleanupBusy;
@@ -203,6 +206,7 @@ public sealed class BrokerEngine
             else
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                _selectionPurpose = string.IsNullOrWhiteSpace(payload.NodeId) ? SelectionPurpose.Automatic : SelectionPurpose.Manual;
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Connect, _state.Generation, selected.NodeId));
                 _sequence++;
                 armedGeneration = _state.Generation;
@@ -258,8 +262,53 @@ public sealed class BrokerEngine
         }
 
         var policy = PolicyStamp.Capture(_catalogue.Settings);
-        var started = await _core.StartAsync(yaml, armedGeneration, operationId, cancellationToken).ConfigureAwait(false);
+        CoreStartResult started;
+        try
+        {
+            started = await _core.StartAsync(yaml, armedGeneration, operationId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (IOException)
+        {
+            lock (_gate)
+            {
+                if (_state.Generation == armedGeneration && _state.Phase == TunnelPhase.Connecting)
+                {
+                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.VerifyFailed, _state.Generation, selected.NodeId, ReasonCodes.CoreConfigRejected));
+                    _sequence++;
+                }
+
+                if (_operationId == operationId)
+                {
+                    _coreRunning = false;
+                    _operationId = null;
+                }
+            }
+
+            return Fail(request, ReasonCodes.CoreConfigRejected, "Ядро не запущено. Защита остаётся включённой до подтверждённого отключения.");
+        }
+        catch (OperationCanceledException)
+        {
+            await _core.StopAsync(armedGeneration, operationId, CancellationToken.None).ConfigureAwait(false);
+            lock (_gate)
+            {
+                if (_state.Generation == armedGeneration && _state.Phase == TunnelPhase.Connecting)
+                {
+                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.VerifyFailed, _state.Generation, selected.NodeId, ReasonCodes.Canceled));
+                    _sequence++;
+                }
+
+                if (_operationId == operationId)
+                {
+                    _coreRunning = false;
+                    _operationId = null;
+                }
+            }
+
+            return Fail(request, ReasonCodes.Canceled, "Подключение отменено. Ядро остановлено.");
+        }
+
         var policyChanged = !policy.Equals(PolicyStamp.Capture(_catalogue.Settings));
+        var callerCanceled = cancellationToken.IsCancellationRequested;
         var abandon = false;
         string? startRefusal = null;
         lock (_gate)
@@ -268,9 +317,14 @@ public sealed class BrokerEngine
                         _operationGeneration == armedGeneration &&
                         _state.Generation == armedGeneration &&
                         !_state.DisconnectCommitted;
-            if (!owned)
+            if (!owned || callerCanceled)
             {
                 abandon = true;
+                if (owned)
+                {
+                    _coreRunning = false;
+                    _operationId = null;
+                }
             }
             else if (policyChanged || !SelectionHeld(selected))
             {
@@ -291,6 +345,8 @@ public sealed class BrokerEngine
             else
             {
                 _coreRunning = true;
+                _ownedOperationId = operationId;
+                _ownedGeneration = armedGeneration;
                 _commitPolicy = PolicyStamp.Capture(_catalogue.Settings);
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.CoreStarted, _state.Generation, selected.NodeId));
                 _sequence++;
@@ -299,7 +355,7 @@ public sealed class BrokerEngine
 
         if (abandon || startRefusal is not null)
         {
-            await _core.StopAsync(armedGeneration, operationId, cancellationToken).ConfigureAwait(false);
+            await _core.StopAsync(armedGeneration, operationId, CancellationToken.None).ConfigureAwait(false);
         }
 
         if (startRefusal is not null)
@@ -402,8 +458,8 @@ public sealed class BrokerEngine
                 _cleanupBusy = true;
                 if (!_cleanupPending)
                 {
-                    _cleanupOperationId = _operationId ?? "";
-                    _cleanupGeneration = _state.Generation;
+                    _cleanupOperationId = _ownedOperationId ?? _operationId ?? "";
+                    _cleanupGeneration = _ownedGeneration != 0 ? _ownedGeneration : _state.Generation;
                     _cleanupPending = true;
                     _operationId = null;
                     _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Disconnect, _state.Generation));
@@ -441,6 +497,11 @@ public sealed class BrokerEngine
                 if (_cleanupGeneration == cleanupGeneration)
                 {
                     _coreRunning = false;
+                    if (string.Equals(_ownedOperationId, cleanupOperation, StringComparison.Ordinal))
+                    {
+                        _ownedOperationId = null;
+                        _ownedGeneration = 0;
+                    }
                 }
             }
 
@@ -620,10 +681,16 @@ public sealed class BrokerEngine
                 var policy = PolicyStamp.Capture(_catalogue.Settings);
                 var started = await _core.StartAsync(yaml, switchGeneration, switchOperation!, cancellationToken).ConfigureAwait(false);
                 var policyChanged = !policy.Equals(PolicyStamp.Capture(_catalogue.Settings));
+                var live = _catalogue.Nodes.FirstOrDefault(node => node.NodeId == switchTarget.NodeId);
+                var stillHeld = live is not null
+                    && _catalogue.NetworkEpoch == _operationEpoch
+                    && !live.Excluded
+                    && string.Equals(live.Digest, switchTarget.Digest, StringComparison.Ordinal)
+                    && IsCurrentlyEligible(live, now);
                 var abandon = false;
                 lock (_gate)
                 {
-                    abandon = policyChanged || _state.Generation != switchGeneration || _state.DisconnectCommitted || _state.Phase is not (TunnelPhase.Connected or TunnelPhase.Reconnecting);
+                    abandon = policyChanged || !stillHeld || _state.Generation != switchGeneration || _state.DisconnectCommitted || _state.Phase is not (TunnelPhase.Connected or TunnelPhase.Reconnecting);
                     if (!abandon && started.Started)
                     {
                         if (_state.Phase == TunnelPhase.Connected)
@@ -639,6 +706,8 @@ public sealed class BrokerEngine
                         }
 
                         _coreRunning = true;
+                        _ownedOperationId = switchOperation;
+                        _ownedGeneration = switchGeneration;
                         _commitPolicy = PolicyStamp.Capture(_catalogue.Settings);
                         _sequence++;
                         switched = true;
@@ -701,8 +770,19 @@ public sealed class BrokerEngine
 
         var now = NowUtc();
         var accepted = new List<StandbyCandidate>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in standbys)
         {
+            if (accepted.Count >= ProductLimits.WarmStandbys)
+            {
+                break;
+            }
+
+            if (string.IsNullOrEmpty(item.NodeId) || !seen.Add(item.NodeId))
+            {
+                continue;
+            }
+
             var node = _catalogue.Nodes.FirstOrDefault(candidate => candidate.NodeId == item.NodeId);
             if (node is null || !IsCurrentlyEligible(node, now) || !CountryAllows(node))
             {
@@ -939,12 +1019,11 @@ public sealed class BrokerEngine
 
         var live = _catalogue.Nodes.FirstOrDefault(item => item.NodeId == selected.NodeId);
         return live is not null
-            && !live.Excluded
             && string.Equals(live.Digest, selected.Digest, StringComparison.Ordinal)
-            && IsCurrentlyEligible(live, NowUtc());
+            && IsCurrentlyEligible(live, NowUtc(), _selectionPurpose);
     }
 
-    private bool IsCurrentlyEligible(CatalogueNode node, DateTimeOffset now)
+    private bool IsCurrentlyEligible(CatalogueNode node, DateTimeOffset now, SelectionPurpose purpose = SelectionPurpose.PreConnect)
     {
         var settings = _catalogue.Settings;
         return MemoryCatalogue.IsEligible(node, new EligibilityContext
@@ -952,7 +1031,7 @@ public sealed class BrokerEngine
             NowUtc = now,
             NetworkEpoch = _catalogue.NetworkEpoch,
             AllowInsecureCertificates = settings.AllowInsecureCertificates,
-            Purpose = SelectionPurpose.PreConnect,
+            Purpose = purpose,
             AllowedAge = TimeSpan.FromSeconds(ProductLimits.PreConnectFreshnessSeconds),
             MaxAcceptableLatencyMs = settings.MaxAcceptableLatencyMs,
             DisabledFamilies = settings.DisabledFamilyIds.ToHashSet(StringComparer.Ordinal),

@@ -161,8 +161,24 @@ public static class ProbeCoordinator
 
             if (observation.Class == ProbeClass.Canceled || observation.ReasonCode == ReasonCodes.Canceled)
             {
-                attempted--;
-                break;
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    attempted--;
+                    break;
+                }
+
+                failed++;
+                TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
+                {
+                    Digest = digest,
+                    NetworkEpoch = epoch,
+                    Health = HealthState.Failed,
+                    LastSuccessUtc = node.Assessment?.LastSuccessUtc,
+                    LastFailureUtc = nowUtc,
+                    MedianLatencyMs = node.Assessment?.MedianLatencyMs,
+                    ConsecutiveFailures = (node.Assessment?.ConsecutiveFailures ?? 0) + 1,
+                });
+                continue;
             }
 
             if (observation.Class == ProbeClass.Unsupported)
@@ -234,6 +250,11 @@ public static class ProbeCoordinator
 
     public static bool NeedsProbe(CatalogueNode node, DateTimeOffset nowUtc, long epoch)
     {
+        if (node.Assessment?.RetryAfterUtc is DateTimeOffset retry && retry > nowUtc)
+        {
+            return false;
+        }
+
         if (node.PolicyReason is not null)
         {
             return false;
@@ -284,6 +305,11 @@ public static class ProbeCoordinator
     {
         var node = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
         if (node is null || !NeedsOnDemandAdmission(node, nowUtc, catalogue.NetworkEpoch))
+        {
+            return false;
+        }
+
+        if (!Scheduled(node, catalogue.Settings))
         {
             return false;
         }
@@ -392,19 +418,11 @@ public static class ProbeCoordinator
 
     private static bool ProofAccepts(ProbeObservation observation, string digest, Uri target)
     {
-        if (observation.CandidateDigest is not null &&
-            !string.Equals(observation.CandidateDigest, digest, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        if (observation.TargetUri is not null &&
-            !string.Equals(observation.TargetUri, target.AbsoluteUri, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return true;
+        return !string.IsNullOrEmpty(observation.CandidateDigest)
+            && string.Equals(observation.CandidateDigest, digest, StringComparison.Ordinal)
+            && !string.IsNullOrEmpty(observation.TargetUri)
+            && string.Equals(observation.TargetUri, target.AbsoluteUri, StringComparison.Ordinal)
+            && !string.IsNullOrEmpty(observation.WorkerId);
     }
 
     private static bool PolicyHeld(ICatalogue catalogue, string nodeId, int revision, bool allowInsecure)

@@ -31,21 +31,34 @@ public sealed class Round2SliceBTests
         var phase = 0;
         var handler = new Handler(request =>
         {
-            if (phase == 2)
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            if (path.Contains("/commits/", StringComparison.Ordinal))
+            {
+                var commit = phase == 0 ? ShaA : ShaB;
+                var body = "{\"sha\":\"" + commit + "\",\"commit\":{\"tree\":{\"sha\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}}}";
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (phase >= 2)
             {
                 return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
             }
 
-            var sha = phase == 0 ? ShaA : ShaB;
+            var treeSha = phase == 0
+                ? "cccccccccccccccccccccccccccccccccccccccc"
+                : "dddddddddddddddddddddddddddddddddddddddd";
             var tree = phase == 0
-                ? Tree(sha, "BLACK_VLESS_RUS.txt", "BLACK_VLESS_RUS_mobile.txt")
-                : Tree(sha, "BLACK_VLESS_RUS_mobile.txt");
+                ? Tree(treeSha, "BLACK_VLESS_RUS.txt", "BLACK_VLESS_RUS_mobile.txt")
+                : Tree(treeSha, "BLACK_VLESS_RUS_mobile.txt");
             phase++;
             var response = new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(tree, Encoding.UTF8, "application/json"),
             };
-            response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"head-" + sha[..4] + "\"");
+            response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"head-" + (phase == 1 ? ShaA : ShaB)[..4] + "\"");
             return response;
         });
         using var fetcher = new PolicyHttpFetcher(handler, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "api.github.com", "raw.githubusercontent.com" });

@@ -79,7 +79,7 @@ public class AuditRegressionTests
         await ProbeCoordinator.RunAsync(catalogue, Transport(node =>
         {
             seen.Add(node.Host);
-            return new ProbeObservation(true, 40, false, null);
+            return Proven(node, 40);
         }), Target, Now, CancellationToken.None);
 
         Assert.Equal([stale.Semantics.Host], seen);
@@ -96,10 +96,10 @@ public class AuditRegressionTests
         catalogue.SetNetworkEpoch(2);
         Assert.True(ProbeCoordinator.NeedsProbe(node, Now, catalogue.NetworkEpoch));
 
-        await ProbeCoordinator.RunAsync(catalogue, Transport(_ =>
+        await ProbeCoordinator.RunAsync(catalogue, Transport(node =>
         {
             catalogue.SetNetworkEpoch(3);
-            return new ProbeObservation(true, 15, false, null);
+            return Proven(node, 15);
         }), Target, Now, CancellationToken.None);
 
         Assert.Equal(3, catalogue.NetworkEpoch);
@@ -160,10 +160,10 @@ public class AuditRegressionTests
         var started = Stopwatch.StartNew();
         var run = ProbeCoordinator.RunAsync(
             hung,
-            new AsyncTransport(async (_, token) =>
+            new AsyncTransport(async (node, token) =>
             {
                 await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false);
-                return new ProbeObservation(true, 1, false, null);
+                return Proven(node, 1);
             }),
             Target,
             Now,
@@ -182,10 +182,10 @@ public class AuditRegressionTests
             Vless(Uuid, "203.0.113.31"),
             Vless(Uuid2, "203.0.113.32"));
         var calls = 0;
-        await ProbeCoordinator.RunAsync(limited, Transport(_ =>
+        await ProbeCoordinator.RunAsync(limited, Transport(node =>
         {
             calls++;
-            return new ProbeObservation(true, 20, false, null, 25);
+            return Proven(node, 20, 25);
         }), Target, Now, CancellationToken.None, byteBudget: 25);
         Assert.Equal(1, calls);
         Assert.Equal(1, limited.Nodes.Count(node => node.Assessment!.Health == HealthState.Healthy));
@@ -196,11 +196,11 @@ public class AuditRegressionTests
             Vless(Uuid2, "203.0.113.42"));
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cts = new CancellationTokenSource();
-        var cancelRun = ProbeCoordinator.RunAsync(cancelled, new AsyncTransport(async (_, token) =>
+        var cancelRun = ProbeCoordinator.RunAsync(cancelled, new AsyncTransport(async (node, token) =>
         {
             entered.TrySetResult();
             await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false);
-            return new ProbeObservation(true, 1, false, null);
+            return Proven(node, 1);
         }), Target, Now, cts.Token);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
         cts.Cancel();
@@ -220,7 +220,7 @@ public class AuditRegressionTests
             Vless(Uuid, "203.0.113.51"),
             Vless(Uuid2, "203.0.113.52"),
             Vless(Uuid3, "203.0.113.53"));
-        await ProbeCoordinator.RunAsync(overlapped, new AsyncTransport(async (_, token) =>
+        await ProbeCoordinator.RunAsync(overlapped, new AsyncTransport(async (node, token) =>
         {
             lock (gate)
             {
@@ -231,7 +231,7 @@ public class AuditRegressionTests
             try
             {
                 await Task.Delay(30, token).ConfigureAwait(false);
-                return new ProbeObservation(true, 5, false, null);
+                return Proven(node, 5);
             }
             finally
             {
@@ -762,6 +762,11 @@ public class AuditRegressionTests
         command.Parameters.AddWithValue("$next", replacement);
         command.Parameters.AddWithValue("$current", current);
         Assert.Equal(1, command.ExecuteNonQuery());
+    }
+
+    private static ProbeObservation Proven(NodeSemantics node, int latency, int bytes = 0)
+    {
+        return new ProbeObservation(true, latency, false, null, bytes, ProbeClass.Success, Target.AbsoluteUri, CanonicalIdentity.Digest(node), "unit-proof");
     }
 
     private static IProbeTransport Transport(Func<NodeSemantics, ProbeObservation> next)

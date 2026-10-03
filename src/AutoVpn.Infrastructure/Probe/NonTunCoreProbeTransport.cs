@@ -408,6 +408,11 @@ public static class Socks5Client
             return new TlsProbeExchange(true, 0, 0, "STATUS");
         }
 
+        if (HeaderFraming(head) is string framing)
+        {
+            return new TlsProbeExchange(true, status, 0, framing);
+        }
+
         if (head.Contains("\r\nLocation:", StringComparison.OrdinalIgnoreCase) || status is >= 300 and < 400)
         {
             return new TlsProbeExchange(true, status, 0, "REDIRECT");
@@ -462,7 +467,38 @@ public static class Socks5Client
             return new TlsProbeExchange(true, status, body.Length, "STATUS");
         }
 
+        if (length is > 0 || body.Length > 0)
+        {
+            return new TlsProbeExchange(true, status, body.Length, "FRAMING");
+        }
+
         return new TlsProbeExchange(true, status, body.Length, null);
+    }
+
+    private static string? HeaderFraming(string head)
+    {
+        var split = head.Split("\r\n");
+        for (var index = 1; index < split.Length; index++)
+        {
+            var line = split[index];
+            if (line.Length == 0)
+            {
+                break;
+            }
+
+            var colon = line.IndexOf(':');
+            if (colon <= 0 || line[colon - 1] is ' ' or '\t')
+            {
+                return "FRAMING";
+            }
+
+            if (line.StartsWith("Transfer-Encoding:", StringComparison.OrdinalIgnoreCase))
+            {
+                return "FRAMING";
+            }
+        }
+
+        return null;
     }
 
     private static int? ContentLength(string head)

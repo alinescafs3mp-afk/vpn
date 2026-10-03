@@ -228,6 +228,10 @@ public static class MihomoProfileGenerator
         {
             builder.AppendLine($"    alterId: {alter.ToString(CultureInfo.InvariantCulture)}");
         }
+        else if (type == "vmess")
+        {
+            builder.AppendLine("    alterId: 0");
+        }
 
         var udp = node.Udp ?? false;
         builder.AppendLine($"    udp: {(udp ? "true" : "false")}");

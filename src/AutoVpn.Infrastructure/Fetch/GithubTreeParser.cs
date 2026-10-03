@@ -9,6 +9,43 @@ public sealed record TreeDiscovery(bool Complete, string? CommitSha, bool Trunca
 
 public static class GithubTreeParser
 {
+    public static bool TryReadCommitSha(string json, out string sha)
+    {
+        sha = "";
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (root.TryGetProperty("tree", out var tree) && tree.ValueKind == JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            if (!root.TryGetProperty("sha", out var shaElement) || shaElement.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            var value = shaElement.GetString();
+            if (value is null || value.Length != 40 || !value.All(Uri.IsHexDigit))
+            {
+                return false;
+            }
+
+            sha = value;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     public static TreeDiscovery Parse(string json)
     {
         try

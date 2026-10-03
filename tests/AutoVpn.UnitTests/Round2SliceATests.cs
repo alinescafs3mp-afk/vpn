@@ -149,7 +149,8 @@ public sealed class Round2SliceATests
             await chatty.DisposeAsync();
             watch.Stop();
             Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5));
-            Assert.InRange(chatty.OutputBytes, 10_000, (1024 * 1024) + 4096);
+            Assert.True(chatty.OutputBytes >= 10_000);
+            Assert.InRange(chatty.OutputTail.Length, 0, 2000);
             Assert.True(chatty.DirectoryRemoved);
             Assert.False(Directory.Exists(directory));
 
@@ -211,10 +212,10 @@ public sealed class Round2SliceATests
         Assert.Contains(catalogue.Eligible(new EligibilityContext { NowUtc = clock.UtcNow, NetworkEpoch = catalogue.NetworkEpoch }), item => item.NodeId == node.NodeId);
 
         var calls = 0;
-        var transport = new ScriptedTransport(_ =>
+        var transport = new ScriptedTransport(node =>
         {
             calls++;
-            return new ProbeObservation(true, 20, false, null, 32, ProbeClass.Success);
+            return Proven(node, 20, 32);
         });
         var engine = new BrokerEngine(catalogue, new ArmingGuard(), new ImmediateCore(), null, clock, transport, new Uri("https://probe.example/generate_204"));
         var connected = await engine.HandleAsync(Request(IpcOperations.Connect, new ConnectPayload
@@ -242,10 +243,10 @@ public sealed class Round2SliceATests
         Assert.Equal(clock.UtcNow.AddHours(2), future.Nodes[0].Assessment!.LastSuccessUtc);
 
         var staleEpoch = FreshNode(clock.UtcNow.AddSeconds(-65));
-        var epochTransport = new ScriptedTransport(_ =>
+        var epochTransport = new ScriptedTransport(node =>
         {
             staleEpoch.SetNetworkEpoch(staleEpoch.NetworkEpoch + 1);
-            return new ProbeObservation(true, 5, false, null, 1, ProbeClass.Success);
+            return Proven(node, 5, 1);
         });
         var epochEngine = new BrokerEngine(staleEpoch, new ArmingGuard(), new ImmediateCore(), null, clock, epochTransport, new Uri("https://probe.example/generate_204"));
         var epochResult = await epochEngine.HandleAsync(Request(IpcOperations.Connect, new ConnectPayload
@@ -346,9 +347,10 @@ public sealed class Round2SliceATests
         var coordinator = new CatalogueCoordinator(new MemoryCatalogue(), fetcher, new NonTunCoreProbeTransport(null, null), ledger);
         var first = await coordinator.DiscoverAsync(registry, CancellationToken.None, TimeSpan.FromSeconds(2));
         Assert.True(first.Complete);
-        Assert.Equal(TreeSha, first.CommitSha);
-        Assert.Contains(TreeSha, Assert.Single(first.Items).Urls[0].AbsoluteUri, StringComparison.Ordinal);
-        Assert.DoesNotContain("20c38289c29e4dba6b8f01ddd3273ec9ec169b46", first.Items[0].Urls[0].AbsoluteUri, StringComparison.Ordinal);
+        const string pin = "20c38289c29e4dba6b8f01ddd3273ec9ec169b46";
+        Assert.Equal(pin, first.CommitSha);
+        Assert.Contains(pin, Assert.Single(first.Items).Urls[0].AbsoluteUri, StringComparison.Ordinal);
+        Assert.DoesNotContain(TreeSha, first.Items[0].Urls[0].AbsoluteUri, StringComparison.Ordinal);
 
         var second = await coordinator.DiscoverAsync(registry, CancellationToken.None, TimeSpan.FromSeconds(2));
         Assert.True(second.Complete);
@@ -372,7 +374,7 @@ public sealed class Round2SliceATests
             var repaired = await restartedCoordinator.DiscoverAsync(registry, CancellationToken.None, TimeSpan.FromSeconds(2));
             Assert.True(repaired.Complete);
             Assert.Single(repaired.Items);
-            Assert.Equal(before + 2, fetches.Count);
+            Assert.Equal(before + 3, fetches.Count);
             Assert.Null(fetches[^1]);
         }
         finally
@@ -1082,6 +1084,11 @@ public sealed class Round2SliceATests
             UseShellExecute = false,
         });
         process?.WaitForExit(2000);
+    }
+
+    private static ProbeObservation Proven(NodeSemantics node, int latency, int bytes)
+    {
+        return new ProbeObservation(true, latency, false, null, bytes, ProbeClass.Success, "https://probe.example/generate_204", CanonicalIdentity.Digest(node), "unit-proof");
     }
 
     private sealed class ScriptedTransport(Func<NodeSemantics, ProbeObservation> next) : IProbeTransport

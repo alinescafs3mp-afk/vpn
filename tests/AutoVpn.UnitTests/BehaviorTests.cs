@@ -81,12 +81,12 @@ public class BehaviorTests
             new IngestArtifact { ArtifactId = "b", FamilyId = "black-vless", Enabled = true, Text = NodeUri("203.0.113.22"), ContentHash = "b" },
         ], Now, false);
         var calls = 0;
-        var transport = new ScriptedTransport(_ =>
+        var transport = new ScriptedTransport(node =>
         {
             calls++;
             return calls == 1
                 ? new ProbeObservation(false, null, true, ReasonCodes.UplinkOffline)
-                : new ProbeObservation(true, 80, false, null);
+                : Proven(node, 80);
         });
         var report = await ProbeCoordinator.RunAsync(catalogue, transport, new Uri("https://cp.cloudflare.com/generate_204"), Now, CancellationToken.None);
         Assert.True(report.StoppedForUplink);
@@ -108,7 +108,7 @@ public class BehaviorTests
             new IngestArtifact { ArtifactId = "b", FamilyId = "black-vless", Enabled = true, Text = NodeUri("203.0.113.32"), ContentHash = "b" },
         ], Now, false);
         var transport = new ScriptedTransport(node => node.Host.EndsWith(".31", StringComparison.Ordinal)
-            ? new ProbeObservation(true, 90, false, null)
+            ? Proven(node, 90)
             : new ProbeObservation(false, null, false, ReasonCodes.ProbeFailed));
         await ProbeCoordinator.RunAsync(catalogue, transport, new Uri("https://cp.cloudflare.com/generate_204"), Now, CancellationToken.None);
         var eligible = catalogue.Eligible(Context());
@@ -561,7 +561,7 @@ public class BehaviorTests
         ], Now, false);
         var report = await ProbeCoordinator.RunAsync(
             catalogue,
-            new ScriptedTransport(_ => new ProbeObservation(true, 40, false, null)),
+            new ScriptedTransport(node => Proven(node, 40)),
             new Uri("https://cp.cloudflare.com/generate_204"),
             Now,
             CancellationToken.None,
@@ -848,6 +848,11 @@ public class BehaviorTests
             Operation = operation,
             Payload = JsonSerializer.SerializeToElement(payload, IpcJson.Options),
         };
+    }
+
+    private static ProbeObservation Proven(NodeSemantics node, int latency)
+    {
+        return new ProbeObservation(true, latency, false, null, 0, ProbeClass.Success, "https://cp.cloudflare.com/generate_204", CanonicalIdentity.Digest(node), "unit-proof");
     }
 
     private sealed class ScriptedTransport(Func<NodeSemantics, ProbeObservation> next) : IProbeTransport

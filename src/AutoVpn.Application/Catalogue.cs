@@ -77,7 +77,35 @@ public sealed class MemoryCatalogue : ICatalogue
                 throw new InvalidOperationException(error);
             }
 
+            var allowChanged = _settings.AllowInsecureCertificates != value.AllowInsecureCertificates;
             _settings = value;
+            if (allowChanged)
+            {
+                ReconcileCertificatePolicy();
+            }
+        }
+    }
+
+    private void ReconcileCertificatePolicy()
+    {
+        foreach (var node in _nodes)
+        {
+            if (!node.Semantics.SkipCertVerify)
+            {
+                continue;
+            }
+
+            if (_settings.AllowInsecureCertificates)
+            {
+                if (node.PolicyReason == ReasonCodes.CertVerificationDisabled)
+                {
+                    node.PolicyReason = null;
+                }
+            }
+            else if (node.PolicyReason is null)
+            {
+                node.PolicyReason = ReasonCodes.CertVerificationDisabled;
+            }
         }
     }
 

@@ -142,6 +142,8 @@ public sealed class SessionMailbox
 
     public string? BootId { get; private set; }
 
+    private readonly HashSet<string> _retiredBoots = new(StringComparer.Ordinal);
+
     public long Sequence { get; private set; } = -1;
 
     public string? LastErrorCode { get; private set; }
@@ -187,6 +189,15 @@ public sealed class SessionMailbox
             {
                 return false;
             }
+        }
+        else if (BootId is not null)
+        {
+            if (snapshot.BootId is null || _retiredBoots.Contains(snapshot.BootId))
+            {
+                return false;
+            }
+
+            _retiredBoots.Add(BootId);
         }
 
         BootId = snapshot.BootId;

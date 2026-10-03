@@ -17,7 +17,7 @@ public static class ClashProxyParser
 
     public static ParsedNode Parse(YamlMappingNode map)
     {
-        var values = new Dictionary<string, YamlNode>(StringComparer.Ordinal);
+        var values = new Dictionary<string, YamlNode>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in map.Children)
         {
             if (entry.Key is not YamlScalarNode key || string.IsNullOrEmpty(key.Value))

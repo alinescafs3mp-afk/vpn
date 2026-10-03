@@ -21,6 +21,7 @@ public sealed class IpcDispatcher
     private readonly Dictionary<string, CacheEntry> _safety = new(StringComparer.Ordinal);
     private readonly Queue<string> _safetyOrder = new();
     private readonly Dictionary<string, Inflight> _inflight = new(StringComparer.Ordinal);
+    private readonly uint[] _seen = new uint[1 << 15];
     private string? _ownerSid;
     private int? _ownerSession;
     private long _authority;
@@ -96,8 +97,17 @@ public sealed class IpcDispatcher
             {
                 return Fail(request, "BUSY", "Слишком много одновременных команд. Повторите запрос.");
             }
+            else if (!read && ProbablySeen(request.RequestId))
+            {
+                return Fail(request, ReasonCodes.ReplayExpired, "Идентификатор запроса уже вышел из окна повтора и не выполняется снова.");
+            }
             else
             {
+                if (!read)
+                {
+                    MarkSeen(request.RequestId);
+                }
+
                 created = new Inflight(fingerprint, new TaskCompletionSource<IpcResponse>(TaskCreationOptions.RunContinuationsAsynchronously));
                 _inflight[request.RequestId] = created;
                 if (!safety && !read)
@@ -162,7 +172,55 @@ public sealed class IpcDispatcher
             _safetyOrder.Clear();
             _inflight.Clear();
             _busyInflight = 0;
+            Array.Clear(_seen);
         }
+    }
+
+    private bool ProbablySeen(string id)
+    {
+        var (first, second) = Mix(id);
+        var bits = (ulong)_seen.Length * 32;
+        for (var index = 0; index < 8; index++)
+        {
+            var bit = (uint)((first + ((ulong)index * second)) % bits);
+            if ((_seen[bit >> 5] & (1u << (int)(bit & 31))) == 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void MarkSeen(string id)
+    {
+        var (first, second) = Mix(id);
+        var bits = (ulong)_seen.Length * 32;
+        for (var index = 0; index < 8; index++)
+        {
+            var bit = (uint)((first + ((ulong)index * second)) % bits);
+            _seen[bit >> 5] |= 1u << (int)(bit & 31);
+        }
+    }
+
+    private static (ulong First, ulong Second) Mix(string id)
+    {
+        ulong first = 14695981039346656037;
+        ulong second = 1099511628211;
+        foreach (var character in id)
+        {
+            first ^= character;
+            first *= 1099511628211;
+            second ^= (ulong)character << 1;
+            second *= 14695981039346656037;
+        }
+
+        if ((second & 1) == 0)
+        {
+            second |= 1;
+        }
+
+        return (first, second);
     }
 
     private void Complete(string id, Inflight created, long epoch, string fingerprint, bool read, bool safety, IpcResponse response)

@@ -56,6 +56,11 @@ public sealed record ProductSettings
             return "Для строгого фильтра страны нужно указать страну.";
         }
 
+        if (!Enum.IsDefined(CountryMode) || !Enum.IsDefined(SelectionMode) || !Enum.IsDefined(Theme) || !Enum.IsDefined(RankMode))
+        {
+            return "Настройки содержат неизвестное значение перечисления.";
+        }
+
         return null;
     }
 }

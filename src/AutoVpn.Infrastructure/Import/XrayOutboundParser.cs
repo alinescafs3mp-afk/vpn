@@ -19,7 +19,7 @@ public static class XrayOutboundParser
         }
 
         var endpoints = ReadEndpoints(node);
-        if (endpoints.Count <= 1)
+        if (endpoints.Count == 0)
         {
             return [parsed];
         }
@@ -27,19 +27,7 @@ public static class XrayOutboundParser
         var nodes = new List<ParsedNode>(endpoints.Count);
         foreach (var endpoint in endpoints)
         {
-            nodes.Add(parsed with
-            {
-                Semantics = parsed.Semantics with
-                {
-                    Host = endpoint.Host,
-                    Port = endpoint.Port,
-                    UserId = endpoint.User ?? parsed.Semantics.UserId,
-                    Password = endpoint.Password ?? parsed.Semantics.Password,
-                    Encryption = endpoint.Encryption ?? parsed.Semantics.Encryption,
-                    Flow = endpoint.Flow ?? parsed.Semantics.Flow,
-                    AlterId = endpoint.AlterId ?? parsed.Semantics.AlterId,
-                },
-            });
+            nodes.Add(ApplyEndpoint(parsed, endpoint));
         }
 
         return nodes;
@@ -173,6 +161,23 @@ public static class XrayOutboundParser
             fingerprint ??= GetString(tls, "fingerprint");
         }
 
+        string? path = null;
+        string? hostHeader = null;
+        string? serviceName = null;
+        if (stream.ValueKind == JsonValueKind.Object && stream.TryGetProperty("wsSettings", out var ws) && ws.ValueKind == JsonValueKind.Object)
+        {
+            path = GetString(ws, "path");
+            if (ws.TryGetProperty("headers", out var headers) && headers.ValueKind == JsonValueKind.Object)
+            {
+                hostHeader = GetString(headers, "Host");
+            }
+        }
+
+        if (stream.ValueKind == JsonValueKind.Object && stream.TryGetProperty("grpcSettings", out var grpc) && grpc.ValueKind == JsonValueKind.Object)
+        {
+            serviceName = GetString(grpc, "serviceName");
+        }
+
         return new ParsedNode
         {
             DisplayName = GetString(node, "tag"),
@@ -194,6 +199,26 @@ public static class XrayOutboundParser
                 PublicKey = publicKey,
                 ShortId = shortId,
                 Transport = network,
+                Path = path,
+                HostHeader = hostHeader,
+                ServiceName = serviceName,
+            },
+        };
+    }
+
+    private static ParsedNode ApplyEndpoint(ParsedNode parsed, Endpoint endpoint)
+    {
+        return parsed with
+        {
+            Semantics = parsed.Semantics! with
+            {
+                Host = endpoint.Host,
+                Port = endpoint.Port,
+                UserId = endpoint.User ?? parsed.Semantics.UserId,
+                Password = endpoint.Password ?? parsed.Semantics.Password,
+                Encryption = endpoint.Encryption ?? parsed.Semantics.Encryption,
+                Flow = endpoint.Flow ?? parsed.Semantics.Flow,
+                AlterId = endpoint.AlterId ?? parsed.Semantics.AlterId,
             },
         };
     }

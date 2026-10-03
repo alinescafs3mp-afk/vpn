@@ -59,6 +59,18 @@ public static class SubscriptionImporter
 {
     public static ImportBatch Import(string text, ImportOptions? options = null)
     {
+        try
+        {
+            return ImportCore(text, options);
+        }
+        catch (Exception ex) when (ex is ArgumentException or DecoderFallbackException or InvalidOperationException)
+        {
+            return Single(RecordDisposition.Invalid, ReasonCodes.InvalidUri);
+        }
+    }
+
+    private static ImportBatch ImportCore(string text, ImportOptions? options)
+    {
         options ??= new ImportOptions();
         if (text.Length > ProductLimits.MaxArtifactBytes)
         {
@@ -602,7 +614,16 @@ public static class JsonSafety
 
                     break;
                 case JsonTokenType.PropertyName:
-                    var name = reader.GetString() ?? "";
+                    string name;
+                    try
+                    {
+                        name = reader.GetString() ?? "";
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        throw new FormatException(ReasonCodes.InvalidUri);
+                    }
+
                     if (sets.Count == 0 || !sets.Peek().Add(name))
                     {
                         throw new FormatException(ReasonCodes.DuplicateKey);

@@ -266,10 +266,11 @@ public sealed class Round2LifecycleTests
             var path = Path.Combine(directory.FullName, "probe-budget.txt");
             var budget = ProbeByteBudget.Load(path, 5, day);
             var catalogue = ReadyCatalogue();
-            catalogue.Nodes[0].Assessment = null;
+            var subject = catalogue.Nodes[0];
+            subject.Assessment = null;
             var report = await ProbeCoordinator.RunAsync(
                 catalogue,
-                new FixedTransport(new ProbeObservation(true, 15, false, null, 5, ProbeClass.Success)),
+                new FixedTransport(new ProbeObservation(true, 15, false, null, 5, ProbeClass.Success, "https://probe.example/generate_204", subject.Digest, "unit-proof")),
                 new Uri("https://probe.example/generate_204"),
                 new DateTimeOffset(2026, 10, 3, 1, 0, 0, TimeSpan.Zero),
                 CancellationToken.None,
@@ -429,8 +430,8 @@ public sealed class Round2LifecycleTests
         var coordinator = new CatalogueCoordinator(catalogue, fetcher, transport, ledger, [target]);
         var discovered = await coordinator.DiscoverAsync(registry, CancellationToken.None, TimeSpan.FromSeconds(3));
         Assert.True(discovered.Complete);
-        Assert.Equal(TreeSha, discovered.CommitSha);
-        Assert.Contains(TreeSha, Assert.Single(discovered.Items).Urls[0].AbsoluteUri, StringComparison.Ordinal);
+        Assert.Equal("20c38289c29e4dba6b8f01ddd3273ec9ec169b46", discovered.CommitSha);
+        Assert.Contains("20c38289c29e4dba6b8f01ddd3273ec9ec169b46", Assert.Single(discovered.Items).Urls[0].AbsoluteUri, StringComparison.Ordinal);
         var refreshed = await coordinator.RefreshAsync(discovered.Items, DateTimeOffset.UtcNow, CancellationToken.None, TimeSpan.FromSeconds(3));
         Assert.Equal(1, fetches);
         Assert.Contains("PUBLISHED", Assert.Single(refreshed.SourceReasons), StringComparison.Ordinal);
@@ -451,7 +452,7 @@ public sealed class Round2LifecycleTests
 
         var again = await coordinator.DiscoverAsync(registry, CancellationToken.None, TimeSpan.FromSeconds(3));
         Assert.True(again.Complete);
-        Assert.Equal(TreeSha, again.CommitSha);
+        Assert.Equal("20c38289c29e4dba6b8f01ddd3273ec9ec169b46", again.CommitSha);
         Assert.Equal(HealthState.Healthy, catalogue.Nodes.Single(node => node.Label == "good").Assessment?.Health);
     }
 
