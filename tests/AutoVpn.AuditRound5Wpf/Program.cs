@@ -19,11 +19,12 @@ internal static class Program
         Directory.CreateDirectory(output);
         var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.InitializeComponent();
-        app.StartupUri = null; // The harness constructs the real window explicitly; do not create a second one on dispatcher startup.
         MainWindow? window = null;
         try
         {
-            window = new MainWindow(); app.MainWindow=window; window.Show(); Pump(100);
+            // Run the actual queued WPF startup instead of constructing a duplicate StartupUri window.
+            Pump(200);
+            window = app.MainWindow as MainWindow ?? throw new InvalidOperationException("Actual WPF startup did not create MainWindow.");
             if (((CheckBox)window.FindName("DisclosureBox")).IsChecked == true)
                 throw new InvalidOperationException("This audit requires a fresh unconsented runner profile.");
             var pages = new[] { "Подключение", "Серверы", "Подписки", "Настройки" };
