@@ -15,6 +15,7 @@ Allowed statuses are OPEN, IN_PROGRESS, IMPLEMENTED_NOT_VALIDATED, BLOCKED_EXTER
 | E-211 | Same command and environment, after the schedule and single-row assessment change. | Tree committed as `ebaefa5`: 211 passed, 0 failed, 0 skipped, 30 s. Desktop `net10.0-windows` Release build completed on Linux and was not executed. |
 | E-gha-b886200 | GitHub Actions run `37138698991`, job `unit`, commit `b886200`. `AUTOVPN_MIHOMO_PATH` empty. Filter `FullyQualifiedName!~Native_Round5`. | Failed. 192 passed, 1 failed, 3 skipped, 196 total. The failure was `T03_Control_AuthenticatedExpected204CanPass`: `OperationCanceledException` inside loopback `TcpClient.ConnectAsync` under a 3-second budget. Native facts were skipped, not passed. |
 | E-gha-ebaefa5 | GitHub Actions run `37139116734`, commit `ebaefa5`. Jobs `unit` and `native-linux`. | Both jobs succeeded. `native-linux` checked `config/core-manifest.json` archive SHA-256 `8451100836c9eda194331c2babfad490b2faf30cebc1a04b0e76fd8ac2d35d10` and executable SHA-256 `3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8`, then ran `FullyQualifiedName~Native_Round5`. This is not a Windows run. |
+| E-gha-89b17b1 | GitHub Actions run `37139241627`, commit `89b17b1`. | `native-linux` succeeded. `unit` failed. 197 passed, 1 failed, 3 skipped, 201 total. The failure was `Q24_Contradictory204FramingMustNotPass` for `Content-Length : 3`: `OperationCanceledException` in loopback `TcpClient.ConnectAsync` under the 5-second budget. The framing assertion did not run. |
 
 The audit's earlier runs (`37133249313`, `37133873472`, `37134634399`) describe `49e5bd5`. They are not evidence for `b886200` or `ebaefa5`. `docs/evidence/build-manifest.json` is an older package and is not cited.
 
@@ -302,8 +303,8 @@ Status: IN_PROGRESS.
 Links: none from R4 beyond the existing Windows baseline.
 Fix commit and production paths: `b886200` excludes `FullyQualifiedName~Native_Round5` from the ordinary unit job so a missing binary is not a green skip. `ebaefa5` adds `.github/workflows/ci.yml` job `native-linux`, which checks the archive and executable SHA-256 values in `config/core-manifest.json` and then runs `FullyQualifiedName~Native_Round5`.
 Regression ids: Native_Round5, executed locally in E-206 and E-211 because the environment variables were set. The ordinary unit job leaves `AUTOVPN_MIHOMO_PATH` empty.
-Executed environment: E-211 locally, then E-gha-ebaefa5. E-gha-b886200 failed once on the T03 loopback connect and was not reproduced by the next run.
-Remaining limitation: the Windows job still has the previously reported pipe, file-lifetime, and `/usr/bin/pkill` failures. Those tests were not deleted and were not re-run. One green Linux Actions run does not retire that T03 timing failure. The local 204 control and its two negative siblings now allow 15 seconds for loopback connect. Their authenticated, status, and failure assertions are unchanged. That budget change is in the same commit as this file and was not yet observed on Actions.
+Executed environment: E-211 locally, E-gha-ebaefa5, and E-gha-89b17b1. Both red unit jobs died in loopback `ConnectAsync` before the HTTP assertion. Native facts were skipped on the red unit jobs and passed on `native-linux`.
+Remaining limitation: the Windows job still has the previously reported pipe, file-lifetime, and `/usr/bin/pkill` failures. Those tests were not deleted and were not re-run. `Socks5Client.ExchangeAsync` retries one canceled loopback connect when the caller token is still live, then starts a fresh exchange budget. Caller cancellation still propagates. The 204 and framing assertions are unchanged. T01–T03 allow 15 seconds. This retry is not yet observed on Actions.
 
 ### R5-28
 

@@ -279,10 +279,9 @@ public static class Socks5Client
         X509Certificate2Collection? trustAnchors,
         CancellationToken cancellationToken)
     {
+        using var client = await ConnectOnceOrRetryAsync(proxy, timeout, cancellationToken).ConfigureAwait(false);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         linked.CancelAfter(timeout);
-        using var client = new TcpClient();
-        await client.ConnectAsync(proxy.Address, proxy.Port, linked.Token).ConfigureAwait(false);
         await using var stream = client.GetStream();
         await stream.WriteAsync(new byte[] { 0x05, 0x01, 0x00 }, linked.Token).ConfigureAwait(false);
         var greeting = await ReadExactAsync(stream, 2, linked.Token).ConfigureAwait(false);
@@ -394,6 +393,30 @@ public static class Socks5Client
         }
 
         return new TlsProbeExchange(true, 0, read, "STATUS");
+    }
+
+    private static async Task<TcpClient> ConnectOnceOrRetryAsync(IPEndPoint proxy, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            var client = new TcpClient();
+            using var connect = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            connect.CancelAfter(timeout);
+            try
+            {
+                await client.ConnectAsync(proxy.Address, proxy.Port, connect.Token).ConfigureAwait(false);
+                return client;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt == 0)
+            {
+                client.Dispose();
+            }
+            catch
+            {
+                client.Dispose();
+                throw;
+            }
+        }
     }
 
     private static async Task<TlsProbeExchange> ReadProbeResponseAsync(SslStream stream, string head, string bufferedBody, CancellationToken cancellationToken)
