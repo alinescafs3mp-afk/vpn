@@ -5,13 +5,14 @@ using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.Json;
 using AutoVpn.Infrastructure.Import;
 using AutoVpn.Infrastructure.Probe;
 using Xunit;
 
 namespace AutoVpn.UnitTests;
 
-// Controlled authenticated peers only. These tests do not contact a subscription proxy or alter system trust.
+// Controlled authenticated peers only. No subscription proxy dials or global trust-store changes.
 public sealed class IndependentRound4TlsTests
 {
     [Theory]
@@ -21,8 +22,8 @@ public sealed class IndependentRound4TlsTests
     public async Task Q24_Contradictory204FramingMustNotPass(string response)
     {
         await using var fixture = new TlsPeer(response);
-        var result = await Socks5Client.ExchangeAsync(fixture.Endpoint, fixture.Target, TimeSpan.FromSeconds(3), fixture.Trust, CancellationToken.None);
-        Assert.True(result.Authenticated, "The negative control must reach the HTTP layer after genuine TLS.");
+        var result = await Socks5Client.ExchangeAsync(fixture.Endpoint, fixture.Target, TimeSpan.FromSeconds(5), fixture.Trust, CancellationToken.None);
+        Assert.True(result.Authenticated, "TLS prerequisite failed: " + fixture.Error);
         Assert.NotNull(result.Failure);
     }
 
@@ -30,15 +31,15 @@ public sealed class IndependentRound4TlsTests
     public async Task Q25_Control_EmptyAuthenticated204RemainsValid()
     {
         await using var fixture = new TlsPeer("HTTP/1.1 204 No Content\r\n\r\n");
-        var result = await Socks5Client.ExchangeAsync(fixture.Endpoint, fixture.Target, TimeSpan.FromSeconds(3), fixture.Trust, CancellationToken.None);
-        Assert.True(result.Authenticated); Assert.Equal(204, result.Status); Assert.Null(result.Failure);
+        var result = await Socks5Client.ExchangeAsync(fixture.Endpoint, fixture.Target, TimeSpan.FromSeconds(5), fixture.Trust, CancellationToken.None);
+        Assert.True(result.Authenticated, fixture.Error); Assert.Equal(204, result.Status); Assert.Null(result.Failure);
     }
 
     [Fact]
     public async Task Q26_Control_UntrustedTargetCertificateIsRejected()
     {
         await using var fixture = new TlsPeer("HTTP/1.1 204 No Content\r\n\r\n");
-        var result = await Socks5Client.ExchangeAsync(fixture.Endpoint, fixture.Target, TimeSpan.FromSeconds(3), null, CancellationToken.None);
+        var result = await Socks5Client.ExchangeAsync(fixture.Endpoint, fixture.Target, TimeSpan.FromSeconds(5), null, CancellationToken.None);
         Assert.False(result.Authenticated);
     }
 
@@ -52,26 +53,28 @@ public sealed class IndependentRound4TlsTests
             "proxies:\n - name: synthetic\n   type: trojan\n   server: 203.0.113.10\n   port: 443\n   password: synthetic\n",
             "vless://11111111-1111-4111-8111-111111111111@203.0.113.10:443?security=tls"
         };
-        var insertions = new[] { "\uD800", "\uDC00", "\0", "\"", "[", "}", "&alias", ":", "\n" };
-        var attempts = 0;
+        var insertions = new[] { "\uD800", "\uDC00", "\\ud800", "\\udc00", "\0", "\"", "[", "}", "&alias", ":", "\n" };
+        var attempts = 0; var failures = new List<object>();
         foreach (var seed in seeds)
             foreach (var inserted in insertions)
                 for (var at = 0; at <= seed.Length; at += 7)
                 {
                     var candidate = seed.Insert(at, inserted);
                     var error = Record.Exception(() => SubscriptionImporter.Import(candidate));
-                    Assert.True(error is null, $"Mutation {attempts} escaped as {error?.GetType().Name}; seed length={seed.Length}, offset={at}.");
+                    if (error is not null) failures.Add(new { mutation = attempts, exception = error.GetType().Name, seed_length = seed.Length, offset = at, insertion_codepoints = string.Join(",", inserted.Select(ch => ((int)ch).ToString("X4", System.Globalization.CultureInfo.InvariantCulture))) });
                     attempts++;
                 }
         Assert.True(attempts > 300);
+        Assert.True(failures.Count == 0, $"Executed {attempts} bounded parser mutations; {failures.Count} escaped. First cases: " + JsonSerializer.Serialize(failures.Take(12)));
     }
 
     private sealed class TlsPeer : IAsyncDisposable
     {
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
-        private readonly CancellationTokenSource _stop = new(TimeSpan.FromSeconds(8));
+        private readonly CancellationTokenSource _stop = new(TimeSpan.FromSeconds(10));
         private readonly X509Certificate2 _certificate;
         private readonly Task _server;
+        public string? Error { get; private set; }
         public Uri Target { get; } = new("https://probe.example/generate_204");
         public IPEndPoint Endpoint => (IPEndPoint)_listener.LocalEndpoint;
         public X509Certificate2Collection Trust => new(_certificate);
@@ -82,7 +85,8 @@ public sealed class IndependentRound4TlsTests
             var san = new SubjectAlternativeNameBuilder(); san.AddDnsName("probe.example");
             request.CertificateExtensions.Add(san.Build());
             request.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
-            _certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+            using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+            _certificate = X509CertificateLoader.LoadPkcs12(generated.Export(X509ContentType.Pfx, "audit-fixture"), "audit-fixture", X509KeyStorageFlags.Exportable);
             _listener.Start(); _server = Serve(response);
         }
         private async Task Serve(string response)
@@ -111,7 +115,7 @@ public sealed class IndependentRound4TlsTests
                 await ssl.FlushAsync(_stop.Token);
                 await Task.Delay(Timeout.Infinite, _stop.Token);
             }
-            catch (Exception ex) when (ex is OperationCanceledException or IOException or SocketException or AuthenticationException) { }
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or SocketException or AuthenticationException) { Error = ex.GetType().Name + ":" + ex.Message; }
         }
         public async ValueTask DisposeAsync()
         {
