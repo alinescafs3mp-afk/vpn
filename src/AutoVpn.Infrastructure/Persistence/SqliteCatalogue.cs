@@ -48,11 +48,21 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
         string? quarantined = null;
         if (File.Exists(path))
         {
-            if (!HasSqliteHeader(path))
+            var readableHeader = true;
+            try
+            {
+                readableHeader = HasSqliteHeader(path);
+            }
+            catch (IOException)
+            {
+                readableHeader = true;
+            }
+
+            if (!readableHeader)
             {
                 quarantined = MoveAside(path);
             }
-            else
+            else if (File.Exists(path))
             {
                 quarantined = InspectExisting(path) ?? quarantined;
             }
@@ -63,6 +73,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
             DataSource = path,
             Mode = SqliteOpenMode.ReadWriteCreate,
             Cache = SqliteCacheMode.Shared,
+            Pooling = false,
         }.ToString());
         connection.Open();
         using (var pragma = connection.CreateCommand())
@@ -110,7 +121,39 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
     public void ApplyAssessment(string nodeId, AssessmentSnapshot assessment)
     {
-        Commit(copy => copy.ApplyAssessment(nodeId, assessment));
+        lock (_gate)
+        {
+            var node = _memory.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
+            if (node is null
+                || !string.Equals(node.Digest, assessment.Digest, StringComparison.Ordinal)
+                || assessment.NetworkEpoch != _memory.NetworkEpoch)
+            {
+                return;
+            }
+
+            using var transaction = _connection.BeginTransaction(System.Data.IsolationLevel.Serializable);
+            if (ReadRevision(transaction) != _revision)
+            {
+                throw new CatalogueStoreException("CATALOGUE_CONFLICT");
+            }
+
+            using (var update = _connection.CreateCommand())
+            {
+                update.Transaction = transaction;
+                update.CommandText = "UPDATE nodes SET assessment_json=$assessment WHERE node_id=$id;";
+                update.Parameters.AddWithValue("$id", nodeId);
+                update.Parameters.AddWithValue("$assessment", JsonSerializer.Serialize(assessment, StoredJson.Options));
+                if (update.ExecuteNonQuery() != 1)
+                {
+                    return;
+                }
+            }
+
+            PutMeta(transaction, "catalogue_revision", (_revision + 1).ToString(CultureInfo.InvariantCulture));
+            transaction.Commit();
+            node.Assessment = assessment;
+            _revision++;
+        }
     }
 
     public int EvictOverflow(DateTimeOffset nowUtc)
@@ -195,6 +238,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
             {
                 DataSource = destinationPath,
                 Mode = SqliteOpenMode.ReadWriteCreate,
+                Pooling = false,
             }.ToString());
             destination.Open();
             _connection.BackupDatabase(destination);
@@ -559,6 +603,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
         {
             DataSource = path,
             Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
         }.ToString());
         probe.Open();
         if (!FileHasSchema(probe))
@@ -660,8 +705,19 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
     private static bool HasSqliteHeader(string path)
     {
         Span<byte> header = stackalloc byte[16];
-        using var stream = File.OpenRead(path);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         return stream.Read(header) == 16 && header.SequenceEqual("SQLite format 3\0"u8);
+    }
+
+    private long ReadRevision(Microsoft.Data.Sqlite.SqliteTransaction transaction)
+    {
+        using var read = _connection.CreateCommand();
+        read.Transaction = transaction;
+        read.CommandText = "SELECT value FROM meta WHERE key='catalogue_revision';";
+        var current = read.ExecuteScalar() as string;
+        return current is not null && long.TryParse(current, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : 0;
     }
 
     private static string MoveAside(string path)

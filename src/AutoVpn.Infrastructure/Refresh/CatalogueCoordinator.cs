@@ -234,10 +234,25 @@ public sealed class CatalogueCoordinator
         TimeSpan? attemptTimeout = null)
     {
         var cycle = _fence.Capture();
-        var resolved = await ResolveCommitAsync(registry, cancellationToken, attemptTimeout).ConfigureAwait(false);
-        var commit = resolved.Sha;
         var schedulingUrl = registry.TreeApi.AbsoluteUri;
         var cached = _ledger.DiscoveryJsonFor(schedulingUrl);
+        var held = _ledger.Find(schedulingUrl);
+        if (held?.RetryAfterUtc is DateTimeOffset retryAt && retryAt > DateTimeOffset.UtcNow)
+        {
+            if (!string.IsNullOrWhiteSpace(cached))
+            {
+                var heldTree = GithubTreeParser.Parse(cached);
+                if (heldTree is { Complete: true })
+                {
+                    return BuildDiscovery(registry, heldTree, held.ResolvedCommit ?? registry.PinnedCommit);
+                }
+            }
+
+            return new DiscoveryOutcome(false, held.ResolvedCommit, [], "RETRY_AFTER", 0);
+        }
+
+        var resolved = await ResolveCommitAsync(registry, cancellationToken, attemptTimeout).ConfigureAwait(false);
+        var commit = resolved.Sha;
         var cacheAgrees = CacheAgrees(cached, _ledger.ResolvedCommitFor(schedulingUrl), commit, resolved.TreeSha);
         var treeUrl = resolved.TreeSha is null
             ? registry.TreeApi
@@ -292,13 +307,13 @@ public sealed class CatalogueCoordinator
                 }
             }
 
-            return new DiscoveryOutcome(false, null, [], fetch.ReasonCode ?? ReasonCodes.FetchFailed, 0);
+            return DiscoveryFailed(schedulingUrl, null, fetch.ReasonCode ?? ReasonCodes.FetchFailed, 0);
         }
 
         var parsed = GithubTreeParser.Parse(fetch.Body);
         if (!parsed.Complete || !TreeAgrees(parsed, resolved.TreeSha))
         {
-            return new DiscoveryOutcome(false, parsed.CommitSha, [], parsed.ReasonCode ?? "DISCOVERY_INCOMPLETE", 0);
+            return DiscoveryFailed(schedulingUrl, parsed.CommitSha, parsed.ReasonCode ?? "DISCOVERY_INCOMPLETE", 0);
         }
 
         if (!_fence.TryPublish(cycle, () => _ledger.RememberDiscovery(schedulingUrl, fetch.Etag, fetch.Body, DateTimeOffset.UtcNow, commit)))
@@ -415,6 +430,12 @@ public sealed class CatalogueCoordinator
         for (var index = 0; index < count; index++)
         {
             var item = items[(origin + index) % count];
+            if (HeldByRetry(item, nowUtc))
+            {
+                budgetSkipped.Add(item);
+                continue;
+            }
+
             if (reserved > 0 && reserved + ProductLimits.MaxArtifactBytes > ProductLimits.MaxRefreshBytes)
             {
                 budgetSkipped.Add(item);
@@ -449,7 +470,7 @@ public sealed class CatalogueCoordinator
         foreach (var skipped in budgetSkipped)
         {
             failed = true;
-            reasons.Add(skipped.ArtifactId + ":CYCLE_BUDGET");
+            reasons.Add(skipped.ArtifactId + ":" + (HeldByRetry(skipped, nowUtc) ? "RETRY_AFTER" : "CYCLE_BUDGET"));
         }
 
         foreach (var download in finished)
@@ -472,6 +493,11 @@ public sealed class CatalogueCoordinator
                 {
                     failed = true;
                     reasons.Add(download.Item.ArtifactId + ":" + (download.Reason ?? ReasonCodes.FetchFailed));
+                    foreach (var url in download.Item.Urls)
+                    {
+                        _ledger.NoteFailure(url.AbsoluteUri, nowUtc, download.Reason ?? ReasonCodes.FetchFailed, download.RetryAfterSeconds);
+                    }
+
                     RefreshMerge.Ingest(_catalogue, [FailedArtifact(download.Item)], nowUtc, _catalogue.Settings.AllowInsecureCertificates);
                     return;
                 }
@@ -490,7 +516,7 @@ public sealed class CatalogueCoordinator
                 }
                 else if (!download.Result.NotModified && !report.Committed && download.RememberUrl is not null)
                 {
-                    _ledger.RememberRejected(download.RememberUrl, download.Etag);
+                    _ledger.RememberRejected(download.RememberUrl, download.Etag, nowUtc);
                 }
 
                 var label = download.Result.NotModified
@@ -550,6 +576,7 @@ public sealed class CatalogueCoordinator
             }
 
             string? reason = null;
+            int? retryAfter = null;
             var refetch = false;
             DownloadResult? ineligible = null;
             foreach (var url in item.Urls)
@@ -617,6 +644,7 @@ public sealed class CatalogueCoordinator
                 }
 
                 reason = fetch.ReasonCode ?? ReasonCodes.FetchFailed;
+                retryAfter = fetch.RetryAfterSeconds ?? retryAfter;
             }
 
             if (ineligible is not null)
@@ -624,7 +652,7 @@ public sealed class CatalogueCoordinator
                 return ineligible with { RefetchPerformed = refetch };
             }
 
-            return new DownloadResult(item, null, false, refetch, reason ?? ReasonCodes.FetchFailed, null, null, null);
+            return new DownloadResult(item, null, false, refetch, reason ?? ReasonCodes.FetchFailed, null, null, null, retryAfter);
         }
         finally
         {
@@ -633,6 +661,35 @@ public sealed class CatalogueCoordinator
                 gate.Release();
             }
         }
+    }
+
+    private DiscoveryOutcome DiscoveryFailed(string schedulingUrl, string? commit, string? reason, int unmatched)
+    {
+        if (reason != ReasonCodes.Canceled && !string.Equals(reason, "SUPERSEDED", StringComparison.Ordinal))
+        {
+            _ledger.NoteFailure(schedulingUrl, DateTimeOffset.UtcNow, reason ?? ReasonCodes.FetchFailed, null);
+        }
+
+        return new DiscoveryOutcome(false, commit, [], reason, unmatched);
+    }
+
+    private bool HeldByRetry(RefreshWorkItem item, DateTimeOffset nowUtc)
+    {
+        if (item.Urls.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var url in item.Urls)
+        {
+            var entry = _ledger.Find(url.AbsoluteUri);
+            if (entry?.RetryAfterUtc is not DateTimeOffset retry || retry <= nowUtc)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static int NormalizeCursor(int cursor, int count)
@@ -677,5 +734,6 @@ public sealed class CatalogueCoordinator
         string? Reason,
         string? RememberUrl,
         string? Etag,
-        string? ContentHash);
+        string? ContentHash,
+        int? RetryAfterSeconds = null);
 }

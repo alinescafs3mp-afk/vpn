@@ -47,7 +47,7 @@ public partial class MainWindow : Window
         _probeBudget = ProbeByteBudget.Load(Path.Combine(_root, "probe-budget.txt"), ProductLimits.DailyHealthBudgetBytes, DateOnly.FromDateTime(DateTime.UtcNow));
         _scheduler = new RefreshScheduler(
             () => _catalogue.Settings,
-            () => _ledger.Entries.Select(entry => entry.LastSuccessUtc).ToArray(),
+            () => _ledger.LiveSuccessStamps(DateTimeOffset.UtcNow),
             (_, token) =>
             {
                 if (Volatile.Read(ref _shuttingDown) == 1 || token.IsCancellationRequested)
