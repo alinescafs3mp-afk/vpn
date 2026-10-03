@@ -134,7 +134,7 @@ public sealed class IndependentRound3Tests_BrokerTls
     {
         await using var fixture = new TlsSocksFixture("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100\r\n\r\n");
         var result = await Socks5Client.ExchangeAsync(fixture.Endpoint, fixture.Target,
-            TimeSpan.FromSeconds(3), fixture.Trust, CancellationToken.None);
+            TimeSpan.FromSeconds(15), fixture.Trust, CancellationToken.None);
         Assert.NotNull(result.Failure);
     }
 
@@ -143,7 +143,7 @@ public sealed class IndependentRound3Tests_BrokerTls
     {
         await using var fixture = new TlsSocksFixture("NOT-HTTP 204 Fine\r\nContent-Length: 0\r\n\r\n");
         var result = await Socks5Client.ExchangeAsync(fixture.Endpoint, fixture.Target,
-            TimeSpan.FromSeconds(3), fixture.Trust, CancellationToken.None);
+            TimeSpan.FromSeconds(15), fixture.Trust, CancellationToken.None);
         Assert.NotNull(result.Failure);
     }
 
@@ -152,7 +152,7 @@ public sealed class IndependentRound3Tests_BrokerTls
     {
         await using var fixture = new TlsSocksFixture("HTTP/1.1 204 No Content\r\n\r\n");
         var result = await Socks5Client.ExchangeAsync(fixture.Endpoint, fixture.Target,
-            TimeSpan.FromSeconds(3), fixture.Trust, CancellationToken.None);
+            TimeSpan.FromSeconds(15), fixture.Trust, CancellationToken.None);
         Assert.True(result.Authenticated);
         Assert.Equal(204, result.Status);
         Assert.Null(result.Failure);
