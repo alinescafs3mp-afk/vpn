@@ -11,7 +11,17 @@ public static class GithubTreeParser
 {
     public static bool TryReadCommitSha(string json, out string sha)
     {
+        return TryReadCommit(json, out sha, out _);
+    }
+
+    /// <summary>
+    /// A commit object is a 40-hex sha plus a tree object sha. A tree listing,
+    /// a blob, or a bare sha is not a commit.
+    /// </summary>
+    public static bool TryReadCommit(string json, out string sha, out string treeSha)
+    {
         sha = "";
+        treeSha = "";
         try
         {
             using var document = JsonDocument.Parse(json);
@@ -21,29 +31,61 @@ public static class GithubTreeParser
                 return false;
             }
 
+            if (root.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String &&
+                !string.Equals(type.GetString(), "commit", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             if (root.TryGetProperty("tree", out var tree) && tree.ValueKind == JsonValueKind.Array)
             {
                 return false;
             }
 
-            if (!root.TryGetProperty("sha", out var shaElement) || shaElement.ValueKind != JsonValueKind.String)
+            if (!Hex40(root, out sha))
             {
                 return false;
             }
 
-            var value = shaElement.GetString();
-            if (value is null || value.Length != 40 || !value.All(Uri.IsHexDigit))
+            if (root.TryGetProperty("commit", out var commit) &&
+                commit.ValueKind == JsonValueKind.Object &&
+                commit.TryGetProperty("tree", out var nested) &&
+                Hex40(nested, out treeSha))
             {
-                return false;
+                return true;
             }
 
-            sha = value;
-            return true;
+            if (root.TryGetProperty("tree", out tree) && tree.ValueKind == JsonValueKind.Object && Hex40(tree, out treeSha))
+            {
+                return true;
+            }
+
+            return false;
         }
         catch (JsonException)
         {
             return false;
         }
+    }
+
+    private static bool Hex40(JsonElement element, out string sha)
+    {
+        sha = "";
+        if (element.ValueKind != JsonValueKind.Object ||
+            !element.TryGetProperty("sha", out var shaElement) ||
+            shaElement.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        var value = shaElement.GetString();
+        if (value is null || value.Length != 40 || !value.All(Uri.IsHexDigit))
+        {
+            return false;
+        }
+
+        sha = value;
+        return true;
     }
 
     public static TreeDiscovery Parse(string json)

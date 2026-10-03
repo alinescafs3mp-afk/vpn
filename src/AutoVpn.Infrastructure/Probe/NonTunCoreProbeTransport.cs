@@ -486,8 +486,13 @@ public static class Socks5Client
                 break;
             }
 
+            if (line[0] is ' ' or '\t')
+            {
+                return "FRAMING";
+            }
+
             var colon = line.IndexOf(':');
-            if (colon <= 0 || line[colon - 1] is ' ' or '\t')
+            if (colon <= 0 || !IsFieldToken(line.AsSpan(0, colon)))
             {
                 return "FRAMING";
             }
@@ -499,6 +504,26 @@ public static class Socks5Client
         }
 
         return null;
+    }
+
+    private static bool IsFieldToken(ReadOnlySpan<char> name)
+    {
+        if (name.IsEmpty)
+        {
+            return false;
+        }
+
+        foreach (var character in name)
+        {
+            var token = character is (>= '0' and <= '9') or (>= 'A' and <= 'Z') or (>= 'a' and <= 'z')
+                or '!' or '#' or '$' or '%' or '&' or '\'' or '*' or '+' or '-' or '.' or '^' or '_' or '`' or '|' or '~';
+            if (!token)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static int? ContentLength(string head)

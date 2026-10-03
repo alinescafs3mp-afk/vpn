@@ -6,7 +6,8 @@ namespace AutoVpn.Infrastructure.Probe;
 /// Daily probe byte counter shared by later cycles and process restarts.
 /// A new UTC day starts again at zero. A missing file is a new counter.
 /// A corrupt, negative, or unreadable file does not grant a fresh allowance:
-/// the current day stays exhausted at the limit. A charge for an earlier day
+/// the current day stays exhausted at the limit. A future-dated record is clock
+/// uncertainty and does not refund the current day. A charge for an earlier day
 /// cannot move the counter backward. Addition saturates at long.MaxValue.
 /// </summary>
 public sealed class ProbeByteBudget
@@ -37,6 +38,11 @@ public sealed class ProbeByteBudget
                 || !DateOnly.TryParseExact(lines[0], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)
                 || !long.TryParse(lines[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var spent)
                 || spent < 0)
+            {
+                return new ProbeByteBudget(today, bounded, bounded);
+            }
+
+            if (day > today)
             {
                 return new ProbeByteBudget(today, bounded, bounded);
             }

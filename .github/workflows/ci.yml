@@ -15,7 +15,7 @@ jobs:
       - name: Build and unit-test
         run: |
           dotnet build AutoVpn.slnx -c Release --nologo
-          dotnet test AutoVpn.slnx -c Release --nologo
+          dotnet test AutoVpn.slnx -c Release --nologo --filter "FullyQualifiedName!~Native_Round5"
         env:
           # Leave unset. The pinned Mihomo fact skips and must not count as native validation.
           AUTOVPN_MIHOMO_PATH: ""

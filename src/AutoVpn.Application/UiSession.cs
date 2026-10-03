@@ -48,7 +48,9 @@ public static class UiSessionReducer
     public static UiSession FromSnapshot(UiSession previous, BrokerSnapshot snapshot, string? message, bool disclosureAccepted)
     {
         var safety = SessionText.OffersDisconnect(snapshot.Phase, snapshot.ProtectionArmed);
-        var verifiedDisconnect = snapshot.Phase == nameof(TunnelPhase.Disconnected) && !snapshot.ProtectionArmed;
+        var verifiedDisconnect = snapshot.Phase == nameof(TunnelPhase.Disconnected)
+            && !snapshot.ProtectionArmed
+            && !snapshot.CoreRunning;
         return previous with
         {
             PhaseCode = snapshot.Phase,
@@ -174,6 +176,11 @@ public sealed class SessionMailbox
                 ClaimsVerifiedDisconnect = false,
                 DisclosureAccepted = disclosureAccepted,
             };
+            return false;
+        }
+
+        if (response.ProtocolVersion != ProductLimits.IpcProtocolVersion)
+        {
             return false;
         }
 

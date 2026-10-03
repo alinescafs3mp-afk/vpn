@@ -93,6 +93,7 @@ public static class ProbeCoordinator
             var nodeId = node.NodeId;
             var settingsRevision = catalogue.Settings.Revision;
             var allowInsecure = catalogue.Settings.AllowInsecureCertificates;
+            var stamp = Interlocked.Increment(ref node.ProbePublication);
             attempted++;
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             ProbeObservation observation;
@@ -113,7 +114,7 @@ public static class ProbeCoordinator
                     }
 
                     failed++;
-                    TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
+                    TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
                     {
                         Digest = digest,
                         NetworkEpoch = epoch,
@@ -143,7 +144,7 @@ public static class ProbeCoordinator
 
             var payloadBytes = Math.Max(0, observation.PayloadBytes);
             bytes += payloadBytes;
-            if (spent is not null && observation.Class != ProbeClass.Canceled && observation.ReasonCode != ReasonCodes.Canceled)
+            if (spent is not null)
             {
                 spent.Charge(Math.Max(payloadBytes, 1), day);
                 bytes = spent.SpentOn(day);
@@ -168,7 +169,7 @@ public static class ProbeCoordinator
                 }
 
                 failed++;
-                TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
+                TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
                 {
                     Digest = digest,
                     NetworkEpoch = epoch,
@@ -184,7 +185,7 @@ public static class ProbeCoordinator
             if (observation.Class == ProbeClass.Unsupported)
             {
                 failed++;
-                TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
+                TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
                 {
                     Digest = digest,
                     NetworkEpoch = epoch,
@@ -204,7 +205,7 @@ public static class ProbeCoordinator
 
             if (observation.UplinkOffline || observation.Class == ProbeClass.Environment)
             {
-                TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
+                TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
                 {
                     Digest = digest,
                     NetworkEpoch = epoch,
@@ -217,9 +218,9 @@ public static class ProbeCoordinator
                 return new ProbeReport(attempted, succeeded, failed, true);
             }
 
-            if (observation.Success && observation.LatencyMs is int latency && latency >= 0 && ProofAccepts(observation, digest, target) && !cancellationToken.IsCancellationRequested)
+            if (observation.Success && observation.Class == ProbeClass.Success && observation.LatencyMs is int latency && latency >= 0 && ProofAccepts(observation, digest, target) && !cancellationToken.IsCancellationRequested && !ConsumedOnAnotherEpoch(catalogue, nodeId, observation, epoch))
             {
-                TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
+                var published = TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
                 {
                     Digest = digest,
                     NetworkEpoch = epoch,
@@ -227,12 +228,17 @@ public static class ProbeCoordinator
                     LastSuccessUtc = nowUtc,
                     MedianLatencyMs = latency,
                     ConsecutiveFailures = 0,
+                    ProofToken = ProofToken(observation),
                 });
-                succeeded++;
+                if (published)
+                {
+                    succeeded++;
+                }
+
                 continue;
             }
 
-            TryApply(catalogue, nodeId, digest, epoch, new AssessmentSnapshot
+            TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
             {
                 Digest = digest,
                 NetworkEpoch = epoch,
@@ -301,7 +307,8 @@ public static class ProbeCoordinator
         Uri target,
         string nodeId,
         DateTimeOffset nowUtc,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SelectionPurpose purpose = SelectionPurpose.PreConnect)
     {
         var node = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
         if (node is null || !NeedsOnDemandAdmission(node, nowUtc, catalogue.NetworkEpoch))
@@ -309,7 +316,7 @@ public static class ProbeCoordinator
             return false;
         }
 
-        if (!Scheduled(node, catalogue.Settings))
+        if (!Scheduled(node, catalogue.Settings, purpose))
         {
             return false;
         }
@@ -329,16 +336,17 @@ public static class ProbeCoordinator
         }
 
         if (cancellationToken.IsCancellationRequested
-            || observation.Class is ProbeClass.Canceled or ProbeClass.Environment or ProbeClass.CoreFailure
+            || observation.Class is ProbeClass.Canceled or ProbeClass.Environment or ProbeClass.CoreFailure or ProbeClass.Unsupported
+            || (observation.Success && observation.Class != ProbeClass.Success)
             || observation.ReasonCode == ReasonCodes.Canceled
             || observation.UplinkOffline)
         {
             return false;
         }
 
-        if (!observation.Success || observation.LatencyMs is not int latency || latency < 0 || !ProofAccepts(observation, digest, target))
+        if (!observation.Success || observation.LatencyMs is not int latency || latency < 0 || !ProofAccepts(observation, digest, target) || ConsumedOnAnotherEpoch(catalogue, nodeId, observation, epoch))
         {
-            if (catalogue.NetworkEpoch != epoch || !PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure))
+            if (catalogue.NetworkEpoch != epoch || !PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure, purpose))
             {
                 return false;
             }
@@ -356,7 +364,7 @@ public static class ProbeCoordinator
             return false;
         }
 
-        if (catalogue.NetworkEpoch != epoch || !PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure))
+        if (catalogue.NetworkEpoch != epoch || !PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure, purpose))
         {
             return false;
         }
@@ -369,29 +377,31 @@ public static class ProbeCoordinator
             LastSuccessUtc = nowUtc,
             MedianLatencyMs = latency,
             ConsecutiveFailures = 0,
+            ProofToken = ProofToken(observation),
         });
         return true;
     }
 
-    private static void TryApply(ICatalogue catalogue, string nodeId, string digest, long epoch, AssessmentSnapshot assessment)
+    private static bool TryApply(ICatalogue catalogue, string nodeId, string digest, long epoch, long stamp, AssessmentSnapshot assessment)
     {
         if (catalogue.NetworkEpoch != epoch)
         {
-            return;
+            return false;
         }
 
         var current = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        if (current is null || current.Digest != digest)
+        if (current is null || current.Digest != digest || current.ProbePublication != stamp)
         {
-            return;
+            return false;
         }
 
         catalogue.ApplyAssessment(nodeId, assessment);
+        return true;
     }
 
-    private static bool Scheduled(CatalogueNode node, ProductSettings settings)
+    private static bool Scheduled(CatalogueNode node, ProductSettings settings, SelectionPurpose purpose = SelectionPurpose.PreConnect)
     {
-        if (node.Excluded || node.PolicyReason is not null)
+        if ((node.Excluded && purpose != SelectionPurpose.Manual) || node.PolicyReason is not null)
         {
             return false;
         }
@@ -418,14 +428,35 @@ public static class ProbeCoordinator
 
     private static bool ProofAccepts(ProbeObservation observation, string digest, Uri target)
     {
-        return !string.IsNullOrEmpty(observation.CandidateDigest)
+        return observation.Class == ProbeClass.Success
+            && !string.IsNullOrEmpty(observation.CandidateDigest)
             && string.Equals(observation.CandidateDigest, digest, StringComparison.Ordinal)
             && !string.IsNullOrEmpty(observation.TargetUri)
             && string.Equals(observation.TargetUri, target.AbsoluteUri, StringComparison.Ordinal)
             && !string.IsNullOrEmpty(observation.WorkerId);
     }
 
-    private static bool PolicyHeld(ICatalogue catalogue, string nodeId, int revision, bool allowInsecure)
+    private static string ProofToken(ProbeObservation observation)
+    {
+        return string.Join('\n',
+            observation.CandidateDigest,
+            observation.TargetUri,
+            observation.WorkerId,
+            observation.Class.ToString(),
+            observation.LatencyMs?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            observation.PayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    private static bool ConsumedOnAnotherEpoch(ICatalogue catalogue, string nodeId, ProbeObservation observation, long epoch)
+    {
+        var current = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
+        var prior = current?.Assessment;
+        return prior?.ProofToken is string token
+            && string.Equals(token, ProofToken(observation), StringComparison.Ordinal)
+            && prior.NetworkEpoch != epoch;
+    }
+
+    private static bool PolicyHeld(ICatalogue catalogue, string nodeId, int revision, bool allowInsecure, SelectionPurpose purpose = SelectionPurpose.PreConnect)
     {
         if (catalogue.Settings.Revision != revision || catalogue.Settings.AllowInsecureCertificates != allowInsecure)
         {
@@ -433,6 +464,6 @@ public static class ProbeCoordinator
         }
 
         var node = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        return node is not null && Scheduled(node, catalogue.Settings);
+        return node is not null && Scheduled(node, catalogue.Settings, purpose);
     }
 }

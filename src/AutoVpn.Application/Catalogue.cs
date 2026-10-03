@@ -17,6 +17,7 @@ public sealed class CatalogueNode
     public HashSet<string> CurrentFamilies { get; } = new(StringComparer.Ordinal);
     public HashSet<string> HistoricalFamilies { get; } = new(StringComparer.Ordinal);
     public AssessmentSnapshot? Assessment { get; set; }
+    public long ProbePublication;
     public DateTimeOffset FirstSeenUtc { get; init; }
     public DateTimeOffset LastSeenUtc { get; set; }
 }

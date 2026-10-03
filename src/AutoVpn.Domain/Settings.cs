@@ -61,6 +61,11 @@ public sealed record ProductSettings
             return "Настройки содержат неизвестное значение перечисления.";
         }
 
+        if (DisabledFamilyIds is null)
+        {
+            return "Настройки содержат пустой список отключённых семейств.";
+        }
+
         return null;
     }
 }

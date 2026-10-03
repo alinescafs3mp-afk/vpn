@@ -1,6 +1,7 @@
 using AutoVpn.Application;
 using AutoVpn.Domain;
 using AutoVpn.Infrastructure.Fetch;
+using AutoVpn.Infrastructure.Import;
 using AutoVpn.Infrastructure.Probe;
 
 namespace AutoVpn.Infrastructure.Refresh;
@@ -233,10 +234,17 @@ public sealed class CatalogueCoordinator
         TimeSpan? attemptTimeout = null)
     {
         var cycle = _fence.Capture();
-        var commit = await ResolveCommitAsync(registry, cancellationToken, attemptTimeout).ConfigureAwait(false);
+        var resolved = await ResolveCommitAsync(registry, cancellationToken, attemptTimeout).ConfigureAwait(false);
+        var commit = resolved.Sha;
+        var schedulingUrl = registry.TreeApi.AbsoluteUri;
+        var cached = _ledger.DiscoveryJsonFor(schedulingUrl);
+        var cacheAgrees = CacheAgrees(cached, _ledger.ResolvedCommitFor(schedulingUrl), commit, resolved.TreeSha);
+        var treeUrl = resolved.TreeSha is null
+            ? registry.TreeApi
+            : new Uri($"https://api.github.com/repos/{Uri.EscapeDataString(registry.Owner)}/{Uri.EscapeDataString(registry.Repository)}/git/trees/{resolved.TreeSha}?recursive=1");
         var fetch = await _fetcher.GetAsync(
-            registry.TreeApi,
-            _ledger.EtagFor(registry.TreeApi.AbsoluteUri),
+            treeUrl,
+            cacheAgrees ? _ledger.EtagFor(schedulingUrl) : null,
             ProductLimits.MaxArtifactBytes,
             cancellationToken,
             attemptTimeout,
@@ -248,15 +256,19 @@ public sealed class CatalogueCoordinator
 
         if (fetch.NotModified)
         {
-            var cached = _ledger.DiscoveryJsonFor(registry.TreeApi.AbsoluteUri);
-            var reused = string.IsNullOrWhiteSpace(cached) ? null : GithubTreeParser.Parse(cached);
-            if (reused is { Complete: true })
+            var reused = string.IsNullOrWhiteSpace(cached) || !cacheAgrees ? null : GithubTreeParser.Parse(cached);
+            if (reused is { Complete: true } && TreeAgrees(reused, resolved.TreeSha))
             {
-                return BuildDiscovery(registry, reused, StoredCommit(registry, commit));
+                if (!_fence.TryPublish(cycle, () => _ledger.RememberDiscovery(schedulingUrl, fetch.Etag ?? _ledger.EtagFor(schedulingUrl), cached!, DateTimeOffset.UtcNow, commit)))
+                {
+                    return new DiscoveryOutcome(false, commit, [], "SUPERSEDED", 0);
+                }
+
+                return BuildDiscovery(registry, reused, commit);
             }
 
             fetch = await _fetcher.GetAsync(
-                registry.TreeApi,
+                treeUrl,
                 null,
                 ProductLimits.MaxArtifactBytes,
                 cancellationToken,
@@ -271,13 +283,12 @@ public sealed class CatalogueCoordinator
 
         if (fetch.NotModified || fetch.Body is null || fetch.ReasonCode is not null)
         {
-            if (fetch.ReasonCode != ReasonCodes.Canceled)
+            if (fetch.ReasonCode != ReasonCodes.Canceled && cacheAgrees)
             {
-                var cached = _ledger.DiscoveryJsonFor(registry.TreeApi.AbsoluteUri);
-                var reused = string.IsNullOrWhiteSpace(cached) ? null : GithubTreeParser.Parse(cached);
-                if (reused is { Complete: true })
+                var reused = GithubTreeParser.Parse(cached!);
+                if (reused is { Complete: true } && TreeAgrees(reused, resolved.TreeSha))
                 {
-                    return BuildDiscovery(registry, reused, StoredCommit(registry, commit));
+                    return BuildDiscovery(registry, reused, commit);
                 }
             }
 
@@ -285,12 +296,12 @@ public sealed class CatalogueCoordinator
         }
 
         var parsed = GithubTreeParser.Parse(fetch.Body);
-        if (!parsed.Complete)
+        if (!parsed.Complete || !TreeAgrees(parsed, resolved.TreeSha))
         {
             return new DiscoveryOutcome(false, parsed.CommitSha, [], parsed.ReasonCode ?? "DISCOVERY_INCOMPLETE", 0);
         }
 
-        if (!_fence.TryPublish(cycle, () => _ledger.RememberDiscovery(registry.TreeApi.AbsoluteUri, fetch.Etag, fetch.Body, DateTimeOffset.UtcNow, commit)))
+        if (!_fence.TryPublish(cycle, () => _ledger.RememberDiscovery(schedulingUrl, fetch.Etag, fetch.Body, DateTimeOffset.UtcNow, commit)))
         {
             return new DiscoveryOutcome(false, commit, [], "SUPERSEDED", 0);
         }
@@ -298,27 +309,50 @@ public sealed class CatalogueCoordinator
         return BuildDiscovery(registry, parsed, commit);
     }
 
-    private string StoredCommit(ReviewedRegistry registry, string resolved)
+    private static bool CacheAgrees(string? cached, string? cachedCommit, string commit, string? treeSha)
     {
-        return _ledger.ResolvedCommitFor(registry.TreeApi.AbsoluteUri) ?? resolved;
+        if (string.IsNullOrWhiteSpace(cached))
+        {
+            return false;
+        }
+
+        if (cachedCommit is not null && !string.Equals(cachedCommit, commit, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (treeSha is null)
+        {
+            return true;
+        }
+
+        var parsed = GithubTreeParser.Parse(cached);
+        return parsed.Complete && string.Equals(parsed.CommitSha, treeSha, StringComparison.Ordinal);
     }
 
-    private async Task<string> ResolveCommitAsync(ReviewedRegistry registry, CancellationToken cancellationToken, TimeSpan? attemptTimeout)
+    private static bool TreeAgrees(TreeDiscovery parsed, string? treeSha)
+    {
+        return treeSha is null || string.Equals(parsed.CommitSha, treeSha, StringComparison.Ordinal);
+    }
+
+    private readonly record struct ResolvedCommit(string Sha, string? TreeSha);
+
+    private async Task<ResolvedCommit> ResolveCommitAsync(ReviewedRegistry registry, CancellationToken cancellationToken, TimeSpan? attemptTimeout)
     {
         var requested = TreeSegment(registry.TreeApi);
         if (requested.Length == 40 && requested.All(Uri.IsHexDigit))
         {
-            return requested;
+            return new ResolvedCommit(requested, null);
         }
 
         var url = new Uri($"https://api.github.com/repos/{Uri.EscapeDataString(registry.Owner)}/{Uri.EscapeDataString(registry.Repository)}/commits/{Uri.EscapeDataString(requested)}");
         var fetch = await _fetcher.GetAsync(url, null, ProductLimits.MaxArtifactBytes, cancellationToken, attemptTimeout, maxRetries: 0).ConfigureAwait(false);
-        if (fetch.Body is not null && fetch.ReasonCode is null && GithubTreeParser.TryReadCommitSha(fetch.Body, out var sha))
+        if (fetch.Body is not null && fetch.ReasonCode is null && GithubTreeParser.TryReadCommit(fetch.Body, out var sha, out var treeSha))
         {
-            return sha;
+            return new ResolvedCommit(sha, treeSha);
         }
 
-        return registry.PinnedCommit;
+        return new ResolvedCommit(registry.PinnedCommit, null);
     }
 
     private static string TreeSegment(Uri treeApi)
@@ -375,7 +409,7 @@ public sealed class CatalogueCoordinator
         var downloads = new List<Task<DownloadResult>>(items.Count);
         var budgetSkipped = new List<RefreshWorkItem>();
         var count = items.Count;
-        var origin = count == 0 ? 0 : _ledger.RefreshCursor % count;
+        var origin = NormalizeCursor(_ledger.RefreshCursor, count);
         long reserved = 0;
         var started = 0;
         for (var index = 0; index < count; index++)
@@ -517,6 +551,7 @@ public sealed class CatalogueCoordinator
 
             string? reason = null;
             var refetch = false;
+            DownloadResult? ineligible = null;
             foreach (var url in item.Urls)
             {
                 var known = _catalogue.Nodes.Any(node => node.ArtifactFamilies.ContainsKey(item.ArtifactId));
@@ -533,8 +568,7 @@ public sealed class CatalogueCoordinator
                 }
 
                 var prior = _ledger.Find(url.AbsoluteUri);
-                var usableSnapshot = prior?.ContentHash is not null && prior.Etag is not null && prior.LastSuccessUtc is not null;
-                if (fetch.NotModified && !known && !usableSnapshot)
+                if (fetch.NotModified && !known)
                 {
                     fetch = await _fetcher.GetAsync(url, null, ProductLimits.MaxArtifactBytes, cancellationToken, attemptTimeout, maxRetries: 0).ConfigureAwait(false);
                     refetch = true;
@@ -544,30 +578,34 @@ public sealed class CatalogueCoordinator
                     }
                 }
 
-                if (fetch.NotModified && usableSnapshot)
-                {
-                    return new DownloadResult(item, new IngestArtifact
-                    {
-                        ArtifactId = item.ArtifactId,
-                        FamilyId = item.FamilyId,
-                        Enabled = true,
-                        NotModified = true,
-                    }, false, refetch, null, url.AbsoluteUri, prior!.Etag, prior.ContentHash);
-                }
-
                 if (fetch.NotModified && known)
                 {
+                    var remember = prior?.ContentHash is not null && prior.Etag is not null;
                     return new DownloadResult(item, new IngestArtifact
                     {
                         ArtifactId = item.ArtifactId,
                         FamilyId = item.FamilyId,
                         Enabled = true,
                         NotModified = true,
-                    }, false, refetch, null, null, null, null);
+                    }, false, refetch, null, remember ? url.AbsoluteUri : null, remember ? prior!.Etag : null, remember ? prior!.ContentHash : null);
                 }
 
                 if (fetch.Body is not null && fetch.ReasonCode is null)
                 {
+                    if (!DocumentEligible(fetch.Body))
+                    {
+                        ineligible ??= new DownloadResult(item, new IngestArtifact
+                        {
+                            ArtifactId = item.ArtifactId,
+                            FamilyId = item.FamilyId,
+                            Enabled = true,
+                            Text = fetch.Body,
+                            ContentHash = fetch.ContentHash,
+                        }, false, refetch, null, url.AbsoluteUri, fetch.Etag, fetch.ContentHash);
+                        reason = ReasonCodes.InvalidUri;
+                        continue;
+                    }
+
                     return new DownloadResult(item, new IngestArtifact
                     {
                         ArtifactId = item.ArtifactId,
@@ -581,6 +619,11 @@ public sealed class CatalogueCoordinator
                 reason = fetch.ReasonCode ?? ReasonCodes.FetchFailed;
             }
 
+            if (ineligible is not null)
+            {
+                return ineligible with { RefetchPerformed = refetch };
+            }
+
             return new DownloadResult(item, null, false, refetch, reason ?? ReasonCodes.FetchFailed, null, null, null);
         }
         finally
@@ -590,6 +633,29 @@ public sealed class CatalogueCoordinator
                 gate.Release();
             }
         }
+    }
+
+    private static int NormalizeCursor(int cursor, int count)
+    {
+        if (count <= 0)
+        {
+            return 0;
+        }
+
+        var mod = (long)cursor % count;
+        if (mod < 0)
+        {
+            mod += count;
+        }
+
+        return (int)mod;
+    }
+
+    private static bool DocumentEligible(string body)
+    {
+        var batch = SubscriptionImporter.Import(body);
+        return batch.EmptyValidDocument
+            || batch.Records.Any(record => record.Disposition is RecordDisposition.Pending or RecordDisposition.PolicyBlocked or RecordDisposition.Duplicate);
     }
 
     private static IngestArtifact FailedArtifact(RefreshWorkItem item)

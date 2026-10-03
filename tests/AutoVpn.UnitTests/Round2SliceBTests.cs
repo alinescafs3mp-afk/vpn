@@ -35,7 +35,10 @@ public sealed class Round2SliceBTests
             if (path.Contains("/commits/", StringComparison.Ordinal))
             {
                 var commit = phase == 0 ? ShaA : ShaB;
-                var body = "{\"sha\":\"" + commit + "\",\"commit\":{\"tree\":{\"sha\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}}}";
+                var treeName = phase == 0
+                    ? "cccccccccccccccccccccccccccccccccccccccc"
+                    : "dddddddddddddddddddddddddddddddddddddddd";
+                var body = "{\"sha\":\"" + commit + "\",\"commit\":{\"tree\":{\"sha\":\"" + treeName + "\"}}}";
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(body, Encoding.UTF8, "application/json"),
@@ -47,10 +50,10 @@ public sealed class Round2SliceBTests
                 return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
             }
 
-            var treeSha = phase == 0
-                ? "cccccccccccccccccccccccccccccccccccccccc"
-                : "dddddddddddddddddddddddddddddddddddddddd";
-            var tree = phase == 0
+            var treeSha = path.Contains("dddddddddddddddddddddddddddddddddddddddd", StringComparison.Ordinal)
+                ? "dddddddddddddddddddddddddddddddddddddddd"
+                : "cccccccccccccccccccccccccccccccccccccccc";
+            var tree = treeSha.StartsWith('c')
                 ? Tree(treeSha, "BLACK_VLESS_RUS.txt", "BLACK_VLESS_RUS_mobile.txt")
                 : Tree(treeSha, "BLACK_VLESS_RUS_mobile.txt");
             phase++;

@@ -31,6 +31,7 @@ public sealed class BrokerEngine
     private long _operationEpoch;
     private string? _ownedOperationId;
     private long _ownedGeneration;
+    private bool? _sessionLanAccess;
     private SelectionPurpose _selectionPurpose = SelectionPurpose.Automatic;
     private PolicyStamp? _commitPolicy;
     private bool _cleanupPending;
@@ -163,6 +164,7 @@ public sealed class BrokerEngine
         }
 
         string yaml;
+        var sessionLan = LanAccess(request, payload);
         try
         {
             yaml = MihomoProfileGenerator.Build(new ProfileBuildRequest
@@ -171,7 +173,7 @@ public sealed class BrokerEngine
                 ControllerPort = 12789,
                 SocksPort = null,
                 Tun = true,
-                LanAccess = LanAccess(request, payload),
+                LanAccess = sessionLan,
                 AllowInsecureCertificates = _catalogue.Settings.AllowInsecureCertificates,
                 Nodes = [NodeWireFactory.FromCatalogue(selected)],
                 SelectedNodeId = selected.NodeId,
@@ -221,6 +223,9 @@ public sealed class BrokerEngine
                     _operationId = operationId;
                     _operationGeneration = armedGeneration;
                     _operationEpoch = _catalogue.NetworkEpoch;
+                    _ownedOperationId = operationId;
+                    _ownedGeneration = armedGeneration;
+                    _sessionLanAccess = sessionLan;
                 }
                 else if (!armed.Armed)
                 {
@@ -236,6 +241,9 @@ public sealed class BrokerEngine
                     _operationId = operationId;
                     _operationGeneration = armedGeneration;
                     _operationEpoch = _catalogue.NetworkEpoch;
+                    _ownedOperationId = operationId;
+                    _ownedGeneration = armedGeneration;
+                    _sessionLanAccess = sessionLan;
                 }
             }
         }
@@ -322,6 +330,12 @@ public sealed class BrokerEngine
                 abandon = true;
                 if (owned)
                 {
+                    if (_state.Generation == armedGeneration && _state.Phase == TunnelPhase.Connecting)
+                    {
+                        _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.VerifyFailed, _state.Generation, selected.NodeId, ReasonCodes.Canceled));
+                        _sequence++;
+                    }
+
                     _coreRunning = false;
                     _operationId = null;
                 }
@@ -417,7 +431,7 @@ public sealed class BrokerEngine
             var settings = _catalogue.Settings;
             var policyMoved = _commitPolicy is PolicyStamp committed && !committed.Equals(PolicyStamp.Capture(settings));
             var blocked = current is null
-                || current.Excluded
+                || (current.Excluded && _selectionPurpose != SelectionPurpose.Manual)
                 || (current.Semantics.SkipCertVerify && !settings.AllowInsecureCertificates);
             if (policyMoved || blocked)
             {
@@ -673,7 +687,7 @@ public sealed class BrokerEngine
                     Secret = NewSecret(),
                     ControllerPort = 12789,
                     Tun = true,
-                    LanAccess = _catalogue.Settings.LanAccess,
+                    LanAccess = _sessionLanAccess ?? _catalogue.Settings.LanAccess,
                     AllowInsecureCertificates = _catalogue.Settings.AllowInsecureCertificates,
                     Nodes = [NodeWireFactory.FromCatalogue(switchTarget)],
                     SelectedNodeId = switchTarget.NodeId,
@@ -686,11 +700,13 @@ public sealed class BrokerEngine
                     && _catalogue.NetworkEpoch == _operationEpoch
                     && !live.Excluded
                     && string.Equals(live.Digest, switchTarget.Digest, StringComparison.Ordinal)
+                    && CountryAllows(live)
                     && IsCurrentlyEligible(live, now);
+                var callerCanceled = cancellationToken.IsCancellationRequested;
                 var abandon = false;
                 lock (_gate)
                 {
-                    abandon = policyChanged || !stillHeld || _state.Generation != switchGeneration || _state.DisconnectCommitted || _state.Phase is not (TunnelPhase.Connected or TunnelPhase.Reconnecting);
+                    abandon = callerCanceled || policyChanged || !stillHeld || _state.Generation != switchGeneration || _state.DisconnectCommitted || _state.Phase is not (TunnelPhase.Connected or TunnelPhase.Reconnecting);
                     if (!abandon && started.Started)
                     {
                         if (_state.Phase == TunnelPhase.Connected)
@@ -722,7 +738,7 @@ public sealed class BrokerEngine
 
                 if (!switched)
                 {
-                    await _core.StopAsync(switchGeneration, switchOperation!, cancellationToken).ConfigureAwait(false);
+                    await _core.StopAsync(switchGeneration, switchOperation!, CancellationToken.None).ConfigureAwait(false);
                 }
             }
             catch (InvalidOperationException)
@@ -899,13 +915,15 @@ public sealed class BrokerEngine
             return null;
         }
 
+        var purpose = string.IsNullOrWhiteSpace(payload.NodeId) ? SelectionPurpose.Automatic : SelectionPurpose.Manual;
         var admitted = await ProbeCoordinator.AdmitIfStaleAsync(
             _catalogue,
             _admission,
             _admissionTarget,
             candidate.NodeId,
             now,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            purpose).ConfigureAwait(false);
         return admitted ? Select(payload, now) : null;
     }
 

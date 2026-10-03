@@ -97,7 +97,7 @@ public sealed class IpcDispatcher
             {
                 return Fail(request, "BUSY", "Слишком много одновременных команд. Повторите запрос.");
             }
-            else if (!read && ProbablySeen(request.RequestId))
+            else if (!read && !safety && ProbablySeen(request.RequestId))
             {
                 return Fail(request, ReasonCodes.ReplayExpired, "Идентификатор запроса уже вышел из окна повтора и не выполняется снова.");
             }

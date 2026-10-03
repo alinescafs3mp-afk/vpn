@@ -30,6 +30,7 @@ public sealed record AssessmentSnapshot
     public int ConsecutiveFailures { get; init; }
     public DateTimeOffset? RetryAfterUtc { get; init; }
     public bool EnvironmentFailure { get; init; }
+    public string? ProofToken { get; init; }
 }
 
 public sealed record EligibilityContext

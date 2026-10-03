@@ -155,10 +155,12 @@ public static class XrayOutboundParser
             sni = GetString(reality, "serverName");
         }
 
+        var skipCertVerify = false;
         if (stream.ValueKind == JsonValueKind.Object && stream.TryGetProperty("tlsSettings", out var tls))
         {
             sni ??= GetString(tls, "serverName");
             fingerprint ??= GetString(tls, "fingerprint");
+            skipCertVerify = tls.TryGetProperty("allowInsecure", out var allow) && allow.ValueKind == JsonValueKind.True;
         }
 
         string? path = null;
@@ -202,6 +204,7 @@ public static class XrayOutboundParser
                 Path = path,
                 HostHeader = hostHeader,
                 ServiceName = serviceName,
+                SkipCertVerify = skipCertVerify,
             },
         };
     }
@@ -214,11 +217,11 @@ public static class XrayOutboundParser
             {
                 Host = endpoint.Host,
                 Port = endpoint.Port,
-                UserId = endpoint.User ?? parsed.Semantics.UserId,
-                Password = endpoint.Password ?? parsed.Semantics.Password,
-                Encryption = endpoint.Encryption ?? parsed.Semantics.Encryption,
-                Flow = endpoint.Flow ?? parsed.Semantics.Flow,
-                AlterId = endpoint.AlterId ?? parsed.Semantics.AlterId,
+                UserId = endpoint.User,
+                Password = endpoint.Password,
+                Encryption = endpoint.Encryption,
+                Flow = endpoint.Flow,
+                AlterId = endpoint.AlterId,
             },
         };
     }
