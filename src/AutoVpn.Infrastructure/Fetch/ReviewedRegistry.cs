@@ -70,6 +70,7 @@ public static class ReviewedRegistryLoader
         var origins = new List<ApprovedFetchOrigin>
         {
             new("api.github.com", 443, $"/repos/{owner}/{repository}/git/trees/"),
+            new("api.github.com", 443, $"/repos/{owner}/{repository}/commits/"),
         };
         foreach (var host in approvedHosts)
         {

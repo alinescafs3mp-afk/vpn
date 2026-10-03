@@ -33,6 +33,7 @@ public static class BoundedTransfer
 
         var buffer = new byte[Math.Min(8192, maxBytes)];
         var read = 0;
+        var timedOut = false;
         var watch = Stopwatch.StartNew();
         while (read < maxBytes && watch.Elapsed < maxDuration)
         {
@@ -41,6 +42,7 @@ public static class BoundedTransfer
             var remaining = maxDuration - watch.Elapsed;
             if (remaining <= TimeSpan.Zero)
             {
+                timedOut = true;
                 break;
             }
 
@@ -52,6 +54,7 @@ public static class BoundedTransfer
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
+                timedOut = true;
                 break;
             }
 
@@ -63,7 +66,7 @@ public static class BoundedTransfer
             read += count;
         }
 
-        var truncated = read >= maxBytes || watch.Elapsed >= maxDuration;
+        var truncated = read >= maxBytes || timedOut;
         return new TransferRead(read, watch.Elapsed, truncated);
     }
 }

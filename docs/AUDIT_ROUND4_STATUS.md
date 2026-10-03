@@ -12,6 +12,7 @@ Allowed statuses are OPEN, IN_PROGRESS, IMPLEMENTED_NOT_VALIDATED, BLOCKED_EXTER
 |---|---|---|
 | E-red | `dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --nologo --filter FullyQualifiedName~IndependentRound4` on Linux, before the production edits, tests copied from `a5f110b3c2f326e529f7d866ad9415062e6b64f5`. | 4 passed, 29 failed, 0 skipped, 33 total. Controls Q22, Q23, Q25, Q26 passed. |
 | E-161 | `AUTOVPN_MIHOMO_PATH=/var/tmp/autovpn-mihomo/mihomo dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --nologo` from `/home/jericho/src/vpn` on Linux. SDK 10.0.112. Pinned Mihomo `v1.19.32` commit `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`, SHA-256 `3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8`. The binary is local and not in git. | Tree committed as `d8e7827`: 161 passed, 0 failed, 0 skipped, 28 s. Includes IndependentRound4, 33 passed. This host's routes, DNS, and firewall were not changed. |
+| E-162 | Same command and environment, after the branch-target and transfer-deadline change. | 162 passed, 0 failed, 0 skipped, 50 s. Includes `BranchRefreshTargetUsesACommitObjectRatherThanTheTreeShaOrThePin`. |
 
 ## R4 findings
 
@@ -40,11 +41,11 @@ Remaining limitation: no SID/ACL/session lease and no unelevated catalogue hando
 Finding: a branch tree document must not become the content commit.
 Status: IN_PROGRESS.
 Links: F02, F22, F25, R3-12.
-Fix commit and production paths: `d8e7827`, `Fetch/GithubTreeParser.cs` (`TryReadCommitSha`), `Refresh/CatalogueCoordinator.cs` (`ResolveCommitAsync`), `Refresh/SourceLedger.cs` (`ResolvedCommit`).
-Regression ids: Q07. Rt11 now returns a commit object distinct from the tree document. Rt12 and the round-2 catalogue journey expect the pinned commit when the commit API does not return a commit object. A13 still uses a 40-hex tree URL and does not call the commit API.
+Fix commit and production paths: `d8e7827` plus this change. `Fetch/GithubTreeParser.cs` (`TryReadCommitSha`), `Refresh/CatalogueCoordinator.cs` (`ResolveCommitAsync`), `Refresh/SourceLedger.cs` (`ResolvedCommit`). `config/source-manifest.json` now points at `git/trees/main`. `Fetch/ReviewedRegistry.cs` allows `api.github.com` `/commits/`. The manifest `commit` field stays the bootstrap pin.
+Regression ids: Q07. `BranchRefreshTargetUsesACommitObjectRatherThanTheTreeShaOrThePin`. Rt11 now returns a commit object distinct from the tree document. Rt12 and the round-2 catalogue journey expect the pinned commit when the commit API does not return a commit object. A13 still uses a 40-hex tree URL and does not call the commit API.
 Executed environment: E-161 on Linux. No live GitHub fetch.
 Positive and adverse result: a document whose `tree` is an array is not a commit SHA. Content URLs use the resolved commit, or `PinnedCommit` when resolution fails.
-Remaining limitation: `config/source-manifest.json` still pins `20c38289c29e4dba6b8f01ddd3273ec9ec169b46` as the tree URL. The pin is the fallback, not yet only the bootstrap. No live HEAD smoke.
+Remaining limitation: a public `commits/main` metadata read on 2026-10-03 returned `0f0c78b59a482625cbfd8b042f40f6ada2fa3735`. No tree listing and no subscription body were stored. Content URLs for that live commit were not built. The pin remains the fallback when resolution fails.
 
 ### R4-04
 
@@ -330,10 +331,10 @@ Remaining limitation: no clicked catalogue, tray, or theme pass.
 Finding: the obsolete output cap is corrected. Windows CI is not permanent.
 Status: IN_PROGRESS.
 Links: F04, F31, R3-10, R3-28.
-Fix commit and production paths: `d8e7827`, `tests/AutoVpn.UnitTests/Round2SliceATests.cs`. Audit workflows were not imported.
+Fix commit and production paths: `d8e7827`, `tests/AutoVpn.UnitTests/Round2SliceATests.cs`. This change records a deadline inside `Domain/BoundedTransfer.cs` instead of comparing the stopwatch after the read returns. Audit workflows were not imported.
 Regression ids: Rt03, and the ported Q suite.
 Executed environment: E-red then E-161 on Linux. No GitHub Actions run was started for this commit.
-Positive and adverse result: the Linux unit suite is 161/161. The previous 1 MiB ceiling is gone. The tail cap remains.
+Positive and adverse result: the Linux unit suite on `d8e7827` is 161/161. The previous 1 MiB ceiling is gone. The tail cap remains. A later run failed `SocksClientReadsALocalStatusAndSpeedStaysUnknownWithoutHealth` because a budget cancellation returned before `Elapsed` reached the limit, so truncation was reported false. The deadline is now an explicit flag.
 Remaining limitation: Windows file-lifetime and `pkill` fixtures were not ported. `docs/evidence/build-manifest.json` still describes an older package and is not evidence for this commit.
 
 ### R4-31

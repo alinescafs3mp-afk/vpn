@@ -1,6 +1,6 @@
 # Source coverage
 
-Pinned tree: `igareck/vpn-configs-for-russia` commit `20c38289c29e4dba6b8f01ddd3273ec9ec169b46` (2026-10-02T19:30:30Z, message «Черные Списки VLESS / Все конфиги [v2rayN]»).
+Refresh target: branch `main` of `igareck/vpn-configs-for-russia`. Bootstrap pin: commit `20c38289c29e4dba6b8f01ddd3273ec9ec169b46` (2026-10-02T19:30:30Z, message «Черные Списки VLESS / Все конфиги [v2rayN]»), used when commit resolution fails. The inventory below was taken at that pin, not at current HEAD.
 
 The Git trees API with `recursive=1` returned `truncated: false`. `GithubTreeParser` treats a truncated or missing tree as `DISCOVERY_INCOMPLETE` and returns no paths, so a partial tree cannot delete the catalogue.
 

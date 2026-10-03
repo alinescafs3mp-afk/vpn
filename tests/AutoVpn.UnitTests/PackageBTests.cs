@@ -262,6 +262,40 @@ public sealed class PackageBTests
     }
 
     [Fact]
+    public async Task BranchRefreshTargetUsesACommitObjectRatherThanTheTreeShaOrThePin()
+    {
+        const string commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const string tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        var registry = ReviewedRegistryLoader.Load(ConfigDirectory());
+        Assert.Equal("20c38289c29e4dba6b8f01ddd3273ec9ec169b46", registry.PinnedCommit);
+        Assert.EndsWith("/main", registry.TreeApi.AbsolutePath, StringComparison.Ordinal);
+        Assert.Contains(registry.FetchOrigins, origin => origin.Host == "api.github.com" && origin.PathPrefix.EndsWith("/commits/", StringComparison.Ordinal));
+        var handler = new AsyncHandler((request, _) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            var body = path.Contains("/commits/", StringComparison.Ordinal)
+                ? "{\"sha\":\"" + commit + "\",\"commit\":{\"tree\":{\"sha\":\"" + tree + "\"}}}"
+                : "{\"sha\":\"" + tree + "\",\"truncated\":false,\"tree\":[{\"path\":\"BLACK_VLESS_RUS.txt\",\"type\":\"blob\",\"mode\":\"100644\",\"size\":30}]}";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            });
+        });
+        using var fetcher = new PolicyHttpFetcher(handler, registry.FetchOrigins);
+        var discovery = await new CatalogueCoordinator(new MemoryCatalogue(), fetcher, new NonTunCoreProbeTransport(null, null), new SourceLedger())
+            .DiscoverAsync(registry, CancellationToken.None, TimeSpan.FromSeconds(2));
+        Assert.True(discovery.Complete);
+        Assert.Equal(commit, discovery.CommitSha);
+        var item = Assert.Single(discovery.Items);
+        Assert.All(item.Urls, url =>
+        {
+            Assert.Contains("/" + commit + "/", url.AbsoluteUri, StringComparison.Ordinal);
+            Assert.DoesNotContain("/" + tree + "/", url.AbsoluteUri, StringComparison.Ordinal);
+            Assert.DoesNotContain("/" + registry.PinnedCommit + "/", url.AbsoluteUri, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public void ReviewedRegistryRejectsUnsafePathsAndRejectedHosts()
     {
         var registry = ReviewedRegistryLoader.Load(ConfigDirectory());
