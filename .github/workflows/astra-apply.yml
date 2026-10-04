@@ -36,6 +36,13 @@ jobs:
           target=root/'verified.patch';target.write_bytes(patch)
           subprocess.run(['git','apply','--check','--unidiff-zero',str(target)],check=True)
           subprocess.run(['git','apply','--index','--unidiff-zero',str(target)],check=True)
+          path=pathlib.Path('src/AutoVpn.Application/Catalogue.cs')
+          before=path.read_bytes()
+          assert hashlib.sha256(before).hexdigest()=='511fe3e71cd9d47321674101f0f46f7b1132e449aaca8fa854dbe37160cbf876'
+          after=b'\n'.join(line.rstrip(b' \t') for line in before.split(b'\n'))
+          assert hashlib.sha256(after).hexdigest()=='d453e94e8ad24c5daaf4fc1a5b6c99afa5b89efc2dc1131f3aa0e3fca30e3d20'
+          path.write_bytes(after)
+          subprocess.run(['git','add',str(path)],check=True)
           subprocess.run(['git','diff','--cached','--check'],check=True)
           PY
           git config user.name 'Astra implementation'
