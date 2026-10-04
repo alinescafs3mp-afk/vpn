@@ -1,0 +1,64 @@
+name: astra-v3-source-validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [implementation/astra-v3, main]
+    paths: ['src/**', 'tests/**', 'scripts/**', 'Directory.Build.props', 'global.json', '.github/workflows/astra-v3-ci.yml']
+permissions:
+  contents: read
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Retained managed and native regression
+        shell: pwsh
+        run: |
+          $core = ./scripts/fetch-core.ps1
+          ./scripts/test-v3.ps1 -Native -CorePath $core
+      - name: Repeat owned lifecycle interleavings five times
+        shell: pwsh
+        run: |
+          1..5 | ForEach-Object {
+            dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --no-build '-p:Platform=AnyCPU' --filter 'FullyQualifiedName~AstraV3LiveRuntimeTests' --logger "trx;LogFileName=repeat-$_.trx" --results-directory artifacts/v3-repeats
+            if ($LASTEXITCODE -ne 0) { throw "Lifecycle repeat $_ failed." }
+          }
+      - name: WPF navigation and same-user DPAPI catalogue, not networking
+        if: success() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet run --project tests/AutoVpn.AuditRound6Wpf -c Release -- artifacts/v3-wpf
+          if ($LASTEXITCODE -ne 0) { throw 'Windows WPF / catalogue smoke failed.' }
+      - name: Build Windows development package
+        if: success() && runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package-v3.ps1 -IncludePinnedCore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3-${{ github.sha }}-${{ matrix.os }}
+          path: |
+            artifacts/v3-verification/
+            artifacts/v3-repeats/
+            artifacts/v3-wpf/
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: success() && runner.os == 'Windows'
+        with:
+          name: AutoVPN-V3B-development-${{ github.sha }}
+          path: |
+            artifacts/AutoVPN-V3-win-x64-DEVELOPMENT.zip
+            artifacts/AutoVPN-V3-win-x64-DEVELOPMENT.zip.sha256
+          retention-days: 30
+          if-no-files-found: error
