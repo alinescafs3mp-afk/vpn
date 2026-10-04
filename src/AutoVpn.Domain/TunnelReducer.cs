@@ -110,21 +110,21 @@ public static class TunnelReducer
             {
                 Phase = TunnelPhase.Blocked,
                 Revision = state.Revision + 1,
-                ProtectionArmed = true,
+                ProtectionArmed = state.ProtectionArmed,
                 BlockReason = command.Reason ?? ReasonCodes.ProbeFailed,
             },
             TunnelCommandKind.HealthFailed or TunnelCommandKind.CoreExited when state.Phase == TunnelPhase.Connected => state with
             {
                 Phase = TunnelPhase.Reconnecting,
                 Revision = state.Revision + 1,
-                ProtectionArmed = true,
+                ProtectionArmed = state.ProtectionArmed,
                 BlockReason = command.Reason,
             },
             TunnelCommandKind.UplinkLost when state.Phase is TunnelPhase.Connected or TunnelPhase.Reconnecting => state with
             {
                 Phase = TunnelPhase.Blocked,
                 Revision = state.Revision + 1,
-                ProtectionArmed = true,
+                ProtectionArmed = state.ProtectionArmed,
                 BlockReason = ReasonCodes.UplinkOffline,
             },
             TunnelCommandKind.Block when state.Phase is TunnelPhase.Connected or TunnelPhase.Reconnecting or TunnelPhase.Connecting => state with

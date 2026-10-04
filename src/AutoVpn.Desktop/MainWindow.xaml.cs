@@ -27,6 +27,10 @@ public partial class MainWindow : Window
     private readonly RefreshScheduler _scheduler;
     private readonly DispatcherTimer _scheduleTimer;
     private readonly DispatcherTimer _maintenanceTimer;
+    private readonly DispatcherTimer _statusTimer;
+    private CancellationTokenSource _statusCts = new();
+    private Task? _statusTask;
+    private int _statusBusy;
     private readonly CatalogueMaintenance? _maintenance;
     private bool _checksPaused;
     private string _serverView = "working";
@@ -62,6 +66,12 @@ public partial class MainWindow : Window
         }
         _maintenanceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _maintenanceTimer.Tick += (_, _) => ShowMaintenance();
+        _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _statusTimer.Tick += (_, _) =>
+        {
+            if (Volatile.Read(ref _shuttingDown) == 0 && !_mailbox.OperationPending && Volatile.Read(ref _statusBusy) == 0)
+                _statusTask = PollStatusAsync();
+        };
         _scheduler = new RefreshScheduler(
             () => _catalogue.Settings,
             () => _ledger.LiveSuccessStamps(DateTimeOffset.UtcNow),
@@ -244,7 +254,7 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _maintenance?.Start(); _maintenanceTimer.Start(); ShowMaintenance();
+        _maintenance?.Start(); _maintenanceTimer.Start(); _statusTimer.Start(); ShowMaintenance();
         await ResyncAsync().ConfigureAwait(true);
         _scheduleTimer.Start();
         if (_refreshActive) return;
@@ -256,22 +266,36 @@ public partial class MainWindow : Window
     {
         try
         {
-            var response = await LocalIpcServer.RoundTripAsync("autovpn-broker", new IpcRequest
+            for (var attempt = 1; attempt <= DisconnectRetry.MaximumAttempts; attempt++)
             {
-                ProtocolVersion = ProductLimits.IpcProtocolVersion, RequestId = Guid.NewGuid().ToString("N"),
-                ExpectedStateRevision = _mailbox.Session.StateRevision, Operation = operation,
-                Payload = JsonSerializer.SerializeToElement(payload, IpcJson.Options),
-            }, cancellationToken).ConfigureAwait(true);
-            if (ownerGeneration is int generation && !_connectLease.Owns(generation)) return;
-            if (response is null) { _mailbox.ApplyTransportLoss(); ShowSession(); return; }
-            _mailbox.Apply(response, _catalogue.Settings.DisclosureAccepted); ShowSession();
+                var request = new IpcRequest
+                {
+                    ProtocolVersion = ProductLimits.IpcProtocolVersion, RequestId = Guid.NewGuid().ToString("N"),
+                    ExpectedStateRevision = _mailbox.Session.StateRevision, Operation = operation,
+                    Payload = JsonSerializer.SerializeToElement(payload, IpcJson.Options),
+                };
+                var response = await LocalIpcServer.RoundTripAsync("autovpn-broker", request, cancellationToken).ConfigureAwait(true);
+                if (ownerGeneration is int generation && !_connectLease.Owns(generation)) return;
+                if (response is null) { _mailbox.ApplyTransportLoss(); ShowSession(); return; }
+                var accepted = ApplyBrokerResponse(response); ShowSession();
+                // Never retry an ambiguous timeout, a started Connect or an uncertain
+                // cleanup. A StaleRevision rejection explicitly performed no effect.
+                if (!DisconnectRetry.ShouldRetry(request, response, accepted, attempt)) return;
+            }
         }
         catch (OperationCanceledException) when (ownerGeneration is int generation && !_connectLease.Owns(generation)) { }
         catch (TimeoutException) { _mailbox.ApplyTransportLoss(); ShowSession(); }
         catch (IOException) { _mailbox.ApplyTransportLoss(); ShowSession(); }
     }
 
-    private async Task ResyncAsync()
+    private async Task PollStatusAsync()
+    {
+        if (Interlocked.Exchange(ref _statusBusy, 1) != 0) return;
+        try { await ResyncAsync(_statusCts.Token).ConfigureAwait(true); }
+        finally { Volatile.Write(ref _statusBusy, 0); }
+    }
+
+    private async Task ResyncAsync(CancellationToken token = default)
     {
         try
         {
@@ -280,11 +304,34 @@ public partial class MainWindow : Window
                 ProtocolVersion = ProductLimits.IpcProtocolVersion, RequestId = Guid.NewGuid().ToString("N"),
                 ExpectedStateRevision = _mailbox.Session.StateRevision, Operation = IpcOperations.GetSnapshot,
                 Payload = JsonSerializer.SerializeToElement(new Dictionary<string, string>(), IpcJson.Options),
-            }, CancellationToken.None).ConfigureAwait(true);
-            if (response is null) _mailbox.ApplyTransportLoss(); else _mailbox.Apply(response, _catalogue.Settings.DisclosureAccepted);
+            }, token).ConfigureAwait(true);
+            if (token.IsCancellationRequested) return;
+            if (response is null) _mailbox.ApplyTransportLoss(); else ApplyBrokerResponse(response);
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
         catch (Exception ex) when (ex is TimeoutException or IOException or OperationCanceledException) { _mailbox.ApplyTransportLoss(); }
         ShowSession();
+    }
+
+    private bool ApplyBrokerResponse(IpcResponse response)
+    {
+        if (!_mailbox.Apply(response, _catalogue.Settings.DisclosureAccepted) || response.Snapshot is not { } snapshot) return false;
+        // Only a reachable accepted snapshot can clear an active retention mark.
+        // No write on an unchanged poll; this avoids needless catalogue revisions.
+        if (snapshot.CoreRunning || snapshot.OwnedResourceCount > 0 || _mailbox.Session.ClaimsVerifiedDisconnect)
+        {
+            var active = snapshot.CoreRunning || snapshot.OwnedResourceCount > 0 ? snapshot.ActiveNodeId : null;
+            lock (_catalogue.SyncRoot)
+            {
+                if (_catalogue.Nodes.Any(node => node.ActiveSession != (node.NodeId == active)))
+                {
+                    try { _catalogue.SetActiveNode(active); }
+                    catch (Exception ex) when (ex is InvalidOperationException or IOException)
+                    { DetailText.Text = "Не удалось сохранить отметку активного сервера: " + ex.GetType().Name; }
+                }
+            }
+        }
+        return true;
     }
 
     private void ShowSession()
@@ -302,7 +349,7 @@ public partial class MainWindow : Window
     {
         if (_exit)
         {
-            _maintenanceTimer.Stop(); _maintenance?.RequestStop();
+            _maintenanceTimer.Stop(); _statusTimer.Stop(); _statusCts.Cancel(); _maintenance?.RequestStop();
             _tray.Visible = false; _tray.Dispose(); (_catalogue as IDisposable)?.Dispose(); return;
         }
         e.Cancel = true; Hide();
@@ -311,7 +358,8 @@ public partial class MainWindow : Window
 
     private async void ExitApplication()
     {
-        Volatile.Write(ref _shuttingDown, 1); _scheduleTimer.Stop(); _maintenanceTimer.Stop(); _maintenance?.Pause();
+        if (Interlocked.Exchange(ref _shuttingDown, 1) == 1) return;
+        _scheduleTimer.Stop(); _maintenanceTimer.Stop(); _statusTimer.Stop(); _statusCts.Cancel(); _maintenance?.Pause();
         _connectCts?.Cancel(); _refresh?.Cancel(); _fence.Begin();
         var generation = _connectLease.Supersede();
         if (_mailbox.OperationPending || _mailbox.Session.SafetyDisconnectAvailable || _mailbox.Session.LastKnownProtectionArmed)
@@ -319,11 +367,13 @@ public partial class MainWindow : Window
         var maintenanceJoined = _maintenance is null || await _maintenance.WaitForIdleAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(true);
         var connectJoined = await JoinOwnedAsync(_connectTask).ConfigureAwait(true);
         var refreshJoined = await JoinOwnedAsync(_refreshTask).ConfigureAwait(true);
+        var statusJoined = await JoinOwnedAsync(_statusTask).ConfigureAwait(true);
         if (connectJoined && _connectLease.FinishIfCurrent(generation)) _mailbox.OperationPending = false;
         var decision = UiSessionReducer.PlanExit(_mailbox.Session, _mailbox.OperationPending);
-        if (!connectJoined || !refreshJoined || !maintenanceJoined || !decision.CanClose)
+        if (!connectJoined || !refreshJoined || !maintenanceJoined || !statusJoined || !decision.CanClose)
         {
-            Volatile.Write(ref _shuttingDown, 0); _scheduleTimer.Start(); _maintenanceTimer.Start();
+            if (statusJoined) { _statusCts.Dispose(); _statusCts = new CancellationTokenSource(); }
+            Volatile.Write(ref _shuttingDown, 0); _scheduleTimer.Start(); _maintenanceTimer.Start(); _statusTimer.Start();
             if (!_checksPaused) _maintenance?.Resume();
             DetailText.Text = decision.CanClose ? "Выход остановлен: локальная операция не завершилась." : decision.Reason ?? "Выход не подтверждён.";
             Show(); return;

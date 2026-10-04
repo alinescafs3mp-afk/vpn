@@ -9,4 +9,7 @@
     <ProjectReference Include="..\AutoVpn.Application\AutoVpn.Application.csproj" />
     <ProjectReference Include="..\AutoVpn.Contracts\AutoVpn.Contracts.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\..\config\*.json" Link="config\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

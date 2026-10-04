@@ -3,7 +3,7 @@ param([switch]$Native, [string]$CorePath)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
-$filter = 'FullyQualifiedName!~S603_DisabledFamily'
+$filter = 'FullyQualifiedName~AutoVpn.UnitTests'
 if ($Native) {
     if (-not $CorePath) { $CorePath = $env:AUTOVPN_MIHOMO_PATH }
     if (-not $CorePath -or -not (Test-Path -LiteralPath $CorePath -PathType Leaf)) { throw 'Native tests require -CorePath pointing to the pinned Mihomo executable.' }

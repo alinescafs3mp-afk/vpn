@@ -122,6 +122,23 @@ public sealed class IndependentRound6Tests
         Assert.Equal(0,calls);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task S603b_FamilyDisabledDuringDownloadCannotPublishOrRefetch(bool notModified)
+    {
+        var c=Catalogue(false,1);var calls=0;var before=c.Nodes.Select(n=>n.Digest).ToArray();
+        using var f=Fetcher(_=>
+        {
+            calls++;c.Settings=c.Settings with {DisabledFamilyIds=["black-vless"],Revision=2};
+            return notModified?new HttpResponseMessage(HttpStatusCode.NotModified):Json(Link);
+        });
+        var outcome=await Coordinator(c,f,new SourceLedger()).RefreshAsync([Item("disabled-during")],Now,CancellationToken.None);
+        Assert.Equal(1,calls);Assert.Equal(0,outcome.PublishedPending);Assert.False(outcome.AnyFetchFailed);
+        Assert.False(c.HasCommittedSnapshot("disabled-during"));Assert.Equal(before,c.Nodes.Select(n=>n.Digest));
+        Assert.Contains("disabled-during:FAMILY_DISABLED",outcome.SourceReasons);
+    }
+
     [Fact]
     public void S604_HistoricalRawRevisionMustNotMakeFreshLiveSourcesDue()
     {

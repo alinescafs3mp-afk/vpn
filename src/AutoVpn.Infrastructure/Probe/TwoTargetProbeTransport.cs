@@ -27,18 +27,25 @@ public sealed class TwoTargetProbeTransport : IProbeTransport
         ArgumentNullException.ThrowIfNull(catalogue);
         _authority = ProbeAuthority.For(catalogue);
         ArgumentNullException.ThrowIfNull(inner);
-        ArgumentNullException.ThrowIfNull(targets);
-        if (targets.Count != 2 || targets.Any(t => t is null || !t.IsAbsoluteUri ||
-            t.Scheme != Uri.UriSchemeHttps || t.UserInfo.Length != 0 || t.Fragment.Length != 0) ||
-            string.Equals(targets[0].IdnHost, targets[1].IdnHost, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Two HTTPS targets on distinct reviewed hosts are required.", nameof(targets));
+        var identity = TargetIdentity(targets);
         if (workers is < 1 or > ProductLimits.ProbeWorkerProcesses) throw new ArgumentOutOfRangeException(nameof(workers));
         _timeout = requestTimeout ?? TimeSpan.FromSeconds(ProductLimits.ProbeRequestTimeoutSeconds);
         if (_timeout <= TimeSpan.Zero || _timeout > TimeSpan.FromSeconds(ProductLimits.NewCandidateBudgetSeconds))
             throw new ArgumentOutOfRangeException(nameof(requestTimeout));
         _inner = inner; _targets = targets.ToArray(); _workers = workers; _slots = new(workers, workers);
-        var contract = "https-204-empty-v2\n" + string.Join("\n", _targets.Select(t => t.AbsoluteUri).Order(StringComparer.Ordinal));
-        TargetSetId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(contract))).ToLowerInvariant();
+        TargetSetId = identity;
+    }
+
+    /// <summary>Validate and identify the reviewed pair without creating workers or performing I/O.</summary>
+    public static string TargetIdentity(IReadOnlyList<Uri> targets)
+    {
+        ArgumentNullException.ThrowIfNull(targets);
+        if (targets.Count != 2 || targets.Any(t => t is null || !t.IsAbsoluteUri ||
+            t.Scheme != Uri.UriSchemeHttps || t.UserInfo.Length != 0 || t.Fragment.Length != 0) ||
+            string.Equals(targets[0].IdnHost, targets[1].IdnHost, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Two HTTPS targets on distinct reviewed hosts are required.", nameof(targets));
+        var contract = "https-204-empty-v2\n" + string.Join("\n", targets.Select(t => t.AbsoluteUri).Order(StringComparer.Ordinal));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(contract))).ToLowerInvariant();
     }
 
     public Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)

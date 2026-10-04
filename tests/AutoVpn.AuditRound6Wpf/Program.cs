@@ -8,6 +8,9 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using AutoVpn.Desktop;
+using AutoVpn.Application;
+using AutoVpn.Domain;
+using AutoVpn.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
 
 internal static class Program
@@ -63,7 +66,8 @@ internal static class Program
             ((CheckBox)window.FindName("LanBox")).IsChecked=originalLan;
             ((CheckBox)window.FindName("ProtectionBox")).IsChecked=originalProtection;
             if (((CheckBox)window.FindName("DisclosureBox")).IsChecked==true) throw new InvalidOperationException("Audit accidentally granted consent.");
-            var report=new { sourceCommit=Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "UNBOUND_LOCAL_BUILD", os=Environment.OSVersion.ToString(), pages=records,
+            var catalogueHandoff=ValidateCatalogueReadHandoff();
+            var report=new { sameUserDpapiCatalogueHandoff=catalogueHandoff, sourceCommit=Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "UNBOUND_LOCAL_BUILD", os=Environment.OSVersion.ToString(), pages=records,
                 normalWindowCatalogueReopenSucceeded=reopenError is null, reopenError,
                 settingsPersisted=restored, diagnosticPoolClearRequired=reopenError is not null, publicNetworkConsent=false,tun=false,
                 scope="Actual WPF navigation and two settings across window/catalogue reopen in one process. Any pool clear is diagnostic only. Harness cleanup, not real tray Exit, process restart, installer, theme or multi-DPI acceptance." };
@@ -74,6 +78,47 @@ internal static class Program
         catch(Exception ex) { File.WriteAllText(Path.Combine(output,"failure.txt"),ex.ToString());Console.Error.WriteLine(ex);return 1; }
         finally { if(window is not null) CloseHarnessWindow(window);SqliteConnection.ClearAllPools();app.Shutdown(); }
     }
+    private static object ValidateCatalogueReadHandoff()
+    {
+        var directory=Directory.CreateTempSubdirectory("autovpn-windows-handoff-");
+        try
+        {
+            var path=Path.Combine(directory.FullName,"catalogue.sqlite");
+            using var writer=SqliteCatalogue.Open(path,new DpapiSecretProtector());
+            var now=DateTimeOffset.UtcNow;
+            var semantics=new NodeSemantics {Protocol=ProtocolKind.Vless,Host="203.0.113.80",Port=443,
+                UserId="11111111-1111-4111-8111-111111111111",Security="tls",Transport="tcp",Encryption="none"};
+            writer.ApplySnapshot(new SnapshotCommit {ArtifactId="windows-synthetic",FamilyId="black-vless",ContentHash="synthetic",Complete=true,NowUtc=now,
+                Nodes=[new SnapshotNode {ArtifactId="windows-synthetic",FamilyId="black-vless",Label="synthetic",Semantics=semantics,Digest=CanonicalIdentity.Digest(semantics)}]});
+            using var reader=SqliteCatalogue.OpenReadOnly(path,new DpapiSecretProtector());
+            var id=writer.Nodes[0].NodeId;
+            if(reader.Nodes.Count!=1 || reader.Nodes[0].Semantics.UserId!=semantics.UserId)
+                throw new InvalidOperationException("Windows same-user DPAPI read failed.");
+            // Synthetic metadata only. No probe, public source, runtime or network changes.
+            writer.ApplyAssessment(id,writer.Nodes[0].Assessment! with {MedianLatencyMs=123});
+            reader.Refresh();
+            if(reader.Nodes[0].Assessment?.MedianLatencyMs!=123)throw new InvalidOperationException("Live assessment handoff failed.");
+            reader.SetActiveNode(id);writer.TrySetFavorite(id,true);reader.Refresh();
+            if(!reader.Nodes[0].Favorite || !reader.Nodes[0].ActiveSession || writer.Nodes[0].ActiveSession)
+                throw new InvalidOperationException("Read-only ownership or writer separation failed.");
+            var refused=false;
+            try {reader.Settings=reader.Settings with {Revision=reader.Settings.Revision+1};}
+            catch(CatalogueStoreException ex) when(ex.Message=="CATALOGUE_READ_ONLY") {refused=true;}
+            if(!refused)throw new InvalidOperationException("Read-only catalogue accepted a write.");
+            var secret=System.Text.Encoding.UTF8.GetBytes(semantics.UserId!);
+            foreach(var file in Directory.GetFiles(directory.FullName))
+            {
+                using var stream=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);
+                using var bytes=new MemoryStream();stream.CopyTo(bytes);
+                if(bytes.ToArray().AsSpan().IndexOf(secret)>=0)throw new InvalidOperationException("Synthetic credential persisted as plaintext.");
+            }
+            return new {passed=true,dpapiCurrentUser=true,separateReadOnlyConnection=true,liveAssessmentRefresh=true,
+                writerConflict=false,persistentReadOnlyMutationRefused=true,plainCredentialAbsent=true,
+                crossProcess=false,privilegedService=false,syntheticOnly=true,publicTraffic=false};
+        }
+        finally {directory.Delete(true);}
+    }
+
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {
         for(var i=0;i<VisualTreeHelper.GetChildrenCount(root);i++) { var child=VisualTreeHelper.GetChild(root,i);yield return child;foreach(var nested in Descendants(child))yield return nested; }

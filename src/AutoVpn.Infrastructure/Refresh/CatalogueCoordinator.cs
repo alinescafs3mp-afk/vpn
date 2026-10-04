@@ -427,6 +427,7 @@ public sealed class CatalogueCoordinator
         var gate = new SemaphoreSlim(ProductLimits.SourceDownloadConcurrency, ProductLimits.SourceDownloadConcurrency);
         var downloads = new List<Task<DownloadResult>>(items.Count);
         var budgetSkipped = new List<RefreshWorkItem>();
+        var disabled = new List<RefreshWorkItem>();
         var count = items.Count;
         var origin = NormalizeCursor(_ledger.RefreshCursor, count);
         long reserved = 0;
@@ -434,6 +435,7 @@ public sealed class CatalogueCoordinator
         for (var index = 0; index < count; index++)
         {
             var item = items[(origin + index) % count];
+            if (!FamilyEnabled(item)) { disabled.Add(item); continue; }
             if (HeldByRetry(item, nowUtc))
             {
                 budgetSkipped.Add(item);
@@ -466,7 +468,7 @@ public sealed class CatalogueCoordinator
             gate.Dispose();
         }
 
-        var reasons = new List<string>();
+        var reasons = disabled.Select(item => item.ArtifactId + ":FAMILY_DISABLED").ToList();
         var pending = 0;
         var cancelled = false;
         var refetch = false;
@@ -479,6 +481,8 @@ public sealed class CatalogueCoordinator
 
         foreach (var download in finished)
         {
+            if (download.Reason == "FAMILY_DISABLED" || !FamilyEnabled(download.Item))
+            { reasons.Add(download.Item.ArtifactId + ":FAMILY_DISABLED"); continue; }
             if (download.Cancelled)
             {
                 cancelled = true;
@@ -493,6 +497,8 @@ public sealed class CatalogueCoordinator
 
             var accepted = _fence.TryPublish(cycle, () =>
             {
+                if (!FamilyEnabled(download.Item))
+                { reasons.Add(download.Item.ArtifactId + ":FAMILY_DISABLED"); return; }
                 if (download.Result is null)
                 {
                     failed = true;
@@ -559,6 +565,9 @@ public sealed class CatalogueCoordinator
         return await ProbeCoordinator.RunAsync(_catalogue, _probe, target, nowUtc, cancellationToken, budget, spent: _byteBudget).ConfigureAwait(false);
     }
 
+    private bool FamilyEnabled(RefreshWorkItem item)
+        => !_catalogue.Settings.DisabledFamilyIds.Contains(item.FamilyId, StringComparer.Ordinal);
+
     private async Task<DownloadResult> DownloadAsync(
         RefreshWorkItem item,
         SemaphoreSlim gate,
@@ -585,6 +594,7 @@ public sealed class CatalogueCoordinator
             DownloadResult? ineligible = null;
             foreach (var url in item.Urls)
             {
+                if (!FamilyEnabled(item)) return new DownloadResult(item, null, false, false, "FAMILY_DISABLED", null, null, null);
                 var known = _catalogue.HasCommittedSnapshot(item.ArtifactId, _ledger.Find(url.AbsoluteUri)?.ContentHash);
                 var fetch = await _fetcher.GetAsync(
                     url,
@@ -601,6 +611,7 @@ public sealed class CatalogueCoordinator
                 var prior = _ledger.Find(url.AbsoluteUri);
                 if (fetch.NotModified && !known)
                 {
+                    if (!FamilyEnabled(item)) return new DownloadResult(item, null, false, false, "FAMILY_DISABLED", null, null, null);
                     fetch = await _fetcher.GetAsync(url, null, ProductLimits.MaxArtifactBytes, cancellationToken, attemptTimeout, maxRetries: 0).ConfigureAwait(false);
                     refetch = true;
                     if (fetch.ReasonCode == ReasonCodes.Canceled)

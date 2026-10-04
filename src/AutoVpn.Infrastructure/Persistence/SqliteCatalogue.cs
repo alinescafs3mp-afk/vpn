@@ -12,7 +12,7 @@ namespace AutoVpn.Infrastructure.Persistence;
 /// passed through <see cref="ISecretProtector"/> before they touch the file.
 /// The broker effect journal is a different database.
 /// </summary>
-public sealed class SqliteCatalogue : ICatalogue, IDisposable
+public sealed class SqliteCatalogue : ICatalogue, IRefreshableCatalogue, IDisposable
 {
     public const int SchemaVersion = 1;
 
@@ -23,12 +23,15 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
     public object SyncRoot => _gate;
     private readonly Dictionary<string, (string Json, byte[] Blob)> _secrets = new(StringComparer.Ordinal);
     private long _revision;
+    private readonly bool _readOnly;
+    private string? _runtimeActiveNode;
 
     public string? QuarantinedFrom { get; }
 
-    private SqliteCatalogue(SqliteConnection connection, ISecretProtector protector, string? quarantinedFrom)
+    private SqliteCatalogue(SqliteConnection connection, ISecretProtector protector, string? quarantinedFrom, bool readOnly = false)
     {
         _connection = connection;
+        _readOnly = readOnly;
         _protector = protector;
         QuarantinedFrom = quarantinedFrom;
         try
@@ -91,6 +94,61 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
         return new SqliteCatalogue(connection, protector, quarantined);
     }
 
+    /// <summary>
+    /// Same-user broker view. Never creates, migrates, quarantines or writes the
+    /// owner's catalogue. DPAPI/IPC still use the interactive user, not SYSTEM.
+    /// This is a live read handoff, not a privileged installation trust root.
+    /// </summary>
+    public static SqliteCatalogue OpenReadOnly(string path, ISecretProtector protector)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(protector);
+        if (!File.Exists(path)) throw new CatalogueStoreException("CATALOGUE_MISSING");
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = path, Mode = SqliteOpenMode.ReadOnly, Cache = SqliteCacheMode.Private,
+            Pooling = false, DefaultTimeout = 1,
+        }.ToString());
+        try
+        {
+            connection.Open();
+            using var queryOnly = connection.CreateCommand();
+            queryOnly.CommandText = "PRAGMA query_only=ON;";
+            queryOnly.ExecuteNonQuery();
+            ValidateReadSchema(connection);
+            if (!FileHasSchema(connection)) throw new CatalogueStoreException("CATALOGUE_SCHEMA_MISSING");
+            return new SqliteCatalogue(connection, protector, null, readOnly: true);
+        }
+        catch { connection.Dispose(); throw; }
+    }
+
+    private static void ValidateReadSchema(SqliteConnection connection)
+    {
+        if (!FileHasSchema(connection) || ReadVersion(connection) != SchemaVersion)
+            throw new CatalogueStoreException("CATALOGUE_SCHEMA_UNSUPPORTED");
+    }
+
+    public bool IsReadOnly => _readOnly;
+
+    public void Refresh()
+    {
+        // A writable UI retains optimistic-concurrency conflict behavior. It is
+        // the sole data writer; reloading must never silently rebase its edits.
+        if (!_readOnly) return;
+        lock (_gate)
+        {
+            ValidateReadSchema(_connection);
+            var revision = ReadRevision(null);
+            if (revision < _revision) throw new CatalogueStoreException("CATALOGUE_REVISION_REGRESSED");
+            if (revision != _revision) Load();
+        }
+    }
+
+    private void EnsureWritable()
+    {
+        if (_readOnly) throw new CatalogueStoreException("CATALOGUE_READ_ONLY");
+    }
+
     public IReadOnlyList<ArtifactSnapshot> ArtifactSnapshots => _memory.ArtifactSnapshots;
     public bool HasCommittedSnapshot(string artifactId, string? contentHash = null)
     {
@@ -127,6 +185,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
     public void ApplyAssessment(string nodeId, AssessmentSnapshot assessment)
     {
+        EnsureWritable();
         lock (_gate)
         {
             var node = _memory.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
@@ -164,6 +223,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
     public int EvictOverflow(DateTimeOffset nowUtc)
     {
+        EnsureWritable();
         lock (_gate)
         {
             var next = _memory.Copy();
@@ -180,6 +240,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
     public bool TrySetFavorite(string nodeId, bool favorite)
     {
+        EnsureWritable();
         lock (_gate)
         {
             var next = _memory.Copy();
@@ -196,6 +257,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
     public bool TrySetExcluded(string nodeId, bool excluded)
     {
+        EnsureWritable();
         lock (_gate)
         {
             var next = _memory.Copy();
@@ -212,11 +274,21 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
     public void SetActiveNode(string? nodeId)
     {
+        if (_readOnly)
+        {
+            lock (_gate)
+            {
+                _runtimeActiveNode = nodeId;
+                _memory.SetActiveNode(nodeId);
+            }
+            return;
+        }
         Commit(copy => copy.SetActiveNode(nodeId));
     }
 
     private void Commit(Action<MemoryCatalogue> mutate)
     {
+        EnsureWritable();
         lock (_gate)
         {
             var next = _memory.Copy();
@@ -258,10 +330,17 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
 
     private void Load()
     {
+        // One deferred read transaction prevents mixing metadata, nodes and
+        // membership from different writer commits. Publish only after success.
+        using var transaction = _connection.BeginTransaction(deferred: true);
+        var next = new MemoryCatalogue();
+        var secrets = new Dictionary<string, (string Json, byte[] Blob)>(StringComparer.Ordinal);
+        long loadedRevision = 0;
         var settings = new ProductSettings();
         long epoch = 1;
         using (var meta = _connection.CreateCommand())
         {
+            meta.Transaction = transaction;
             meta.CommandText = "SELECT key, value FROM meta;";
             using var reader = meta.ExecuteReader();
             while (reader.Read())
@@ -274,7 +353,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
                 }
                 else if (key == "catalogue_revision" && long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var revision))
                 {
-                    _revision = revision;
+                    loadedRevision = revision;
                 }
                 else if (key == "settings")
                 {
@@ -291,6 +370,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
         var nodes = new List<CatalogueNode>();
         using (var command = _connection.CreateCommand())
         {
+            command.Transaction = transaction;
             command.CommandText = """
                 SELECT node_id, digest, semantics_blob, label, country, favorite, excluded, active,
                        first_seen, last_seen, assessment_json, policy_reason
@@ -300,8 +380,10 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
             while (reader.Read())
             {
                 var protectedSemantics = (byte[])reader.GetValue(2);
-                var semanticsJson = Encoding.UTF8.GetString(_protector.Unprotect(protectedSemantics));
-                _secrets[reader.GetString(0)] = (semanticsJson, protectedSemantics);
+                var id = reader.GetString(0);
+                var semanticsJson = _secrets.TryGetValue(id, out var cached) && cached.Blob.AsSpan().SequenceEqual(protectedSemantics)
+                    ? cached.Json : Encoding.UTF8.GetString(_protector.Unprotect(protectedSemantics));
+                secrets[id] = (semanticsJson, protectedSemantics);
                 var semantics = JsonSerializer.Deserialize<NodeSemantics>(semanticsJson, StoredJson.Options)
                     ?? throw new CatalogueStoreException("Stored node semantics could not be read.");
                 var node = new CatalogueNode
@@ -324,24 +406,27 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
             }
         }
 
+        var byId = nodes.ToDictionary(node => node.NodeId, StringComparer.Ordinal);
         using (var membership = _connection.CreateCommand())
         {
+            membership.Transaction = transaction;
             membership.CommandText = "SELECT node_id, artifact_id, family_id FROM artifact_membership;";
             using var reader = membership.ExecuteReader();
             while (reader.Read())
             {
-                var node = nodes.FirstOrDefault(item => item.NodeId == reader.GetString(0));
+                var node = byId.GetValueOrDefault(reader.GetString(0));
                 node?.ArtifactFamilies.Add(reader.GetString(1), reader.GetString(2));
             }
         }
 
         using (var families = _connection.CreateCommand())
         {
+            families.Transaction = transaction;
             families.CommandText = "SELECT node_id, family_id, current FROM family_membership;";
             using var reader = families.ExecuteReader();
             while (reader.Read())
             {
-                var node = nodes.FirstOrDefault(item => item.NodeId == reader.GetString(0));
+                var node = byId.GetValueOrDefault(reader.GetString(0));
                 if (node is null)
                 {
                     continue;
@@ -352,11 +437,18 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
             }
         }
 
-        _memory.Restore(epoch, settings, nodes);
+        next.Restore(epoch, settings, nodes);
         using var snapshots = _connection.CreateCommand();
+        snapshots.Transaction = transaction;
         snapshots.CommandText = "SELECT value FROM meta WHERE key='artifact_snapshots';";
         if (snapshots.ExecuteScalar() is string snapshotJson)
-            _memory.RestoreSnapshots(JsonSerializer.Deserialize<ArtifactSnapshot[]>(snapshotJson, StoredJson.Options) ?? []);
+            next.RestoreSnapshots(JsonSerializer.Deserialize<ArtifactSnapshot[]>(snapshotJson, StoredJson.Options) ?? []);
+        if (_readOnly) next.SetActiveNode(_runtimeActiveNode);
+        transaction.Commit();
+        _memory = next;
+        _revision = loadedRevision;
+        _secrets.Clear();
+        foreach (var pair in secrets) _secrets.Add(pair.Key, pair.Value);
     }
 
     private void Save(MemoryCatalogue source)
@@ -721,7 +813,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
         return stream.Read(header) == 16 && header.SequenceEqual("SQLite format 3\0"u8);
     }
 
-    private long ReadRevision(Microsoft.Data.Sqlite.SqliteTransaction transaction)
+    private long ReadRevision(Microsoft.Data.Sqlite.SqliteTransaction? transaction)
     {
         using var read = _connection.CreateCommand();
         read.Transaction = transaction;
