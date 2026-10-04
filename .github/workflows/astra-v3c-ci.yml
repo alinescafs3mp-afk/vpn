@@ -1,0 +1,55 @@
+name: astra-v3c-status-validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [implementation/astra-v3c-status]
+    paths: ['src/**', 'tests/**', 'Directory.Build.props', '.github/workflows/astra-v3c-ci.yml']
+permissions:
+  contents: read
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Managed and pinned native regression without system networking
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory artifacts/v3c-validation -Force | Out-Null
+          $core = ./scripts/fetch-core.ps1
+          try { ./scripts/test.ps1 -Native -CorePath $core *>&1 | Tee-Object artifacts/v3c-validation/test.log }
+          finally { if (Test-Path artifacts/test-results/results.trx) { Copy-Item artifacts/test-results/results.trx artifacts/v3c-validation/native.trx } }
+      - name: Read-only query of absent service, no installation or account changes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $text = & dotnet src/AutoVpn.Service/bin/Release/net10.0/AutoVpn.Service.dll --service-status
+          $code = $LASTEXITCODE
+          $text | Set-Content artifacts/v3c-validation/service-status.json -Encoding utf8NoBOM
+          $status = $text | ConvertFrom-Json
+          if ($code -ne 6 -or $status.state -cne 'NotInstalled') { throw 'Expected an absent service on the fresh runner.' }
+          @{sourceCommit=$env:GITHUB_SHA; scmInstalled='NOT_RUN'; pipeAuthorization='NOT_RUN'; tun='NOT_RUN'; scope='Read-only absent-service detection only'} | ConvertTo-Json | Set-Content artifacts/v3c-validation/scope.json -Encoding utf8NoBOM
+      - name: WPF navigation, version and absent-service button
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet run --project tests/AutoVpn.AuditRound6Wpf -c Release -- artifacts/v3c-wpf
+          if ($LASTEXITCODE -ne 0) { throw 'WPF smoke failed.' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3C-status-evidence-${{ github.sha }}-${{ matrix.os }}
+          path: |
+            artifacts/v3c-validation/
+            artifacts/v3c-wpf/
+          if-no-files-found: error
+          retention-days: 30

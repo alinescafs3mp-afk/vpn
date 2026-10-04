@@ -6,6 +6,34 @@ using AutoVpn.Infrastructure.Fetch;
 using AutoVpn.Infrastructure.Persistence;
 using AutoVpn.Infrastructure.Probe;
 
+// Installed mode never opens the per-user catalogue or instantiates the development runtime.
+if (args is ["--service"])
+{
+    if (!OperatingSystem.IsWindows()) return 5;
+    try { return new AutoVpn.Service.NativeServiceHost().Run(); }
+    catch (System.ComponentModel.Win32Exception) { Console.Error.WriteLine("SCM_START_REQUIRED"); return 5; }
+}
+if (args is ["--service-status"])
+{
+    var result = await AutoVpn.Infrastructure.WindowsService.InstalledServiceClient.QueryAsync();
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(result, IpcJson.Options));
+    return result.State == "Ready" ? 0 : 6;
+}
+if (args.Any(a => a.StartsWith("--", StringComparison.Ordinal)) || args.Length > 1)
+{
+    Console.Error.WriteLine("USAGE: AutoVpn.Service [catalogue-directory | --service | --service-status]");
+    return 5;
+}
+if (OperatingSystem.IsWindows())
+{
+    using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+    if (identity.User?.Value is "S-1-5-18" or "S-1-5-19" or "S-1-5-20")
+    {
+        Console.Error.WriteLine("DEVELOPMENT_BROKER_REQUIRES_USER_ACCOUNT");
+        return 5;
+    }
+}
+
 var root = args.Length > 0 ? args[0]
     : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AutoVPN");
 Directory.CreateDirectory(root);

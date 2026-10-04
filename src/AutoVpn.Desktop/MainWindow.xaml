@@ -7,7 +7,7 @@
     <Grid.ColumnDefinitions><ColumnDefinition Width="200"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
     <StackPanel>
       <TextBlock Text="AutoVPN" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,4"/>
-      <TextBlock Text="Windows-клиент · V2" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,20"/>
+      <TextBlock x:Name="VersionText" Text="Windows-клиент" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,20"/>
       <Button Content="Подключение" Click="ShowConnection" Style="{StaticResource NavButton}"/>
       <Button Content="Серверы" Click="ShowServers" Style="{StaticResource NavButton}"/>
       <Button Content="Подписки" Click="ShowSubscriptions" Style="{StaticResource NavButton}"/>
@@ -52,6 +52,8 @@
           <CheckBox x:Name="ProtectionBox" Content="Защита при обрыве" Margin="0,8,0,8" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
           <CheckBox x:Name="LanBox" Content="Разрешить доступ к локальной сети" Margin="0,0,0,8" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
           <CheckBox x:Name="InsecureBox" Content="Разрешить серверы без проверки сертификата" Margin="0,0,0,8" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+          <TextBlock x:Name="InstalledServiceText" Margin="0,14,0,8" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Text="Установленная служба Windows ещё не проверялась."/>
+          <Button x:Name="CheckServiceButton" Content="Проверить службу Windows" Click="CheckServiceClick" HorizontalAlignment="Left"/>
           <TextBlock Margin="0,12,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Text="Закрытие окна прячет его в область уведомлений. Выход — из меню значка."/>
         </StackPanel>
       </Grid>

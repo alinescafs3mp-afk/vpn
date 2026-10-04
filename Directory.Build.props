@@ -8,7 +8,7 @@
     <LangVersion>latest</LangVersion>
     <Company>AutoVPN</Company>
     <Product>AutoVPN</Product>
-    <Version>0.1.3</Version>
+    <Version>0.1.4</Version>
     <Copyright>Copyright © 2026 AutoVPN contributors</Copyright>
     <NeutralLanguage>ru</NeutralLanguage>
   </PropertyGroup>

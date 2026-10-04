@@ -48,6 +48,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        VersionText.Text = "Windows-клиент · " + typeof(MainWindow).Assembly.GetName().Version?.ToString(3);
         _root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AutoVPN");
         Directory.CreateDirectory(_root);
         _catalogue = OpenCatalogue(_root);
@@ -368,11 +369,12 @@ public partial class MainWindow : Window
         var connectJoined = await JoinOwnedAsync(_connectTask).ConfigureAwait(true);
         var refreshJoined = await JoinOwnedAsync(_refreshTask).ConfigureAwait(true);
         var statusJoined = await JoinOwnedAsync(_statusTask).ConfigureAwait(true);
+        var serviceCheckJoined = await JoinOwnedAsync(_serviceCheckTask).ConfigureAwait(true);
         if (connectJoined && _connectLease.FinishIfCurrent(generation)) _mailbox.OperationPending = false;
         var decision = UiSessionReducer.PlanExit(_mailbox.Session, _mailbox.OperationPending);
-        if (!connectJoined || !refreshJoined || !maintenanceJoined || !statusJoined || !decision.CanClose)
+        if (!connectJoined || !refreshJoined || !maintenanceJoined || !statusJoined || !serviceCheckJoined || !decision.CanClose)
         {
-            if (statusJoined) { _statusCts.Dispose(); _statusCts = new CancellationTokenSource(); }
+            if (statusJoined && serviceCheckJoined) { _statusCts.Dispose(); _statusCts = new CancellationTokenSource(); }
             Volatile.Write(ref _shuttingDown, 0); _scheduleTimer.Start(); _maintenanceTimer.Start(); _statusTimer.Start();
             if (!_checksPaused) _maintenance?.Resume();
             DetailText.Text = decision.CanClose ? "Выход остановлен: локальная операция не завершилась." : decision.Reason ?? "Выход не подтверждён.";
@@ -400,7 +402,7 @@ public partial class MainWindow : Window
     {
         if (_maintenance is null) return;
         var state = _maintenance.Snapshot;
-        var caption = state.Phase switch
+        var caption = !_catalogue.Settings.DisclosureAccepted ? "Ожидается согласие на проверки публичных серверов" : state.Phase switch
         {
             "CONSENT_REQUIRED" => "Ожидается согласие на проверки публичных серверов",
             "PAUSED" => "Проверки приостановлены",

@@ -66,8 +66,9 @@ internal static class Program
             ((CheckBox)window.FindName("LanBox")).IsChecked=originalLan;
             ((CheckBox)window.FindName("ProtectionBox")).IsChecked=originalProtection;
             if (((CheckBox)window.FindName("DisclosureBox")).IsChecked==true) throw new InvalidOperationException("Audit accidentally granted consent.");
+            var serviceControl=ValidateServiceControl(window);
             var catalogueHandoff=ValidateCatalogueReadHandoff();
-            var report=new { sameUserDpapiCatalogueHandoff=catalogueHandoff, sourceCommit=Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "UNBOUND_LOCAL_BUILD", os=Environment.OSVersion.ToString(), pages=records,
+            var report=new { installedServiceControl=serviceControl, sameUserDpapiCatalogueHandoff=catalogueHandoff, sourceCommit=Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "UNBOUND_LOCAL_BUILD", os=Environment.OSVersion.ToString(), pages=records,
                 normalWindowCatalogueReopenSucceeded=reopenError is null, reopenError,
                 settingsPersisted=restored, diagnosticPoolClearRequired=reopenError is not null, publicNetworkConsent=false,tun=false,
                 scope="Actual WPF navigation and two settings across window/catalogue reopen in one process. Any pool clear is diagnostic only. Harness cleanup, not real tray Exit, process restart, installer, theme or multi-DPI acceptance." };
@@ -78,6 +79,31 @@ internal static class Program
         catch(Exception ex) { File.WriteAllText(Path.Combine(output,"failure.txt"),ex.ToString());Console.Error.WriteLine(ex);return 1; }
         finally { if(window is not null) CloseHarnessWindow(window);SqliteConnection.ClearAllPools();app.Shutdown(); }
     }
+    private static object ValidateServiceControl(MainWindow window)
+    {
+        var expectedVersion = "Windows-клиент · " + typeof(MainWindow).Assembly.GetName().Version?.ToString(3);
+        var actualVersion = ((TextBlock)window.FindName("VersionText")).Text;
+        if (actualVersion != expectedVersion) throw new InvalidOperationException("Displayed version does not match the assembly.");
+        Descendants(window).OfType<Button>().First(b => Equals(b.Content, "Настройки"))
+            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var button = (Button)window.FindName("CheckServiceButton");
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (!button.IsEnabled && deadline.Elapsed < TimeSpan.FromSeconds(10)) Pump(50);
+        var status = ((TextBlock)window.FindName("InstalledServiceText")).Text;
+        if (!button.IsEnabled || status != "Служба Windows не установлена.")
+            throw new InvalidOperationException("Fresh-runner service query did not report NotInstalled.");
+        Descendants(window).OfType<Button>().First(b => Equals(b.Content, "Серверы"))
+            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        // Refresh the real maintenance caption without waiting for the five-second timer.
+        typeof(MainWindow).GetMethod("ShowMaintenance", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+        var maintenance = ((TextBlock)window.FindName("MaintenanceStatus")).Text;
+        if (!maintenance.StartsWith("Ожидается согласие", StringComparison.Ordinal))
+            throw new InvalidOperationException("Initial maintenance caption did not respect consent.");
+        return new { passed = true, actualVersion, status, maintenance, serviceInstalled = false,
+            privilegedConnection = "NOT_RUN", protectionEnabled = false };
+    }
+
     private static object ValidateCatalogueReadHandoff()
     {
         var directory=Directory.CreateTempSubdirectory("autovpn-windows-handoff-");
