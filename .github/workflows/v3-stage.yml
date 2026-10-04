@@ -1,0 +1,101 @@
+name: v3-staged-validation
+on:
+  push:
+    branches: [implementation/astra-v3]
+    paths: [.github/workflows/v3-stage.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.apply.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: implementation/astra-v3
+          fetch-depth: 0
+      - id: apply
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, hashlib,base64,gzip,subprocess
+          b=''.join(pathlib.Path(f'scripts/v3-stage-{i}.b64').read_text().strip() for i in (1,2,3))
+          assert hashlib.sha256(b.encode()).hexdigest()=='98a99804a82eadaf3bf2b4f3b6239b61fe9583064dc1ae7945368e826f814d88', 'staging digest mismatch'
+          p=pathlib.Path('/tmp/autovpn-v3.patch');p.write_bytes(gzip.decompress(base64.b64decode(b,validate=True)))
+          subprocess.run(['git','apply','--check',str(p)],check=True)
+          subprocess.run(['git','apply',str(p)],check=True)
+          for i in (1,2,3): pathlib.Path(f'scripts/v3-stage-{i}.b64').unlink()
+          pathlib.Path('.github/workflows/v3-stage.yml').unlink()
+          PY
+          git config user.name 'AutoVPN implementation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src tests AutoVpn.slnx scripts/v3-stage-*.b64 .github/workflows/v3-stage.yml
+          git commit -m 'feat(v3): implement owned live core session, authenticated local handoff and selectable desktop servers'
+          git push origin HEAD:implementation/astra-v3
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          mkdir -p artifacts
+          git archive HEAD -o artifacts/source.zip
+          git rev-parse HEAD > artifacts/commit.txt
+          git ls-tree -rz HEAD > artifacts/tree.nul
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V3-source
+          path: artifacts/
+          retention-days: 30
+  validation:
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Full normal regression
+        shell: pwsh
+        run: ./scripts/test.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3-normal-${{ matrix.os }}
+          path: artifacts/test-results/
+      - name: Full actual core regression without TUN
+        shell: pwsh
+        run: |
+          $core=./scripts/fetch-core.ps1
+          ./scripts/test.ps1 -Native -CorePath $core
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3-native-${{ matrix.os }}
+          path: artifacts/test-results/
+      - name: Official driver provenance only; no driver load or network changes
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force artifacts/driver-evidence | Out-Null
+          $zip=Join-Path $env:RUNNER_TEMP 'wintun-0.14.1.zip'
+          Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile $zip -TimeoutSec 60
+          $dir=Join-Path $env:RUNNER_TEMP 'wintun-verified-download'
+          Expand-Archive $zip $dir
+          $dll=Join-Path $dir 'wintun/bin/amd64/wintun.dll'
+          $sig=Get-AuthenticodeSignature $dll
+          @{url='https://www.wintun.net/builds/wintun-0.14.1.zip';archiveSha256=(Get-FileHash $zip -Algorithm SHA256).Hash;dllSha256=(Get-FileHash $dll -Algorithm SHA256).Hash;signatureStatus="$($sig.Status)";signer=$sig.SignerCertificate.Subject;dllBytes=(Get-Item $dll).Length} | ConvertTo-Json | Set-Content artifacts/driver-evidence/identity.json
+          Get-ChildItem $dir -File -Recurse | Select-Object FullName,Length | ConvertTo-Json | Set-Content artifacts/driver-evidence/files.json
+          Get-ChildItem $dir -Recurse -File | Where-Object Name -Match 'COPYING|LICENSE' | Copy-Item -Destination artifacts/driver-evidence
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: V3-driver-evidence
+          path: artifacts/driver-evidence/
