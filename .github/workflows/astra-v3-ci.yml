@@ -2,7 +2,7 @@ name: astra-v3-source-validation
 on:
   workflow_dispatch:
   push:
-    branches: [implementation/astra-v3, main]
+    branches: [implementation/astra-v3, implementation/astra-v3-verified, main]
     paths: ['src/**', 'tests/**', 'scripts/**', 'Directory.Build.props', 'global.json', '.github/workflows/astra-v3-ci.yml']
 permissions:
   contents: read
