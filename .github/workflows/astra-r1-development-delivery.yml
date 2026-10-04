@@ -2,7 +2,9 @@ name: astra-r1-development-delivery
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/astra-r1-development-delivery.yml]
+    paths:
+      - .github/workflows/astra-r1-development-delivery.yml
+      - scripts/package.ps1
   workflow_dispatch:
 permissions:
   contents: read

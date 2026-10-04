@@ -31,6 +31,8 @@ if ($IncludePinnedCore) {
     Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/MetaCubeX/mihomo/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/LICENSE' -OutFile (Join-Path $coreDirectory 'LICENSE-MIHOMO.txt') -TimeoutSec 60
     Set-Content -LiteralPath (Join-Path $coreDirectory 'UPSTREAM.txt') -Encoding utf8 -Value 'Mihomo v1.19.32. Source: https://github.com/MetaCubeX/mihomo/tree/88dcbf7f1614a67c3b36b848ee3592dfa92ada36 . Executable identity is checked against config/core-manifest.json. No signature is claimed.'
 }
+Copy-Item 'LICENSE' $out
+Copy-Item 'docs/checkpoints/V1.md' (Join-Path $out 'CHECKPOINT-V1.md')
 Copy-Item 'THIRD_PARTY_NOTICES.md' $out
 Copy-Item 'docs/GROK_BUILD_HANDOFF.md' $out
 @'
