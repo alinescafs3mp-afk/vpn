@@ -44,8 +44,14 @@ public sealed class SnapshotCommit
     public required IReadOnlyList<SnapshotNode> Nodes { get; init; }
 }
 
+public sealed record ArtifactSnapshot(string ArtifactId, string FamilyId, string ContentHash,
+    IReadOnlyList<string> Digests, DateTimeOffset AcceptedUtc);
+
 public interface ICatalogue
 {
+    object SyncRoot => this;
+    IReadOnlyList<ArtifactSnapshot> ArtifactSnapshots => [];
+    bool HasCommittedSnapshot(string artifactId, string? contentHash = null) => false;
     long NetworkEpoch { get; }
     void SetNetworkEpoch(long epoch);
     ProductSettings Settings { get; set; }
@@ -62,6 +68,39 @@ public interface ICatalogue
 public sealed class MemoryCatalogue : ICatalogue
 {
     private readonly List<CatalogueNode> _nodes = [];
+    private readonly Dictionary<string, ArtifactSnapshot> _snapshots = new(StringComparer.Ordinal);
+    public IReadOnlyList<ArtifactSnapshot> ArtifactSnapshots
+    {
+        get { lock (SyncRoot) return _snapshots.Values.ToArray(); }
+    }
+
+    public bool HasCommittedSnapshot(string artifactId, string? contentHash = null)
+    {
+        lock (SyncRoot)
+        {
+            if (!_snapshots.TryGetValue(artifactId, out var snapshot) ||
+                (contentHash is not null && snapshot.ContentHash != contentHash)) return false;
+            var current = _nodes.Where(n => n.ArtifactFamilies.ContainsKey(artifactId))
+                .Select(n => n.Digest).ToHashSet(StringComparer.Ordinal);
+            return current.SetEquals(snapshot.Digests);
+        }
+    }
+
+    public void RestoreSnapshots(IEnumerable<ArtifactSnapshot> snapshots)
+    {
+        lock (SyncRoot)
+        {
+            _snapshots.Clear();
+            foreach (var item in snapshots)
+            {
+                if (item is null || string.IsNullOrWhiteSpace(item.ArtifactId) || item.Digests is null ||
+                    item.ContentHash is null || item.FamilyId is null || item.Digests.Count > ProductLimits.MaxRetainedCandidates)
+                    throw new InvalidDataException("Invalid stored artifact snapshot.");
+                _snapshots[item.ArtifactId] = item with { Digests = Array.AsReadOnly(item.Digests.ToArray()) };
+            }
+        }
+    }
+    public object SyncRoot { get; } = new();
     private long _epoch = 1;
     private ProductSettings _settings = new();
 
@@ -72,17 +111,21 @@ public sealed class MemoryCatalogue : ICatalogue
         get => _settings;
         set
         {
-            var error = value.Validate();
-            if (error is not null)
+            lock (SyncRoot)
             {
-                throw new InvalidOperationException(error);
-            }
+                var error = value.Validate();
+                if (error is not null)
+                {
+                    throw new InvalidOperationException(error);
+                }
 
-            var allowChanged = _settings.AllowInsecureCertificates != value.AllowInsecureCertificates;
-            _settings = value;
-            if (allowChanged)
-            {
-                ReconcileCertificatePolicy();
+                var allowChanged = _settings.AllowInsecureCertificates != value.AllowInsecureCertificates;
+                _settings = value;
+                if (allowChanged)
+                {
+                    ReconcileCertificatePolicy();
+                }
+
             }
         }
     }
@@ -114,93 +157,113 @@ public sealed class MemoryCatalogue : ICatalogue
 
     public void SetNetworkEpoch(long epoch)
     {
-        _epoch = epoch;
+        lock (SyncRoot)
+        {
+            _epoch = epoch;
+
+        }
     }
 
     public void ApplySnapshot(SnapshotCommit commit)
     {
-        if (!commit.Complete)
+        lock (SyncRoot)
         {
-            return;
-        }
-
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var item in commit.Nodes)
-        {
-            seen.Add(item.Digest);
-            var existing = _nodes.FirstOrDefault(node => node.Digest == item.Digest);
-            if (existing is null)
+            if (!commit.Complete)
             {
-                existing = new CatalogueNode
-                {
-                    NodeId = Guid.NewGuid().ToString("N"),
-                    Digest = item.Digest,
-                    Semantics = item.Semantics,
-                    Label = item.Label,
-                    AdvertisedCountry = item.AdvertisedCountry,
-                    FirstSeenUtc = commit.NowUtc,
-                    LastSeenUtc = commit.NowUtc,
-                    Assessment = new AssessmentSnapshot
-                    {
-                        Digest = item.Digest,
-                        NetworkEpoch = _epoch,
-                        Health = HealthState.Pending,
-                    },
-                };
-                _nodes.Add(existing);
+                return;
             }
-            else
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in commit.Nodes)
             {
-                existing.Label = item.Label;
-                existing.AdvertisedCountry = item.AdvertisedCountry;
-                existing.LastSeenUtc = commit.NowUtc;
-                if (existing.Assessment is not null && existing.Assessment.Digest != item.Digest)
+                seen.Add(item.Digest);
+                var existing = _nodes.FirstOrDefault(node => node.Digest == item.Digest);
+                if (existing is null)
                 {
-                    existing.Assessment = new AssessmentSnapshot
+                    existing = new CatalogueNode
                     {
+                        NodeId = Guid.NewGuid().ToString("N"),
                         Digest = item.Digest,
-                        NetworkEpoch = _epoch,
-                        Health = HealthState.Pending,
+                        Semantics = item.Semantics,
+                        Label = item.Label,
+                        AdvertisedCountry = item.AdvertisedCountry,
+                        FirstSeenUtc = commit.NowUtc,
+                        LastSeenUtc = commit.NowUtc,
+                        Assessment = new AssessmentSnapshot
+                        {
+                            Digest = item.Digest,
+                            NetworkEpoch = _epoch,
+                            Health = HealthState.Pending,
+                        },
                     };
+                    _nodes.Add(existing);
+                }
+                else
+                {
+                    existing.Label = item.Label;
+                    existing.AdvertisedCountry = item.AdvertisedCountry;
+                    existing.LastSeenUtc = commit.NowUtc;
+                    if (existing.Assessment is not null && existing.Assessment.Digest != item.Digest)
+                    {
+                        existing.Assessment = new AssessmentSnapshot
+                        {
+                            Digest = item.Digest,
+                            NetworkEpoch = _epoch,
+                            Health = HealthState.Pending,
+                        };
+                    }
+                }
+
+                existing.ArtifactFamilies[commit.ArtifactId] = commit.FamilyId;
+                existing.PolicyReason = item.PolicyBlocked ? item.ReasonCode : null;
+                RebuildFamilies(existing);
+            }
+
+            foreach (var node in _nodes)
+            {
+                if (node.ArtifactFamilies.TryGetValue(commit.ArtifactId, out var family) &&
+                    family == commit.FamilyId &&
+                    !seen.Contains(node.Digest))
+                {
+                    node.ArtifactFamilies.Remove(commit.ArtifactId);
+                    RebuildFamilies(node);
                 }
             }
+            _snapshots[commit.ArtifactId] = new ArtifactSnapshot(commit.ArtifactId, commit.FamilyId,
+                commit.ContentHash, Array.AsReadOnly(commit.Nodes.Select(n => n.Digest)
+                    .Distinct(StringComparer.Ordinal).OrderBy(d => d, StringComparer.Ordinal).ToArray()), commit.NowUtc);
 
-            existing.ArtifactFamilies[commit.ArtifactId] = commit.FamilyId;
-            existing.PolicyReason = item.PolicyBlocked ? item.ReasonCode : null;
-            RebuildFamilies(existing);
-        }
-
-        foreach (var node in _nodes)
-        {
-            if (node.ArtifactFamilies.TryGetValue(commit.ArtifactId, out var family) &&
-                family == commit.FamilyId &&
-                !seen.Contains(node.Digest))
-            {
-                node.ArtifactFamilies.Remove(commit.ArtifactId);
-                RebuildFamilies(node);
-            }
         }
     }
 
     public void Restore(long epoch, ProductSettings settings, IReadOnlyList<CatalogueNode> nodes)
     {
-        _epoch = epoch;
-        Settings = settings;
-        _nodes.Clear();
-        _nodes.AddRange(nodes);
+        lock (SyncRoot)
+        {
+            _epoch = epoch;
+            Settings = settings;
+            _nodes.Clear();
+            _nodes.AddRange(nodes);
+
+        }
     }
 
     public MemoryCatalogue Copy()
     {
-        var copy = new MemoryCatalogue();
-        copy._epoch = _epoch;
-        copy._settings = _settings;
-        foreach (var node in _nodes)
+        lock (SyncRoot)
         {
-            copy._nodes.Add(CloneNode(node));
-        }
+            var copy = new MemoryCatalogue();
+            copy._epoch = _epoch;
+            copy._settings = _settings;
+            foreach (var node in _nodes)
+            {
+                copy._nodes.Add(CloneNode(node));
+            }
 
-        return copy;
+            copy.RestoreSnapshots(_snapshots.Values);
+            return copy;
+
+        }
     }
 
     public static bool ReconcileStoredDigest(CatalogueNode node)
@@ -244,6 +307,7 @@ public sealed class MemoryCatalogue : ICatalogue
             ActiveSession = node.ActiveSession,
             PolicyReason = node.PolicyReason,
             Assessment = node.Assessment,
+            ProbePublication = node.ProbePublication,
             FirstSeenUtc = node.FirstSeenUtc,
             LastSeenUtc = node.LastSeenUtc,
         };
@@ -267,33 +331,45 @@ public sealed class MemoryCatalogue : ICatalogue
 
     public bool TrySetFavorite(string nodeId, bool favorite)
     {
-        var node = _nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        if (node is null)
+        lock (SyncRoot)
         {
-            return false;
-        }
+            var node = _nodes.FirstOrDefault(item => item.NodeId == nodeId);
+            if (node is null)
+            {
+                return false;
+            }
 
-        node.Favorite = favorite;
-        return true;
+            node.Favorite = favorite;
+            return true;
+
+        }
     }
 
     public bool TrySetExcluded(string nodeId, bool excluded)
     {
-        var node = _nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        if (node is null)
+        lock (SyncRoot)
         {
-            return false;
-        }
+            var node = _nodes.FirstOrDefault(item => item.NodeId == nodeId);
+            if (node is null)
+            {
+                return false;
+            }
 
-        node.Excluded = excluded;
-        return true;
+            node.Excluded = excluded;
+            return true;
+
+        }
     }
 
     public void SetActiveNode(string? nodeId)
     {
-        foreach (var node in _nodes)
+        lock (SyncRoot)
         {
-            node.ActiveSession = nodeId is not null && node.NodeId == nodeId;
+            foreach (var node in _nodes)
+            {
+                node.ActiveSession = nodeId is not null && node.NodeId == nodeId;
+            }
+
         }
     }
 
@@ -318,42 +394,54 @@ public sealed class MemoryCatalogue : ICatalogue
 
     public void ApplyAssessment(string nodeId, AssessmentSnapshot assessment)
     {
-        var node = _nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        if (node is null || !string.Equals(node.Digest, assessment.Digest, StringComparison.Ordinal))
+        lock (SyncRoot)
         {
-            return;
-        }
+            var node = _nodes.FirstOrDefault(item => item.NodeId == nodeId);
+            if (node is null || !string.Equals(node.Digest, assessment.Digest, StringComparison.Ordinal))
+            {
+                return;
+            }
 
-        if (assessment.NetworkEpoch != _epoch)
-        {
-            return;
-        }
+            if (assessment.NetworkEpoch != _epoch)
+            {
+                return;
+            }
 
-        node.Assessment = assessment;
+            node.Assessment = assessment;
+
+        }
     }
 
     public int EvictOverflow(DateTimeOffset nowUtc)
     {
-        var overflow = _nodes.Count - ProductLimits.MaxRetainedCandidates;
-        var victims = RetentionPolicy.EvictOrder(_nodes.Select(node => new EvictionCandidate
+        lock (SyncRoot)
         {
-            NodeId = node.NodeId,
-            Active = node.ActiveSession,
-            Favorite = node.Favorite,
-            Failed = node.Assessment?.Health == HealthState.Failed,
-            CurrentUpstream = node.CurrentFamilies.Count > 0,
-            LastSuccessUtc = node.Assessment?.LastSuccessUtc,
-        }), overflow);
-        _nodes.RemoveAll(node => victims.Contains(node.NodeId));
-        return victims.Count;
+            var overflow = _nodes.Count - ProductLimits.MaxRetainedCandidates;
+            var victims = RetentionPolicy.EvictOrder(_nodes.Select(node => new EvictionCandidate
+            {
+                NodeId = node.NodeId,
+                Active = node.ActiveSession,
+                Favorite = node.Favorite,
+                Failed = node.Assessment?.Health == HealthState.Failed,
+                CurrentUpstream = node.CurrentFamilies.Count > 0,
+                LastSuccessUtc = node.Assessment?.LastSuccessUtc,
+            }), overflow);
+            _nodes.RemoveAll(node => victims.Contains(node.NodeId));
+            return victims.Count;
+
+        }
     }
 
     public IReadOnlyList<CatalogueNode> Eligible(EligibilityContext context)
     {
-        var disabled = context.DisabledFamilies.Count > 0
-            ? context.DisabledFamilies
-            : Settings.DisabledFamilyIds.ToHashSet(StringComparer.Ordinal);
-        return _nodes.Where(node => IsEligible(node, context with { DisabledFamilies = disabled })).ToArray();
+        lock (SyncRoot)
+        {
+            var disabled = context.DisabledFamilies.Count > 0
+                ? context.DisabledFamilies
+                : Settings.DisabledFamilyIds.ToHashSet(StringComparer.Ordinal);
+            return _nodes.Where(node => IsEligible(node, context with { DisabledFamilies = disabled })).ToArray();
+
+        }
     }
 
     public static bool IsEligible(CatalogueNode node, EligibilityContext context)

@@ -44,7 +44,7 @@ public sealed class IndependentRound3Tests
     [Fact]
     public void A02_Control_ReadRequestsDoNotExhaustDisconnect()
     {
-        var dispatcher = new IpcDispatcher();
+        var dispatcher = new ProtocolTestDispatcher();
         for (var index = 0; index < 1500; index++)
         {
             var result = dispatcher.Dispatch(Request(IpcOperations.GetSnapshot, "read-" + index), Caller(), Ok);
@@ -56,7 +56,7 @@ public sealed class IndependentRound3Tests
     [Fact]
     public void A03_LongLivedMutationTrafficMustRemainUsable()
     {
-        var dispatcher = new IpcDispatcher();
+        var dispatcher = new ProtocolTestDispatcher();
         for (var index = 0; index < 300; index++)
         {
             var result = dispatcher.Dispatch(Request(IpcOperations.ReportHealth, "health-" + index), Caller(), Ok);
@@ -234,7 +234,7 @@ public sealed class IndependentRound3Tests
         Assert.Equal(0, report.Succeeded);
     }
 
-    [Fact]
+    [LinuxOnlyFact]
     public async Task A16_OutputDrainMustContinueAfterItsRetentionCap()
     {
         if (!OperatingSystem.IsLinux()) { return; } // Linux-specific child fixture, not a Windows proof.
@@ -316,9 +316,9 @@ public sealed class IndependentRound3Tests
     private static IpcRequest Request(string operation, string id) => new()
     { ProtocolVersion = ProductLimits.IpcProtocolVersion, RequestId = id, Operation = operation, Payload = JsonSerializer.SerializeToElement(new { }) };
     private static IpcResponse Ok(IpcRequest request) => new() { RequestId = request.RequestId, Ok = true };
-    private sealed class Scripted(Func<NodeSemantics, ProbeObservation> next) : IProbeTransport
+    private sealed class Scripted(Func<NodeSemantics, ProbeObservation> next) : BoundTestProbeTransport
     {
-        public Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
+        public override Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
             => Task.FromResult(next(node));
     }
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> next) : HttpMessageHandler

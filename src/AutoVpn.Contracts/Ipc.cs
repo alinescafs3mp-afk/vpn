@@ -5,6 +5,7 @@ namespace AutoVpn.Contracts;
 
 public static class IpcOperations
 {
+    public const string OpenSession = "OpenSession";
     public const string GetSnapshot = "GetSnapshot";
     public const string Connect = "Connect";
     public const string Disconnect = "Disconnect";
@@ -14,7 +15,7 @@ public static class IpcOperations
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
-        GetSnapshot, Connect, Disconnect, ApplyRuntimeSet, ReportHealth, RecoverOwned,
+        OpenSession, GetSnapshot, Connect, Disconnect, ApplyRuntimeSet, ReportHealth, RecoverOwned,
     };
 
     public static bool ChangesState(string operation)
@@ -23,19 +24,22 @@ public static class IpcOperations
     }
 }
 
-public sealed class IpcRequest
+public sealed record IpcRequest
 {
     public int ProtocolVersion { get; init; }
     public required string RequestId { get; init; }
+    public string? SessionToken { get; init; }
+    public long CommandSequence { get; init; }
     public long ExpectedStateRevision { get; init; }
     public required string Operation { get; init; }
     public JsonElement Payload { get; init; }
 }
 
-public sealed class IpcResponse
+public sealed record IpcResponse
 {
-    public int ProtocolVersion { get; init; } = 1;
+    public int ProtocolVersion { get; init; } = 2;
     public required string RequestId { get; init; }
+    public string? SessionToken { get; init; }
     public bool Ok { get; init; }
     public string? ErrorCode { get; init; }
     public string? Message { get; init; }
@@ -54,6 +58,7 @@ public sealed class BrokerSnapshot
     public bool ProtectionArmed { get; init; }
     public string? BlockReason { get; init; }
     public bool CoreRunning { get; init; }
+    public int OwnedResourceCount { get; init; }
     public string? CoreVersion { get; init; }
     public long SessionBytesDown { get; init; }
     public long SessionBytesUp { get; init; }

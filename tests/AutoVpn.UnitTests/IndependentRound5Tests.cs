@@ -236,11 +236,11 @@ public sealed class IndependentRound5Tests
     [Fact]
     public void I01_ProbabilisticReplayFilterMustNotDenyFreshSafetyCommand()
     {
-        var dispatcher = new IpcDispatcher(); var caller = new CallerIdentity { Sid = "synthetic-owner", SessionId = 1 };
+        var dispatcher = new ProtocolTestDispatcher(); var caller = new CallerIdentity { Sid = "synthetic-owner", SessionId = 1 };
         static IpcResponse Run(IpcRequest r) => new() { RequestId = r.RequestId, Ok = true };
         for (var index = 0; index < 100000; index++)
-            dispatcher.Dispatch(new IpcRequest { ProtocolVersion = 1, RequestId = "R5-command-" + index.ToString(CultureInfo.InvariantCulture), Operation = IpcOperations.ReportHealth }, caller, Run);
-        var result = dispatcher.Dispatch(new IpcRequest { ProtocolVersion = 1, RequestId = "R5-disconnect-70", Operation = IpcOperations.Disconnect }, caller, Run);
+            dispatcher.Dispatch(new IpcRequest { ProtocolVersion = ProductLimits.IpcProtocolVersion, RequestId = "R5-command-" + index.ToString(CultureInfo.InvariantCulture), Operation = IpcOperations.ReportHealth }, caller, Run);
+        var result = dispatcher.Dispatch(new IpcRequest { ProtocolVersion = ProductLimits.IpcProtocolVersion, RequestId = "R5-disconnect-70", Operation = IpcOperations.Disconnect }, caller, Run);
         Assert.True(result.Ok, "A never-issued safety request was rejected: " + result.ErrorCode);
     }
 
@@ -362,9 +362,9 @@ public sealed class IndependentRound5Tests
         { new StandbyCandidate { NodeId = c.Nodes[1].NodeId, EndpointKey = "synthetic", Country = "DE", SourceFamilyId = "black-vless" } } }), CancellationToken.None);
     private static Task<IpcResponse> Health(BrokerEngine e, ICatalogue c, CancellationToken token = default) => e.HandleAsync(Request(e,IpcOperations.ReportHealth,
         new HealthPayload { FailureKind = nameof(FailureKind.CoreExit), ConsecutiveFailures = 3, NetworkEpoch = c.NetworkEpoch }), token);
-    private static IpcRequest Request(BrokerEngine e,string op,object payload) => new() { ProtocolVersion=1,RequestId=Guid.NewGuid().ToString("N"),ExpectedStateRevision=e.Snapshot().Revision,Operation=op,Payload=JsonSerializer.SerializeToElement(payload,IpcJson.Options) };
-    private sealed class Scripted(Func<NodeSemantics,Uri,CancellationToken,Task<ProbeObservation>> run) : IProbeTransport
-    { public Task<ProbeObservation> ProbeAsync(NodeSemantics n,Uri t,CancellationToken token) => run(n,t,token); }
+    private static IpcRequest Request(BrokerEngine e,string op,object payload) => new() { ProtocolVersion = ProductLimits.IpcProtocolVersion,RequestId=Guid.NewGuid().ToString("N"),ExpectedStateRevision=e.Snapshot().Revision,Operation=op,Payload=JsonSerializer.SerializeToElement(payload,IpcJson.Options) };
+    private sealed class Scripted(Func<NodeSemantics,Uri,CancellationToken,Task<ProbeObservation>> run) : BoundTestProbeTransport
+    { public override Task<ProbeObservation> ProbeAsync(NodeSemantics n,Uri t,CancellationToken token) => run(n,t,token); }
     private sealed class Handler(Func<HttpRequestMessage,HttpResponseMessage> run) : HttpMessageHandler
     { protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token) => Task.FromResult(run(request)); }
     private sealed class Guard : INetworkGuard

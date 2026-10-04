@@ -263,6 +263,7 @@ public sealed class Round2SliceBTests
             Assert.Empty(restarted.OpenEffects());
             Assert.True(EffectJournal.HasUnknownMarker(path));
 
+            restarted.Dispose(); // The test owns this live handle; close it before deliberate deletion on Windows.
             File.Delete(path);
             Assert.True(EffectJournal.HasUnknownMarker(path));
             using var replaced = EffectJournal.Open(path);

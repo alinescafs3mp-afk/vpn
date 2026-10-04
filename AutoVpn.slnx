@@ -10,6 +10,7 @@
     <Project Path="src/AutoVpn.Service/AutoVpn.Service.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AutoVpn.ProcessFixture/AutoVpn.ProcessFixture.csproj" />
     <Project Path="tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj" />
   </Folder>
 </Solution>

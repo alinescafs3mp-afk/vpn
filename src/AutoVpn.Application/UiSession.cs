@@ -9,6 +9,7 @@ public sealed record UiSession
     public string PhaseLabel { get; init; } = "Состояние неизвестно";
     public string Detail { get; init; } = "Служба ещё не вызывалась. Доступность серверов не измерялась.";
     public bool LastKnownProtectionArmed { get; init; }
+    public bool HasUnresolvedResources { get; init; }
     public bool BrokerReachable { get; init; }
     public bool ClaimsVerifiedDisconnect { get; init; }
     public bool DisclosureAccepted { get; init; }
@@ -29,7 +30,7 @@ public static class UiSessionReducer
     public static UiSession BrokerUnreachable(UiSession previous)
     {
         var armed = previous.LastKnownProtectionArmed;
-        var safety = armed || SessionText.OffersDisconnect(previous.PhaseCode, protectionArmed: false);
+        var safety = previous.HasUnresolvedResources || armed || SessionText.OffersDisconnect(previous.PhaseCode, protectionArmed: false);
         var detail = armed
             ? "Брокер недоступен. Последний известный признак защиты: включена. Отключение не подтверждено."
             : "Брокер недоступен. Последний известный признак защиты: не включена. Отключение не подтверждено.";
@@ -47,16 +48,18 @@ public static class UiSessionReducer
 
     public static UiSession FromSnapshot(UiSession previous, BrokerSnapshot snapshot, string? message, bool disclosureAccepted)
     {
-        var safety = SessionText.OffersDisconnect(snapshot.Phase, snapshot.ProtectionArmed);
+        var unresolved = snapshot.CoreRunning || snapshot.OwnedResourceCount > 0;
+        var safety = unresolved || SessionText.OffersDisconnect(snapshot.Phase, snapshot.ProtectionArmed);
         var verifiedDisconnect = snapshot.Phase == nameof(TunnelPhase.Disconnected)
             && !snapshot.ProtectionArmed
-            && !snapshot.CoreRunning;
+            && !unresolved;
         return previous with
         {
             PhaseCode = snapshot.Phase,
             PhaseLabel = SessionText.Phase(snapshot.Phase),
             Detail = message ?? previous.Detail,
             LastKnownProtectionArmed = snapshot.ProtectionArmed,
+            HasUnresolvedResources = unresolved,
             BrokerReachable = true,
             ClaimsVerifiedDisconnect = verifiedDisconnect,
             DisclosureAccepted = disclosureAccepted,

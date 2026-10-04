@@ -20,6 +20,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
     private readonly ISecretProtector _protector;
     private MemoryCatalogue _memory = new();
     private readonly object _gate = new();
+    public object SyncRoot => _gate;
     private readonly Dictionary<string, (string Json, byte[] Blob)> _secrets = new(StringComparer.Ordinal);
     private long _revision;
 
@@ -90,6 +91,11 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
         return new SqliteCatalogue(connection, protector, quarantined);
     }
 
+    public IReadOnlyList<ArtifactSnapshot> ArtifactSnapshots => _memory.ArtifactSnapshots;
+    public bool HasCommittedSnapshot(string artifactId, string? contentHash = null)
+    {
+        lock (_gate) return _memory.HasCommittedSnapshot(artifactId, contentHash);
+    }
     public long NetworkEpoch => _memory.NetworkEpoch;
 
     public ProductSettings Settings
@@ -347,6 +353,10 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
         }
 
         _memory.Restore(epoch, settings, nodes);
+        using var snapshots = _connection.CreateCommand();
+        snapshots.CommandText = "SELECT value FROM meta WHERE key='artifact_snapshots';";
+        if (snapshots.ExecuteScalar() is string snapshotJson)
+            _memory.RestoreSnapshots(JsonSerializer.Deserialize<ArtifactSnapshot[]>(snapshotJson, StoredJson.Options) ?? []);
     }
 
     private void Save(MemoryCatalogue source)
@@ -405,6 +415,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
             Put("network_epoch", source.NetworkEpoch.ToString(CultureInfo.InvariantCulture));
             Put("protector", _protector.ProtectorId);
             Put("settings", JsonSerializer.Serialize(source.Settings, StoredJson.Options));
+            Put("artifact_snapshots", JsonSerializer.Serialize(source.ArtifactSnapshots, StoredJson.Options));
         }
 
         foreach (var node in source.Nodes)
@@ -495,6 +506,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
         PutMeta(transaction, "catalogue_revision", (_revision + 1).ToString(CultureInfo.InvariantCulture));
         PutMeta(transaction, "network_epoch", source.NetworkEpoch.ToString(CultureInfo.InvariantCulture));
         PutMeta(transaction, "settings", JsonSerializer.Serialize(source.Settings, StoredJson.Options));
+        PutMeta(transaction, "artifact_snapshots", JsonSerializer.Serialize(source.ArtifactSnapshots, StoredJson.Options));
         foreach (var node in source.Nodes)
         {
             var previous = _memory.Nodes.First(item => item.NodeId == node.NodeId);
@@ -532,7 +544,7 @@ public sealed class SqliteCatalogue : ICatalogue, IDisposable
     {
         using var meta = _connection.CreateCommand();
         meta.Transaction = transaction;
-        meta.CommandText = "UPDATE meta SET value=$value WHERE key=$key;";
+        meta.CommandText = "INSERT INTO meta(key,value) VALUES($key,$value) ON CONFLICT(key) DO UPDATE SET value=excluded.value;";
         meta.Parameters.AddWithValue("$key", name);
         meta.Parameters.AddWithValue("$value", text);
         meta.ExecuteNonQuery();

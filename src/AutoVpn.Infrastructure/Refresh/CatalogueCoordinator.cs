@@ -253,6 +253,8 @@ public sealed class CatalogueCoordinator
 
         var resolved = await ResolveCommitAsync(registry, cancellationToken, attemptTimeout).ConfigureAwait(false);
         var commit = resolved.Sha;
+        if (resolved.TreeSha is null && !IsCommitReference(TreeSegment(registry.TreeApi)))
+            return DiscoveryFailed(schedulingUrl, commit, "COMMIT_RESOLUTION_FAILED", 0);
         var cacheAgrees = CacheAgrees(cached, _ledger.ResolvedCommitFor(schedulingUrl), commit, resolved.TreeSha);
         var treeUrl = resolved.TreeSha is null
             ? registry.TreeApi
@@ -349,6 +351,8 @@ public sealed class CatalogueCoordinator
     {
         return treeSha is null || string.Equals(parsed.CommitSha, treeSha, StringComparison.Ordinal);
     }
+
+    private static bool IsCommitReference(string value) => value.Length == 40 && value.All(Uri.IsHexDigit);
 
     private readonly record struct ResolvedCommit(string Sha, string? TreeSha);
 
@@ -581,7 +585,7 @@ public sealed class CatalogueCoordinator
             DownloadResult? ineligible = null;
             foreach (var url in item.Urls)
             {
-                var known = _catalogue.Nodes.Any(node => node.ArtifactFamilies.ContainsKey(item.ArtifactId));
+                var known = _catalogue.HasCommittedSnapshot(item.ArtifactId, _ledger.Find(url.AbsoluteUri)?.ContentHash);
                 var fetch = await _fetcher.GetAsync(
                     url,
                     _ledger.EtagFor(url.AbsoluteUri),

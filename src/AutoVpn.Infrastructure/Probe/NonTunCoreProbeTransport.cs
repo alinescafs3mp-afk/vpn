@@ -98,6 +98,12 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
 
     public async Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, ProbeAdmission admission, CancellationToken cancellationToken)
     {
+        var result = await ProbeCoreAsync(node, target, admission, cancellationToken).ConfigureAwait(false);
+        return result with { Attempt = admission.Attempt };
+    }
+
+    private async Task<ProbeObservation> ProbeCoreAsync(NodeSemantics node, Uri target, ProbeAdmission admission, CancellationToken cancellationToken)
+    {
         var digest = CanonicalIdentity.Digest(node);
         if (target.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(target.UserInfo))
         {
@@ -185,7 +191,6 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             start.ArgumentList.Add("-d");
             start.ArgumentList.Add(directory.FullName);
             start.Environment["HOME"] = directory.FullName;
-            var watch = Stopwatch.StartNew();
             await using var session = await ProbeWorker.StartAsync(start, socksPort, _connectTimeout, cancellationToken, directory.FullName).ConfigureAwait(false);
             LastDiagnostic = session.Diagnostic;
             if (cancellationToken.IsCancellationRequested)
@@ -199,6 +204,8 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
                 return Fail(ProbeClass.CoreFailure, "CORE_START_FAILED", digest, target);
             }
 
+            // Measure the candidate exchange, not local process creation/readiness.
+            var watch = Stopwatch.StartNew();
             TlsProbeExchange exchange;
             try
             {

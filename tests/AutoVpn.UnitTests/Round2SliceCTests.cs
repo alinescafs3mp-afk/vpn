@@ -20,7 +20,7 @@ public sealed class Round2SliceCTests
     {
         var pipe = "autovpn-rt18-" + Guid.NewGuid().ToString("N");
         var engine = new BrokerEngine(new MemoryCatalogue(), new UnavailableNetworkGuard(), new RefusingCoreController());
-        var server = LocalIpcServer.Start(pipe, new IpcDispatcher(), engine, new CallerIdentity { Sid = "owner", SessionId = 1 });
+        var server = LocalIpcServer.Start(pipe, new ProtocolTestDispatcher(), engine, new CallerIdentity { Sid = "owner", SessionId = 1 });
         var holders = new List<NamedPipeClientStream>();
         try
         {

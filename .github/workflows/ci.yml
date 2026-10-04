@@ -1,57 +1,20 @@
 name: ci
-
 on:
   push:
   pull_request:
-
+permissions:
+  contents: read
 jobs:
   unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
       - name: Build and unit-test
-        run: |
-          dotnet build AutoVpn.slnx -c Release --nologo
-          dotnet test AutoVpn.slnx -c Release --nologo --filter "FullyQualifiedName!~Native_Round5"
-        env:
-          # Leave unset. The pinned Mihomo fact skips and must not count as native validation.
-          AUTOVPN_MIHOMO_PATH: ""
-
-  native-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: global.json
-      - name: Provision the pinned core and run native facts
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import gzip, hashlib, json, pathlib, urllib.request
-          manifest = json.loads(pathlib.Path("config/core-manifest.json").read_text())
-          assets = {item["name"]: item["sha256"] for item in manifest["assets"]}
-          archive_name = "mihomo-linux-amd64-v1.19.32.gz"
-          binary_name = "mihomo-linux-amd64"
-          url = "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/" + archive_name
-          archive = pathlib.Path("/tmp/mihomo-linux-amd64.gz")
-          urllib.request.urlretrieve(url, archive)
-          archive_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
-          if archive_hash != assets[archive_name]:
-              raise SystemExit("archive sha256 " + archive_hash)
-          raw = gzip.open(archive, "rb").read()
-          binary_hash = hashlib.sha256(raw).hexdigest()
-          if binary_hash != assets[binary_name]:
-              raise SystemExit("binary sha256 " + binary_hash)
-          binary = pathlib.Path("/tmp/mihomo")
-          binary.write_bytes(raw)
-          binary.chmod(0o755)
-          PY
-          dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --nologo --filter "FullyQualifiedName~Native_Round5" --blame-hang-timeout 120s
-        env:
-          R5_CORE_PATH: /tmp/mihomo
-          R5_CORE_HASH: "3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8"
-          AUTOVPN_MIHOMO_PATH: /tmp/mihomo
+        shell: pwsh
+        run: ./scripts/test.ps1

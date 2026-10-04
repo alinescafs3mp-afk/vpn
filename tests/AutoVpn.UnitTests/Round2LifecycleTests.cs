@@ -18,7 +18,7 @@ namespace AutoVpn.UnitTests;
 public sealed class Round2LifecycleTests
 {
     private const string Uuid = "11111111-1111-4111-8111-111111111111";
-    private const string CoreHash = "3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8";
+    private static string CoreHash => TestCorePins.ExpectedHash;
     private const string TreeSha = "0123456789abcdef0123456789abcdef01234567";
 
     [Fact]
@@ -28,7 +28,7 @@ public sealed class Round2LifecycleTests
         var core = new HoldFirstStart();
         var engine = new BrokerEngine(catalogue, new ArmingGuard(), core);
         var pipe = "autovpn-rt10-" + Guid.NewGuid().ToString("N");
-        await using var server = LocalIpcServer.Start(pipe, new IpcDispatcher(), engine, new CallerIdentity { Sid = "owner", SessionId = 1 });
+        await using var server = LocalIpcServer.Start(pipe, new ProtocolTestDispatcher(), engine, new CallerIdentity { Sid = "owner", SessionId = 1 });
         var restarted = new SessionMailbox();
         var snapshot = await RoundTripAsync(pipe, IpcOperations.GetSnapshot, new Dictionary<string, string>());
         Assert.NotNull(snapshot);
@@ -394,6 +394,14 @@ public sealed class Round2LifecycleTests
         var fetches = 0;
         var handler = new Handler(request =>
         {
+            if (request.RequestUri!.AbsolutePath.Contains("/commits/", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"sha\":\"20c38289c29e4dba6b8f01ddd3273ec9ec169b46\",\"commit\":{\"tree\":{\"sha\":\"" + TreeSha + "\"}}}", System.Text.Encoding.UTF8, "application/json"),
+                };
+            }
+
             if (request.RequestUri!.Host == "api.github.com")
             {
                 if (request.Headers.IfNoneMatch.Count > 0)
@@ -672,13 +680,13 @@ public sealed class Round2LifecycleTests
         }
     }
 
-    private sealed class ProbeGate : IProbeTransport
+    private sealed class ProbeGate : BoundTestProbeTransport
     {
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
+        public override async Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
         {
             Entered.TrySetResult();
             await Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -686,33 +694,33 @@ public sealed class Round2LifecycleTests
         }
     }
 
-    private sealed class RejectTransport : IProbeTransport
+    private sealed class RejectTransport : BoundTestProbeTransport
     {
-        public Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
+        public override Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
         {
             throw new InvalidOperationException("Этот узел не должен проверяться.");
         }
     }
 
-    private sealed class RecordingTransport : IProbeTransport
+    private sealed class RecordingTransport : BoundTestProbeTransport
     {
         public bool AllowInsecure { get; private set; }
 
-        public Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
+        public override Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
         {
             return ProbeAsync(node, target, new ProbeAdmission(false), cancellationToken);
         }
 
-        public Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, ProbeAdmission admission, CancellationToken cancellationToken)
+        public override Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, ProbeAdmission admission, CancellationToken cancellationToken)
         {
             AllowInsecure = admission.AllowInsecureProxyCertificates;
-            return Task.FromResult(new ProbeObservation(true, 9, false, null, 4, ProbeClass.Success, target.AbsoluteUri, CanonicalIdentity.Digest(node), "recorded"));
+            return Task.FromResult(Bind(new ProbeObservation(true, 9, false, null, 4, ProbeClass.Success, target.AbsoluteUri, CanonicalIdentity.Digest(node), "recorded"), admission));
         }
     }
 
-    private sealed class FixedTransport(ProbeObservation observation) : IProbeTransport
+    private sealed class FixedTransport(ProbeObservation observation) : BoundTestProbeTransport
     {
-        public Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
+        public override Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
         {
             return Task.FromResult(observation);
         }
