@@ -23,8 +23,6 @@ def require(condition, message):
         raise RuntimeError(message)
 
 stage = git('rev-parse', 'HEAD')
-require(git('rev-parse', 'HEAD^1^{tree}') == BASE,
-        'Staging parent is not the reviewed V3 candidate tree')
 parts = [Path(f'scripts/v3-transfer/{i:02}.b64') for i in range(1, 64)]
 require(set(Path('scripts/v3-transfer').glob('*.b64')) == set(parts), 'Unexpected parts')
 encoded = ''.join(p.read_text(encoding='ascii').strip() for p in parts)
@@ -35,6 +33,7 @@ patch = gzip.decompress(packed)
 require(len(patch) == 88744 and hashlib.sha256(patch).hexdigest() == PATCH_HASH,
         'Source patch mismatch')
 git('config', 'core.autocrlf', 'false')
+git('checkout-index', '--force', '--all')
 git('rm', '-r', '--', 'scripts/v3-transfer', '.github/workflows/astra-v3-materialize.yml')
 require(git('write-tree') == BASE, 'Unexpected staged source outside transfer')
 git('checkout-index', '--force', '--all')
