@@ -6,10 +6,10 @@ using Microsoft.Win32.SafeHandles;
 namespace AutoVpn.Infrastructure.Runtime;
 
 /// <summary>Close-to-kill ownership. Assigned while the core is still in an inert non-TUN profile.</summary>
-[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class WindowsProcessJob : IDisposable
 {
     private readonly SafeFileHandle _handle;
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public WindowsProcessJob(Process process)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();

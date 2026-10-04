@@ -1,0 +1,67 @@
+name: astra-v3-validation
+on:
+  push:
+    branches: [implementation/astra-v3]
+    paths: ['src/**','tests/**','scripts/**','.github/workflows/astra-v3-ci.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Normal regression
+        shell: pwsh
+        run: ./scripts/test.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3-unit-${{ matrix.os }}
+          path: artifacts/test-results/
+      - name: Native core and persistent session without TUN
+        shell: pwsh
+        run: |
+          $core=./scripts/fetch-core.ps1
+          ./scripts/test.ps1 -Native -CorePath $core
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3-native-${{ matrix.os }}
+          path: artifacts/test-results/
+      - name: Actual WPF without public-network consent
+        if: success() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet run --project tests/AutoVpn.AuditRound6Wpf -c Release -- artifacts/wpf
+          if($LASTEXITCODE -ne 0){throw 'WPF smoke failed'}
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: V3-wpf
+          path: artifacts/wpf/
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir artifacts
+          git archive HEAD -o artifacts/source.zip
+          git rev-parse HEAD > artifacts/commit.txt
+          git ls-tree -rz HEAD > artifacts/tree.nul
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V3-source
+          path: artifacts/
