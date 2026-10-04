@@ -126,28 +126,37 @@ public sealed class AstraR1ContractTests
     {
         var firstDir = Directory.CreateTempSubdirectory("autovpn-astra-flood-");
         var secondDir = Directory.CreateTempSubdirectory("autovpn-astra-sibling-");
-        var first = await ProbeWorker.StartAsync(Child("flood"), null, TimeSpan.FromSeconds(3), CancellationToken.None, firstDir.FullName);
+        var first = await ProbeWorker.StartAsync(Child("flood", firstDir.FullName), null, TimeSpan.FromSeconds(3), CancellationToken.None, firstDir.FullName);
         var second = await ProbeWorker.StartAsync(Child("sleep"), null, TimeSpan.FromSeconds(3), CancellationToken.None, secondDir.FullName);
         try
         {
             Assert.True(first.Ready); Assert.True(second.Ready);
-            await Task.Delay(600);
+            // Wait for the child's explicit output milestone, not a machine-dependent sleep.
+            var ready = Path.Combine(firstDir.FullName, "output-ready.txt");
+            var deadline = Stopwatch.StartNew();
+            while (!File.Exists(ready) && deadline.Elapsed < TimeSpan.FromSeconds(10))
+                await Task.Delay(20);
+            Assert.True(File.Exists(ready), "Managed child did not complete its bounded output milestone.");
+            using var sibling = Process.GetProcessById(int.Parse(second.WorkerId.Split(':')[0], System.Globalization.CultureInfo.InvariantCulture));
+            Assert.False(sibling.HasExited);
             await first.DisposeAsync();
             Assert.True(first.DirectoryRemoved);
             Assert.True(first.OutputBytes > 8192);
             Assert.InRange(first.OutputTail.Length, 0, 2000);
             Assert.True(Directory.Exists(secondDir.FullName));
+            Assert.False(sibling.HasExited);
         }
         finally { await first.DisposeAsync(); await second.DisposeAsync(); }
         Assert.False(Directory.Exists(firstDir.FullName)); Assert.False(Directory.Exists(secondDir.FullName));
     }
 
-    private static ProcessStartInfo Child(string mode)
+    private static ProcessStartInfo Child(string mode, string? workingDirectory = null)
     {
         var dll = Path.Combine(AppContext.BaseDirectory, "process-fixture", "AutoVpn.ProcessFixture.dll");
         Assert.True(File.Exists(dll), "Build must include the managed child fixture.");
         var host = Path.Combine(Environment.GetEnvironmentVariable("DOTNET_ROOT") ?? "", OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
         var info = new ProcessStartInfo(host) { UseShellExecute = false, CreateNoWindow = true };
+        if (workingDirectory is not null) info.WorkingDirectory = workingDirectory;
         info.ArgumentList.Add(dll); info.ArgumentList.Add(mode); return info;
     }
 
