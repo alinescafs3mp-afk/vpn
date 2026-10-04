@@ -1,0 +1,112 @@
+name: astra-v3-exact-source-delivery
+on:
+  push:
+    branches: [implementation/astra-v3]
+    paths: ['scripts/v3-transfer/**', '.github/workflows/astra-v3-materialize.yml']
+permissions:
+  contents: read
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify exact authored source and create deterministic commit
+        run: python scripts/v3-transfer/materialize.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V3-exact-source-${{ matrix.os }}
+          path: artifacts/source/
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Normal regression
+        id: unit
+        shell: pwsh
+        run: ./scripts/test.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3-unit-${{ matrix.os }}
+          path: artifacts/test-results/
+      - name: Native core and six persistent protocols
+        shell: pwsh
+        run: |
+          $core=./scripts/fetch-core.ps1
+          ./scripts/test.ps1 -Native -CorePath $core
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3-native-${{ matrix.os }}
+          path: artifacts/test-results/
+      - name: Owned host and cancellation smoke
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.unit.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          dotnet run --project tests/AutoVpn.V3HostSmoke -c Release -- src/AutoVpn.SessionHost/bin/Release/net10.0/AutoVpn.SessionHost.exe 2>&1 | Tee-Object -FilePath artifacts/host-smoke.txt
+          if($LASTEXITCODE -ne 0){throw 'Host smoke failed'}
+      - name: WPF without public consent
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.unit.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          dotnet run --project tests/AutoVpn.AuditRound6Wpf -c Release -- artifacts/wpf
+          if($LASTEXITCODE -ne 0){throw 'WPF smoke failed'}
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: V3-Windows-host-WPF
+          path: |
+            artifacts/host-smoke.txt
+            artifacts/wpf/
+  package:
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - run: python scripts/v3-transfer/materialize.py
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Self-contained package with pinned official core and signed vendor driver
+        shell: pwsh
+        run: ./scripts/package-v3.ps1 -IncludePinnedCore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoVPN-V3-win-x64-DEVELOPMENT
+          path: |
+            artifacts/AutoVPN-V3-win-x64-DEVELOPMENT.zip
+            artifacts/AutoVPN-V3-win-x64-DEVELOPMENT.zip.sha256
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3-package-regression
+          path: artifacts/test-results/
+  publish:
+    needs: [validate, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - run: python scripts/v3-transfer/materialize.py
+      - name: Fast-forward only the unchanged implementation branch
+        env:
+          STAGE: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          current=$(git ls-remote origin refs/heads/implementation/astra-v3 | cut -f1)
+          test "$current" = "$STAGE"
+          git push origin HEAD:refs/heads/implementation/astra-v3
