@@ -37,7 +37,8 @@ jobs:
           $text | Set-Content artifacts/v3c-validation/service-status.json -Encoding utf8NoBOM
           $status = $text | ConvertFrom-Json
           if ($code -ne 6 -or $status.state -cne 'NotInstalled') { throw 'Expected an absent service on the fresh runner.' }
-          @{sourceCommit=$env:GITHUB_SHA; scmInstalled='NOT_RUN'; pipeAuthorization='NOT_RUN'; tun='NOT_RUN'; scope='Read-only absent-service detection only'} | ConvertTo-Json | Set-Content artifacts/v3c-validation/scope.json -Encoding utf8NoBOM
+          $global:LASTEXITCODE = 0 # The expected code 6 was asserted above; other exits remain failures.
+          @{probeExitCode=$code; sourceCommit=$env:GITHUB_SHA; scmInstalled='NOT_RUN'; pipeAuthorization='NOT_RUN'; tun='NOT_RUN'; scope='Read-only absent-service detection only'} | ConvertTo-Json | Set-Content artifacts/v3c-validation/scope.json -Encoding utf8NoBOM
       - name: WPF navigation, version and absent-service button
         if: runner.os == 'Windows'
         shell: pwsh

@@ -27,8 +27,12 @@ These are implementation properties, not proof of installed Windows security.
 
 ## Corrections and test scope
 
-The final Linux native regression has 463 cases, 59 more than V3B, with no failures
-or skips in the retained local run. Initial 456-case run preceded seven malformed
+The Linux native regression has 463 cases, 59 more than V3B. One local run
+passed all 463; a later exact published-source run failed the unchanged Trojan
+positive with TLS_REJECTED (462 passed, one failed). The first Linux CI run
+failed the unchanged VLESS-gRPC positive with TLS_REJECTED. These failures are
+retained and unresolved; a later pass does not diagnose or erase them. The first
+Windows native regression passed 460 cases with three explicit Linux-only skips. Initial 456-case run preceded seven malformed
 client/authorization isolation controls. Review found that InvalidDataException
 was not covered by an IOException-only client refusal path. The exchange now
 contains malformed/truncated/cancelled input and is exercised independently from
@@ -36,7 +40,9 @@ SCM using controlled streams; this does not test Windows pipe ACLs.
 
 The status-only CI builds/tests on Linux and Windows and checks the absent-service
 CLI and WPF button on a fresh Windows runner. It does not install a service,
-create user accounts, alter ACLs or change system networking. Read its exact run
+create user accounts, alter ACLs or change system networking. The first Windows status step obtained the expected NotInstalled result but
+left the expected nonzero CLI exit code in the shell; the workflow now explicitly
+normalizes it only after validating code 6 AND the exact state. Read its exact run
 results before claiming a CI pass. Local cross-compilation is not Windows runtime
 validation. Explicit platform-specific skips must remain visible.
 
