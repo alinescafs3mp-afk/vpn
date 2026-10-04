@@ -1,0 +1,79 @@
+name: astra-r1-development-delivery
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/astra-r1-development-delivery.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  development-only:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build DEVELOPMENT only, with normal tests
+        shell: pwsh
+        run: |
+          ./scripts/package.ps1
+          ./scripts/verify-release.ps1 -PackageDirectory artifacts/AutoVPN-astra-r1-win-x64-development
+      - name: Exercise actual WPF and normal settings reopen
+        shell: pwsh
+        run: |
+          dotnet run --project tests/AutoVpn.AuditRound6Wpf -c Release -- artifacts/wpf-smoke
+          if ($LASTEXITCODE -ne 0) { throw 'Actual WPF smoke failed.' }
+      - name: Check extracted package integrity and published executable startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $unpacked = Join-Path $env:RUNNER_TEMP ('autovpn-package-' + [guid]::NewGuid())
+          New-Item -ItemType Directory $unpacked | Out-Null
+          Expand-Archive -LiteralPath artifacts/AutoVPN-astra-r1-win-x64-development.zip -DestinationPath $unpacked
+          ./scripts/verify-release.ps1 -PackageDirectory $unpacked
+          $exe = Join-Path $unpacked 'desktop/AutoVpn.Desktop.exe'
+          $process = Start-Process -FilePath $exe -PassThru
+          try {
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            do {
+              Start-Sleep -Milliseconds 100
+              $process.Refresh()
+              if ($process.HasExited) { throw "Published desktop exited before a window appeared: $($process.ExitCode)" }
+            } while ($process.MainWindowHandle -eq 0 -and $watch.Elapsed.TotalSeconds -lt 20)
+            if ($process.MainWindowHandle -eq 0) { throw 'Published EXE did not create a window.' }
+            @{ sourceCommit = $env:GITHUB_SHA; actualPublishedExeStarted = $true; mainWindowTitle = $process.MainWindowTitle; publicConsentGranted = $false; tunTested = $false; shutdown = 'Harness kills only its owned child, not a tray Exit acceptance test'; status = 'DEVELOPMENT_NOT_VPN_RELEASE' } | ConvertTo-Json | Set-Content artifacts/published-exe-smoke.json -Encoding utf8
+          } finally {
+            if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit(10000) | Out-Null }
+            $process.Dispose()
+          }
+      - name: Record non-release validation limitations without hiding existing failure
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          @'
+          DEVELOPMENT ONLY. This job builds files; it does not make a VPN release gate green.
+          Source implementation: a92a8ef41ddfc3fbabd1403856b9e627ce39017d; the delivery workflow is a later build-only addition.
+          Earlier complete validation run 37204774162 remains failed:
+          Linux normal and native passed; Windows normal passed; Windows native had one positive Trojan TLS_REJECTED case (242 passed, 1 failed, 2 Linux-only skipped).
+          Its cause is not established. No certificate validation is relaxed here and no native test assertion is disabled.
+          Installed SCM/TUN/WFP, authenticated privileged runtime handoff, complete UI/installer and packet-level acceptance are not implemented/validated.
+          This archive cannot yet provide a usable computer-wide VPN connection.
+          WPF and published EXE startup are narrow UI checks, not networking or tray-shutdown acceptance.
+          '@ | Set-Content artifacts/VALIDATION-LIMITS.txt -Encoding utf8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-Astra-R1-DEVELOPMENT-Windows
+          path: |
+            artifacts/AutoVPN-astra-r1-win-x64-development.zip
+            artifacts/AutoVPN-astra-r1-win-x64-development.zip.sha256
+            artifacts/VALIDATION-LIMITS.txt
+            artifacts/published-exe-smoke.json
+            artifacts/wpf-smoke/
+            artifacts/test-results/
+          retention-days: 30
