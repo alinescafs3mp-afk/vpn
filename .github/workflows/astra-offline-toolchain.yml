@@ -6,57 +6,47 @@ on:
     paths: ['.github/workflows/astra-offline-toolchain.yml']
 permissions:
   contents: read
+  actions: read
 jobs:
   toolchain:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - name: Retrieve already-provisioned exact toolchain
+        uses: actions/download-artifact@v4
         with:
-          persist-credentials: false
-      - name: Isolated pinned SDK
+          repository: alinescafs3mp-afk/vpn
+          run-id: 37219243043
+          github-token: ${{ github.token }}
+          name: AutoVPN-offline-toolchain-cecb3c3814d39336a4c7f3086c2bde2b2f17ec4f
+          path: artifacts
+      - name: Split without modifying the archive
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/autovpn-offline" artifacts/toolchain-evidence
-          curl --fail --location --retry 2 https://dot.net/v1/dotnet-install.sh -o "$RUNNER_TEMP/dotnet-install.sh"
-          bash "$RUNNER_TEMP/dotnet-install.sh" --jsonfile global.json --install-dir "$RUNNER_TEMP/autovpn-offline/dotnet" --no-path
-          echo "DOTNET_ROOT=$RUNNER_TEMP/autovpn-offline/dotnet" >> "$GITHUB_ENV"
-          echo "NUGET_PACKAGES=$RUNNER_TEMP/autovpn-offline/packages" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/autovpn-offline/dotnet" >> "$GITHUB_PATH"
-      - name: Restore exact repository dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          dotnet --info | tee artifacts/toolchain-evidence/dotnet-info.txt
-          dotnet restore AutoVpn.slnx -p:EnableWindowsTargeting=true | tee artifacts/toolchain-evidence/restore.txt
-          dotnet restore src/AutoVpn.Desktop/AutoVpn.Desktop.csproj -r win-x64 -p:SelfContained=true | tee artifacts/toolchain-evidence/restore-win.txt
-      - name: Fetch only pinned official non-TUN test core
-        shell: pwsh
-        run: |
-          $core = ./scripts/fetch-core.ps1 -Destination "$env:RUNNER_TEMP/autovpn-offline/core"
-          Write-Output $core
-      - name: Archive isolated toolchain, not credentials or workspace state
-        shell: bash
-        run: |
-          set -euo pipefail
-          tar -czf artifacts/autovpn-offline-toolchain.tar.gz -C "$RUNNER_TEMP/autovpn-offline" dotnet packages core
-          sha256sum artifacts/autovpn-offline-toolchain.tar.gz > artifacts/toolchain-evidence/SHA256SUMS.txt
-          git rev-parse HEAD > artifacts/toolchain-evidence/source-commit.txt
+          sha256sum artifacts/autovpn-offline-toolchain.tar.gz > artifacts/SHA256SUMS.txt
+          split -b 350M -d -a 2 artifacts/autovpn-offline-toolchain.tar.gz artifacts/toolchain-part-
+          test -f artifacts/toolchain-part-00
+          test -f artifacts/toolchain-part-01
+          test ! -f artifacts/toolchain-part-02
+          sha256sum artifacts/toolchain-part-* >> artifacts/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: AutoVPN-offline-toolchain-${{ github.sha }}
-          path: artifacts/autovpn-offline-toolchain.tar.gz
+          name: AutoVPN-toolchain-part-00-${{ github.sha }}
+          path: artifacts/toolchain-part-00
           compression-level: 0
           retention-days: 3
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: AutoVPN-toolchain-evidence-${{ github.sha }}
-          path: artifacts/toolchain-evidence/
+          name: AutoVPN-toolchain-part-01-${{ github.sha }}
+          path: artifacts/toolchain-part-01
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoVPN-toolchain-checksums-${{ github.sha }}
+          path: artifacts/SHA256SUMS.txt
           retention-days: 14
-          if-no-files-found: warn
+          if-no-files-found: error
