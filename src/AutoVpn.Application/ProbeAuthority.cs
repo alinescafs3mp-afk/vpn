@@ -34,6 +34,20 @@ public sealed class ProbeAuthority
         }
     }
 
+    public bool IsCurrent(ProbeAttemptContext context)
+    {
+        lock (_catalogue.SyncRoot)
+        {
+            var node = _catalogue.Nodes.FirstOrDefault(n => n.NodeId == context.NodeId);
+            return _catalogue.Settings.DisclosureAccepted && node is not null &&
+                _live.TryGetValue(context.NodeId, out var live) && live.Context == context &&
+                _catalogue.NetworkEpoch == context.NetworkEpoch && node.Digest == context.Digest &&
+                PolicyKey(_catalogue.Settings) == live.Policy &&
+                Allows(node, _catalogue.Settings, context.Purpose) &&
+                CanonicalIdentity.Digest(node.Semantics) == context.Digest;
+        }
+    }
+
     public bool Commit(ProbeAttemptContext requested, ProbeAttemptContext? observed,
         AssessmentSnapshot assessment, CancellationToken cancellationToken)
     {

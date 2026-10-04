@@ -26,6 +26,7 @@ public sealed record ProbeObservation(
     string? WorkerId = null)
 {
     public ProbeAttemptContext? Attempt { get; init; }
+    public string? VerifiedTargetSetId { get; init; }
 }
 
 public readonly record struct ProbeAdmission(bool AllowInsecureProxyCertificates)
@@ -171,6 +172,10 @@ public static class ProbeCoordinator
                 MedianLatencyMs = success ? observed.LatencyMs : prior?.MedianLatencyMs,
                 ConsecutiveFailures = success ? 0 : (int)Math.Min((long)(prior?.ConsecutiveFailures ?? 0) + 1, int.MaxValue),
                 ProofToken = success ? requested.AttemptId : prior?.ProofToken,
+                VerifiedTargetSetId = success ? observed.VerifiedTargetSetId : prior?.VerifiedTargetSetId,
+                LastAttemptUtc = completed,
+                RetryAfterUtc = success ? null : environment ? completed.AddMinutes(1) :
+                    QuarantineSchedule.NextRetry(completed, (int)Math.Min((long)(prior?.ConsecutiveFailures ?? 0) + 1, int.MaxValue), 0),
             };
             var published = authority.Commit(requested, observed.Attempt, assessment, cancellationToken);
             return new(Attempted: true, Published: published, Success: success, Environment: environment, Bytes: bytes);

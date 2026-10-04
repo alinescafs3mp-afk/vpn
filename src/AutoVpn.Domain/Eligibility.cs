@@ -31,11 +31,14 @@ public sealed record AssessmentSnapshot
     public DateTimeOffset? RetryAfterUtc { get; init; }
     public bool EnvironmentFailure { get; init; }
     public string? ProofToken { get; init; }
+    public string? VerifiedTargetSetId { get; init; }
+    public DateTimeOffset? LastAttemptUtc { get; init; }
 }
 
 public sealed record EligibilityContext
 {
     public DateTimeOffset NowUtc { get; init; }
+    public string? RequiredTargetSetId { get; init; }
     public long NetworkEpoch { get; init; }
     public TimeSpan AllowedAge { get; init; } = TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes);
     public int MaxAcceptableLatencyMs { get; init; } = ProductLimits.MaxAcceptableLatencyMs;
@@ -126,6 +129,11 @@ public static class Eligibility
         if (assessment.LastSuccessUtc is not DateTimeOffset success)
         {
             return new(false, "NOT_TESTED");
+        }
+
+        if (context.RequiredTargetSetId is not null && assessment.VerifiedTargetSetId != context.RequiredTargetSetId)
+        {
+            return new(false, "TWO_TARGET_VERIFICATION_REQUIRED");
         }
 
         var age = TimePolicy.ConservativeAge(success, context.NowUtc);

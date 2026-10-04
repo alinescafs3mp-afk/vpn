@@ -12,6 +12,7 @@ namespace AutoVpn.Infrastructure.Probe;
 /// </summary>
 public sealed class ProbeByteBudget
 {
+    private readonly object _gate = new();
     public long Limit { get; }
     public long Spent { get; private set; }
     public DateOnly Day { get; private set; }
@@ -27,74 +28,66 @@ public sealed class ProbeByteBudget
     {
         try
         {
-            if (!File.Exists(path))
-            {
-                return new ProbeByteBudget(today, 0, limit);
-            }
-
+            if (!File.Exists(path)) return new ProbeByteBudget(today, 0, limit);
             var lines = File.ReadAllLines(path);
             var bounded = limit < 1 ? 1 : limit;
-            if (lines.Length < 2
-                || !DateOnly.TryParseExact(lines[0], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)
-                || !long.TryParse(lines[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var spent)
-                || spent < 0)
-            {
+            if (lines.Length < 2 ||
+                !DateOnly.TryParseExact(lines[0], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day) ||
+                !long.TryParse(lines[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var spent) || spent < 0)
                 return new ProbeByteBudget(today, bounded, bounded);
-            }
-
-            if (day > today)
-            {
-                return new ProbeByteBudget(today, bounded, bounded);
-            }
-
-            return day == today
-                ? new ProbeByteBudget(day, spent, limit)
-                : new ProbeByteBudget(today, 0, limit);
+            if (day > today) return new ProbeByteBudget(today, bounded, bounded);
+            return day == today ? new ProbeByteBudget(day, spent, limit) : new ProbeByteBudget(today, 0, limit);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             var bounded = limit < 1 ? 1 : limit;
             return new ProbeByteBudget(today, bounded, bounded);
         }
     }
 
+    public bool TryReserve(int bytes, DateOnly today)
+    {
+        if (bytes <= 0) throw new ArgumentOutOfRangeException(nameof(bytes));
+        lock (_gate)
+        {
+            if (today < Day) return false;
+            if (today > Day) { Day = today; Spent = 0; }
+            if (Spent > Limit - bytes) return false;
+            Spent += bytes;
+            return true;
+        }
+    }
+
     public bool Exhausted(DateOnly today)
     {
-        return Day == today && Spent >= Limit;
+        lock (_gate) return Day == today && Spent >= Limit;
     }
 
     public long SpentOn(DateOnly today)
     {
-        return Day == today ? Spent : 0;
+        lock (_gate) return Day == today ? Spent : 0;
     }
 
     public void Charge(int payloadBytes, DateOnly today)
     {
-        if (today < Day)
+        lock (_gate)
         {
-            return;
+            if (today < Day) return;
+            if (today > Day) { Day = today; Spent = 0; }
+            var charge = Math.Max(1L, payloadBytes);
+            Spent = Spent > long.MaxValue - charge ? long.MaxValue : Spent + charge;
         }
-
-        if (today > Day)
-        {
-            Day = today;
-            Spent = 0;
-        }
-
-        var charge = Math.Max(1L, payloadBytes);
-        Spent = Spent > long.MaxValue - charge ? long.MaxValue : Spent + charge;
     }
 
     public void Save(string path)
     {
-        var directory = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(directory))
+        lock (_gate)
         {
-            Directory.CreateDirectory(directory);
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+            var temporary = path + ".tmp";
+            File.WriteAllText(temporary, Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "\n" + Spent.ToString(CultureInfo.InvariantCulture) + "\n");
+            File.Move(temporary, path, overwrite: true);
         }
-
-        var temporary = path + ".tmp";
-        File.WriteAllText(temporary, Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "\n" + Spent.ToString(CultureInfo.InvariantCulture) + "\n");
-        File.Move(temporary, path, overwrite: true);
     }
 }

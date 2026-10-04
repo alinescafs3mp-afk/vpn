@@ -1,0 +1,91 @@
+name: astra-v2-validation
+on:
+  push:
+    branches: [implementation/astra-v2, main]
+    paths: ['src/**', 'tests/**', 'scripts/**', '.github/workflows/astra-v2-ci.yml', 'docs/checkpoints/V2.md']
+permissions:
+  contents: read
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Normal full regression
+        shell: pwsh
+        run: ./scripts/test.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V2-normal-${{ matrix.os }}
+          path: artifacts/test-results/
+          retention-days: 30
+      - name: Official core and full native regression
+        if: always()
+        shell: pwsh
+        run: |
+          $core = ./scripts/fetch-core.ps1
+          ./scripts/test.ps1 -Native -CorePath $core
+          "R5_CORE_PATH=$env:R5_CORE_PATH" | Out-File $env:GITHUB_ENV -Append
+          "R5_CORE_HASH=$env:R5_CORE_HASH" | Out-File $env:GITHUB_ENV -Append
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V2-native-${{ matrix.os }}
+          path: artifacts/test-results/
+          retention-days: 30
+      - name: Five unchanged Windows TLS matrix repeats
+        if: success() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/tls-repeat | Out-Null
+          $results = @()
+          for ($i=1; $i -le 5; $i++) {
+            dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~Round6NativeHandshakeTests' --logger "trx;LogFileName=repeat-$i.trx" --results-directory artifacts/tls-repeat --blame-hang-timeout 90s --blame-hang-dump-type none
+            $results += @{ repetition=$i; exitCode=$LASTEXITCODE }
+          }
+          $results | ConvertTo-Json | Set-Content artifacts/tls-repeat/summary.json
+          if (@($results | Where-Object exitCode -ne 0).Count -gt 0) { throw 'Repeated matrix has failures; retained all runs.' }
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: V2-TLS-repeat-Windows
+          path: artifacts/tls-repeat/
+          retention-days: 30
+      - name: WPF navigation and settings reopen
+        if: success() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet run --project tests/AutoVpn.AuditRound6Wpf -c Release -- artifacts/wpf
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: V2-WPF
+          path: artifacts/wpf/
+          retention-days: 30
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir -p artifacts
+          git archive HEAD -o artifacts/source.zip
+          git rev-parse HEAD > artifacts/commit.txt
+          git ls-tree -rz HEAD > artifacts/tree.nul
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V2-source
+          path: artifacts/
+          retention-days: 30
