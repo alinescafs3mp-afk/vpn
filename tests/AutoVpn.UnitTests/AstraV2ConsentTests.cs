@@ -14,6 +14,7 @@ public sealed class AstraV2ConsentTests
         var clock = new FakeClock();
         RefreshMerge.Ingest(catalogue, [new IngestArtifact { ArtifactId = "s", FamilyId = "f", Enabled = true,
             Text = "vless://11111111-1111-4111-8111-111111111111@203.0.113.22:443?security=tls&sni=example.com" }], clock.UtcNow, false);
+        var original = catalogue.Nodes[0].Assessment;
         var transport = new RevokeTransport(catalogue);
         var pair = new TwoTargetProbeTransport(catalogue, transport,
             [new Uri("https://one.example/generate_204"), new Uri("https://two.example/generate_204")]);
@@ -21,7 +22,8 @@ public sealed class AstraV2ConsentTests
             catalogue.Nodes[0].NodeId, clock.UtcNow, SelectionPurpose.Automatic, CancellationToken.None);
         Assert.Equal(1, transport.Calls);
         Assert.False(result.Published);
-        Assert.Null(catalogue.Nodes[0].Assessment);
+        Assert.Equal(original, catalogue.Nodes[0].Assessment);
+        Assert.Null(catalogue.Nodes[0].Assessment?.LastSuccessUtc);
     }
 
     private sealed class RevokeTransport(MemoryCatalogue catalogue) : IProbeTransport
