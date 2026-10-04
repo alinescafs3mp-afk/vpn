@@ -1,0 +1,57 @@
+name: checkpoint-source
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/checkpoint-source.yml
+      - docs/checkpoints/**
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Export tracked source, not runtime data or local Git credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p checkpoint-export
+          git archive --format=zip --output=checkpoint-export/source.zip HEAD
+          git ls-tree -r -z HEAD > checkpoint-export/source-tree.nul
+          git log -1 --format=fuller > checkpoint-export/commit.txt
+          git diff --binary cf619323be36130977dfd27832a495a442cb3b6a HEAD > checkpoint-export/since-round6.patch
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess
+          out = pathlib.Path('checkpoint-export')
+          entries = []
+          for row in (out / 'source-tree.nul').read_bytes().split(b'\0'):
+              if not row:
+                  continue
+              meta, raw_path = row.split(b'\t', 1)
+              mode, kind, oid = meta.decode('ascii').split()
+              if kind != 'blob':
+                  raise SystemExit('Unexpected non-blob tracked entry')
+              data = subprocess.check_output(['git', 'cat-file', 'blob', oid])
+              entries.append({'path': raw_path.decode('utf-8'), 'mode': mode,
+                              'git_blob': oid, 'bytes': len(data),
+                              'sha256': hashlib.sha256(data).hexdigest()})
+          payload = {'schema_version': 1,
+                     'commit': subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+                     'tree': subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),
+                     'status': 'DEVELOPMENT_CHECKPOINT_NOT_VPN_RELEASE',
+                     'files': entries}
+          (out / 'source-manifest.json').write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+          PY
+          (cd checkpoint-export && sha256sum source.zip source-manifest.json since-round6.patch > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoVPN-source-checkpoint
+          path: checkpoint-export/
+          retention-days: 30
+          if-no-files-found: error
