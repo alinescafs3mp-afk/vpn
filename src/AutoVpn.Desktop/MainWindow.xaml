@@ -18,7 +18,7 @@
         <StackPanel x:Name="ConnectionPage">
           <TextBlock x:Name="PhaseText" Text="Не подключён" FontSize="32" FontWeight="SemiBold"/>
           <TextBlock x:Name="DetailText" TextWrapping="Wrap" Margin="0,12,0,20" Foreground="{StaticResource MutedBrush}" Text="Служба ещё не вызывалась. Доступность серверов не измерялась."/>
-          <CheckBox x:Name="DisclosureBox" Margin="0,0,0,16" Checked="DisclosureChanged" Unchecked="DisclosureChanged">
+          <CheckBox x:Name="DisclosureBox" Margin="0,0,0,16" Checked="DisclosureConsentChanged" Unchecked="DisclosureConsentChanged">
             <TextBlock TextWrapping="Wrap" MaxWidth="520" Text="AutoVPN подключается к публичным серверам из стороннего списка. Их операторы не проверяются. Поставщик подписки видит запросы на скачивание, а проверки серверов обращаются к публичным адресам. Приложение не обещает анонимность. Обычный HTTPS по-прежнему нужен."/>
           </CheckBox>
           <Button x:Name="ConnectButton" Content="Подключить" Width="180" Height="44" HorizontalAlignment="Left" Click="ConnectClick"/>

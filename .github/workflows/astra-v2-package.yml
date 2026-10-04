@@ -1,0 +1,53 @@
+name: astra-v2-development-package
+on:
+  push:
+    branches: [implementation/astra-v2, main]
+    paths: ['.github/workflows/astra-v2-package.yml', 'scripts/package-v2.ps1', 'docs/checkpoints/V2.md']
+permissions:
+  contents: read
+jobs:
+  windows-development:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Normal tests and self-contained V2 with pinned core
+        shell: pwsh
+        run: ./scripts/package-v2.ps1 -IncludePinnedCore
+      - name: Verify extracted files and start actual published EXE without consent
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $unpacked = Join-Path $env:RUNNER_TEMP ('autovpn-v2-' + [guid]::NewGuid())
+          New-Item -ItemType Directory $unpacked | Out-Null
+          Expand-Archive -LiteralPath artifacts/AutoVPN-V2-win-x64-DEVELOPMENT.zip -DestinationPath $unpacked
+          ./scripts/verify-release.ps1 -PackageDirectory $unpacked
+          $process = Start-Process -FilePath (Join-Path $unpacked 'desktop/AutoVpn.Desktop.exe') -PassThru
+          try {
+            $clock = [Diagnostics.Stopwatch]::StartNew()
+            do {
+              Start-Sleep -Milliseconds 100
+              $process.Refresh()
+              if ($process.HasExited) { throw 'Published EXE exited before creating its window.' }
+            } while ($process.MainWindowHandle -eq 0 -and $clock.Elapsed.TotalSeconds -lt 20)
+            if ($process.MainWindowHandle -eq 0) { throw 'Published EXE did not create a window.' }
+            @{ sourceCommit=$env:GITHUB_SHA; publishedExeStarted=$true; publicConsent=$false; tun=$false; checkpoint='V2'; status='DEVELOPMENT_NOT_VPN_RELEASE'; shutdown='Owned child stopped by harness, not a tray Exit acceptance test' } | ConvertTo-Json | Set-Content artifacts/published-exe-smoke.json
+          } finally {
+            if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit(10000) | Out-Null }
+            $process.Dispose()
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-V2-DEVELOPMENT-Windows
+          path: |
+            artifacts/AutoVPN-V2-win-x64-DEVELOPMENT.zip
+            artifacts/AutoVPN-V2-win-x64-DEVELOPMENT.zip.sha256
+            artifacts/published-exe-smoke.json
+            artifacts/test-results/
+          retention-days: 30
