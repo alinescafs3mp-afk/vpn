@@ -13,7 +13,6 @@ jobs:
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
-      NUGET_PACKAGES: ${{ runner.temp }}/autovpn-offline/packages
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,6 +25,7 @@ jobs:
           curl --fail --location --retry 2 https://dot.net/v1/dotnet-install.sh -o "$RUNNER_TEMP/dotnet-install.sh"
           bash "$RUNNER_TEMP/dotnet-install.sh" --jsonfile global.json --install-dir "$RUNNER_TEMP/autovpn-offline/dotnet" --no-path
           echo "DOTNET_ROOT=$RUNNER_TEMP/autovpn-offline/dotnet" >> "$GITHUB_ENV"
+          echo "NUGET_PACKAGES=$RUNNER_TEMP/autovpn-offline/packages" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/autovpn-offline/dotnet" >> "$GITHUB_PATH"
       - name: Restore exact repository dependencies
         shell: bash
