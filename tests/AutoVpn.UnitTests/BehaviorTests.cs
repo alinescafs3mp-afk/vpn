@@ -173,7 +173,7 @@ public class BehaviorTests
                 Assert.Contains("black-mixed", reopened.Nodes[0].CurrentFamilies);
             }
 
-            using (var connection = new SqliteConnection($"Data Source={path}"))
+            using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
             {
                 connection.Open();
                 using var command = connection.CreateCommand();
@@ -183,7 +183,7 @@ public class BehaviorTests
 
             var error = Assert.Throws<CatalogueStoreException>(() => SqliteCatalogue.Open(path, protector));
             Assert.Contains("newer", error.Message, StringComparison.OrdinalIgnoreCase);
-            using var check = new SqliteConnection($"Data Source={path};Mode=ReadOnly");
+            using var check = new SqliteConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
             check.Open();
             using var version = check.CreateCommand();
             version.CommandText = "SELECT value FROM meta WHERE key='schema_version';";
@@ -417,7 +417,7 @@ public class BehaviorTests
     [Fact]
     public void DispatcherRejectsRemoteReplayForbiddenAndUnknown()
     {
-        var dispatcher = new IpcDispatcher();
+        var dispatcher = new ProtocolTestDispatcher();
         var caller = new CallerIdentity { Sid = "S-1", SessionId = 1 };
         var remote = dispatcher.Dispatch(Request(IpcOperations.GetSnapshot, new { }), new CallerIdentity { Sid = "S-1", SessionId = 1, IsRemotePipe = true }, _ => throw new InvalidOperationException());
         Assert.False(remote.Ok);
@@ -503,7 +503,7 @@ public class BehaviorTests
             ],
             SelectedNodeId = "abc123",
         });
-        var result = await MihomoProcessController.ValidateAsync(path!, "3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8", yaml, CancellationToken.None);
+        var result = await MihomoProcessController.ValidateAsync(path!, TestCorePins.ExpectedHash, yaml, CancellationToken.None);
         Assert.True(result.Ok, result.RedactedOutput);
     }
 
@@ -538,7 +538,7 @@ public class BehaviorTests
     {
         var catalogue = new MemoryCatalogue();
         var engine = new BrokerEngine(catalogue, new UnavailableNetworkGuard(), new RefusingCoreController());
-        var dispatcher = new IpcDispatcher();
+        var dispatcher = new ProtocolTestDispatcher();
         var pipe = "autovpn-test-" + Guid.NewGuid().ToString("N");
         await using var server = LocalIpcServer.Start(pipe, dispatcher, engine, new CallerIdentity { Sid = "owner", SessionId = 1 });
         var response = await LocalIpcServer.RoundTripAsync(pipe, Request(IpcOperations.GetSnapshot, new { }), CancellationToken.None);
@@ -773,7 +773,7 @@ public class BehaviorTests
                 created.Record(new OwnedEffect("e1", "route", "synthetic"));
             }
 
-            using (var connection = new SqliteConnection($"Data Source={path}"))
+            using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
             {
                 connection.Open();
                 using var command = connection.CreateCommand();
@@ -784,7 +784,7 @@ public class BehaviorTests
             var error = Assert.Throws<CatalogueStoreException>(() => EffectJournal.Open(path));
             Assert.Contains("untouched", error.Message, StringComparison.OrdinalIgnoreCase);
             Assert.Empty(Directory.GetFiles(directory.FullName, "*.quarantine-*"));
-            using var check = new SqliteConnection($"Data Source={path};Mode=ReadOnly");
+            using var check = new SqliteConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
             check.Open();
             using var version = check.CreateCommand();
             version.CommandText = "SELECT value FROM meta WHERE key='schema_version';";
@@ -855,9 +855,9 @@ public class BehaviorTests
         return new ProbeObservation(true, latency, false, null, 0, ProbeClass.Success, "https://cp.cloudflare.com/generate_204", CanonicalIdentity.Digest(node), "unit-proof");
     }
 
-    private sealed class ScriptedTransport(Func<NodeSemantics, ProbeObservation> next) : IProbeTransport
+    private sealed class ScriptedTransport(Func<NodeSemantics, ProbeObservation> next) : BoundTestProbeTransport
     {
-        public Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
+        public override Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
         {
             _ = target;
             cancellationToken.ThrowIfCancellationRequested();

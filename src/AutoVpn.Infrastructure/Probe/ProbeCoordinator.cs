@@ -23,9 +23,15 @@ public sealed record ProbeObservation(
     ProbeClass Class = ProbeClass.CandidateFailure,
     string? TargetUri = null,
     string? CandidateDigest = null,
-    string? WorkerId = null);
+    string? WorkerId = null)
+{
+    public ProbeAttemptContext? Attempt { get; init; }
+}
 
-public readonly record struct ProbeAdmission(bool AllowInsecureProxyCertificates);
+public readonly record struct ProbeAdmission(bool AllowInsecureProxyCertificates)
+{
+    public ProbeAttemptContext? Attempt { get; init; }
+}
 
 public interface IProbeTransport
 {
@@ -38,432 +44,140 @@ public interface IProbeTransport
 public sealed record ProbeReport(int Attempted, int Succeeded, int Failed, bool StoppedForUplink);
 
 /// <summary>
-/// Publishes a node only after the transport returns and the captured epoch still matches.
-/// An uplink failure stops the cycle and does not mark the remaining nodes failed.
-/// Healthy rows are rechecked when they are stale or belong to another network epoch.
+/// Common routine/on-demand admission boundary. Attempt ownership is reserved in the catalogue,
+/// not on a copied node. A transport must return the exact context supplied in ProbeAdmission.
+/// Production callers pass a live clock; explicit nowUtc remains useful for deterministic tests.
 /// </summary>
 public static class ProbeCoordinator
 {
     public static async Task<ProbeReport> RunAsync(
-        ICatalogue catalogue,
-        IProbeTransport transport,
-        Uri target,
-        DateTimeOffset nowUtc,
-        CancellationToken cancellationToken,
-        TimeSpan? budget = null,
-        TimeSpan? attemptTimeout = null,
-        long? byteBudget = null,
-        ProbeByteBudget? spent = null)
+        ICatalogue catalogue, IProbeTransport transport, Uri target, DateTimeOffset nowUtc,
+        CancellationToken cancellationToken, TimeSpan? budget = null, TimeSpan? attemptTimeout = null,
+        long? byteBudget = null, ProbeByteBudget? spent = null, IClock? clock = null)
     {
-        var attempted = 0;
-        var succeeded = 0;
-        var failed = 0;
+        var attempted = 0; var succeeded = 0; var failed = 0;
+        var elapsed = Stopwatch.StartNew();
+        var limit = budget ?? TimeSpan.FromSeconds(ProductLimits.NewCandidateBudgetSeconds);
         var day = DateOnly.FromDateTime(nowUtc.UtcDateTime);
         long bytes = spent?.SpentOn(day) ?? 0;
-        var limit = budget ?? TimeSpan.FromSeconds(ProductLimits.NewCandidateBudgetSeconds);
-        var perAttempt = attemptTimeout ?? TimeSpan.FromSeconds(ProductLimits.ProbeRequestTimeoutSeconds);
         var byteLimit = spent?.Limit ?? byteBudget ?? ProductLimits.DailyHealthBudgetBytes;
-        var elapsed = Stopwatch.StartNew();
-        using var gate = new SemaphoreSlim(ProductLimits.MaxProbesPerEndpoint, ProductLimits.MaxProbesPerEndpoint);
-        var pending = catalogue.Nodes
-            .Where(node => NeedsProbe(node, nowUtc, catalogue.NetworkEpoch))
-            .OrderBy(node => node.Assessment?.LastFailureUtc ?? node.Assessment?.LastSuccessUtc ?? DateTimeOffset.MinValue)
-            .ThenBy(node => node.NodeId, StringComparer.Ordinal)
-            .ToArray();
+        CatalogueNode[] pending;
+        lock (catalogue.SyncRoot)
+        {
+            pending = catalogue.Nodes.Where(n => NeedsProbe(n, nowUtc, catalogue.NetworkEpoch))
+                .OrderBy(n => n.Assessment?.LastFailureUtc ?? n.Assessment?.LastSuccessUtc ?? DateTimeOffset.MinValue)
+                .ThenBy(n => n.NodeId, StringComparer.Ordinal).ToArray();
+        }
         foreach (var node in pending)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (attempted > 0 && elapsed.Elapsed >= limit)
-            {
-                break;
-            }
-
-            if (bytes >= byteLimit || (spent is not null && spent.Exhausted(day)))
-            {
-                break;
-            }
-
-            if (!Scheduled(node, catalogue.Settings))
-            {
-                continue;
-            }
-
-            var epoch = catalogue.NetworkEpoch;
-            var digest = node.Digest;
-            var nodeId = node.NodeId;
-            var settingsRevision = catalogue.Settings.Revision;
-            var allowInsecure = catalogue.Settings.AllowInsecureCertificates;
-            var stamp = Interlocked.Increment(ref node.ProbePublication);
+            if ((attempted > 0 && elapsed.Elapsed >= limit) || bytes >= byteLimit || spent?.Exhausted(day) == true) break;
+            var result = await CheckAsync(catalogue, transport, target, node.NodeId, nowUtc,
+                SelectionPurpose.PreConnect, cancellationToken, attemptTimeout, clock).ConfigureAwait(false);
+            if (!result.Attempted) continue;
             attempted++;
-            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            ProbeObservation observation;
-            try
-            {
-                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                attempt.CancelAfter(perAttempt);
-                try
-                {
-                    observation = await transport.ProbeAsync(node.Semantics, target, new ProbeAdmission(allowInsecure), attempt.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    spent?.Charge(1, day);
-                    if (!PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure))
-                    {
-                        continue;
-                    }
-
-                    failed++;
-                    TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
-                    {
-                        Digest = digest,
-                        NetworkEpoch = epoch,
-                        Health = HealthState.Failed,
-                        LastSuccessUtc = node.Assessment?.LastSuccessUtc,
-                        LastFailureUtc = nowUtc,
-                        MedianLatencyMs = node.Assessment?.MedianLatencyMs,
-                        ConsecutiveFailures = (node.Assessment?.ConsecutiveFailures ?? 0) + 1,
-                    });
-                    continue;
-                }
-                catch (OperationCanceledException)
-                {
-                    attempted--;
-                    break;
-                }
-            }
-            finally
-            {
-                gate.Release();
-            }
-
-            if (cancellationToken.IsCancellationRequested)
-            {
-                break;
-            }
-
-            var payloadBytes = Math.Max(0, observation.PayloadBytes);
-            bytes += payloadBytes;
-            if (spent is not null)
-            {
-                spent.Charge(Math.Max(payloadBytes, 1), day);
-                bytes = spent.SpentOn(day);
-            }
-
-            if (!PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure))
-            {
-                continue;
-            }
-
-            if (catalogue.NetworkEpoch != epoch || catalogue.Nodes.All(item => item.NodeId != nodeId || item.Digest != digest))
-            {
-                continue;
-            }
-
-            if (observation.Class == ProbeClass.Canceled || observation.ReasonCode == ReasonCodes.Canceled)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    attempted--;
-                    break;
-                }
-
-                failed++;
-                TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
-                {
-                    Digest = digest,
-                    NetworkEpoch = epoch,
-                    Health = HealthState.Failed,
-                    LastSuccessUtc = node.Assessment?.LastSuccessUtc,
-                    LastFailureUtc = nowUtc,
-                    MedianLatencyMs = node.Assessment?.MedianLatencyMs,
-                    ConsecutiveFailures = (node.Assessment?.ConsecutiveFailures ?? 0) + 1,
-                });
-                continue;
-            }
-
-            if (observation.Class == ProbeClass.Unsupported)
-            {
-                failed++;
-                TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
-                {
-                    Digest = digest,
-                    NetworkEpoch = epoch,
-                    Health = HealthState.Failed,
-                    LastSuccessUtc = node.Assessment?.LastSuccessUtc,
-                    LastFailureUtc = nowUtc,
-                    MedianLatencyMs = node.Assessment?.MedianLatencyMs,
-                    ConsecutiveFailures = (node.Assessment?.ConsecutiveFailures ?? 0) + 1,
-                });
-                continue;
-            }
-
-            if (observation.Class == ProbeClass.CoreFailure)
-            {
-                return new ProbeReport(attempted, succeeded, failed, false);
-            }
-
-            if (observation.UplinkOffline || observation.Class == ProbeClass.Environment)
-            {
-                TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
-                {
-                    Digest = digest,
-                    NetworkEpoch = epoch,
-                    Health = HealthState.EnvironmentUnknown,
-                    EnvironmentFailure = true,
-                    LastSuccessUtc = node.Assessment?.LastSuccessUtc,
-                    LastFailureUtc = node.Assessment?.LastFailureUtc,
-                    MedianLatencyMs = node.Assessment?.MedianLatencyMs,
-                });
-                return new ProbeReport(attempted, succeeded, failed, true);
-            }
-
-            if (observation.Success && observation.Class == ProbeClass.Success && observation.LatencyMs is int latency && latency >= 0 && ProofAccepts(observation, digest, target) && !cancellationToken.IsCancellationRequested && !ConsumedOnAnotherEpoch(catalogue, nodeId, observation, epoch))
-            {
-                var published = TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
-                {
-                    Digest = digest,
-                    NetworkEpoch = epoch,
-                    Health = HealthState.Healthy,
-                    LastSuccessUtc = nowUtc,
-                    MedianLatencyMs = latency,
-                    ConsecutiveFailures = 0,
-                    ProofToken = ProofToken(observation),
-                });
-                if (published)
-                {
-                    succeeded++;
-                }
-
-                continue;
-            }
-
-            TryApply(catalogue, nodeId, digest, epoch, stamp, new AssessmentSnapshot
-            {
-                Digest = digest,
-                NetworkEpoch = epoch,
-                Health = HealthState.Failed,
-                LastSuccessUtc = node.Assessment?.LastSuccessUtc,
-                LastFailureUtc = nowUtc,
-                MedianLatencyMs = node.Assessment?.MedianLatencyMs,
-                ConsecutiveFailures = (node.Assessment?.ConsecutiveFailures ?? 0) + 1,
-            });
-            failed++;
+            bytes = bytes > long.MaxValue - result.Bytes ? long.MaxValue : bytes + result.Bytes;
+            spent?.Charge(Math.Max(result.Bytes, 1), day);
+            if (result.Canceled) break;
+            if (result.Published && result.Success) succeeded++;
+            else if (result.Published && !result.Environment) failed++;
+            if (result.Environment) return new ProbeReport(attempted, succeeded, failed, true);
+            if (result.CoreFailure) break;
         }
-
         return new ProbeReport(attempted, succeeded, failed, false);
     }
 
     public static bool NeedsProbe(CatalogueNode node, DateTimeOffset nowUtc, long epoch)
     {
-        if (node.Assessment?.RetryAfterUtc is DateTimeOffset retry && retry > nowUtc)
-        {
-            return false;
-        }
-
-        if (node.PolicyReason is not null)
-        {
-            return false;
-        }
-
-        var assessment = node.Assessment;
-        if (assessment is null || assessment.Health is not (HealthState.Healthy or HealthState.Degraded))
-        {
-            return true;
-        }
-
-        if (assessment.NetworkEpoch != epoch || assessment.LastSuccessUtc is not DateTimeOffset success)
-        {
-            return true;
-        }
-
-        return TimePolicy.ConservativeAge(success, nowUtc) > TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes);
+        if (node.Assessment?.RetryAfterUtc is DateTimeOffset retry && retry > nowUtc) return false;
+        if (node.PolicyReason is not null) return false;
+        var a = node.Assessment;
+        return a is null || a.Health is not (HealthState.Healthy or HealthState.Degraded) ||
+            a.NetworkEpoch != epoch || a.LastSuccessUtc is not DateTimeOffset success ||
+            TimePolicy.ConservativeAge(success, nowUtc) > TimeSpan.FromMinutes(ProductLimits.CatalogueFreshnessMinutes);
     }
 
     public static bool NeedsOnDemandAdmission(CatalogueNode node, DateTimeOffset nowUtc, long epoch)
     {
-        if (node.PolicyReason is not null)
-        {
-            return false;
-        }
-
-        var assessment = node.Assessment;
-        if (assessment is null || assessment.Health is not (HealthState.Healthy or HealthState.Degraded))
-        {
-            return false;
-        }
-
-        if (assessment.NetworkEpoch != epoch || assessment.LastSuccessUtc is not DateTimeOffset success)
-        {
-            return true;
-        }
-
-        return TimePolicy.ConservativeAge(success, nowUtc) > TimeSpan.FromSeconds(ProductLimits.PreConnectFreshnessSeconds);
+        if (node.PolicyReason is not null) return false;
+        var a = node.Assessment;
+        return a is not null && a.Health is (HealthState.Healthy or HealthState.Degraded) &&
+            (a.NetworkEpoch != epoch || a.LastSuccessUtc is not DateTimeOffset success ||
+            TimePolicy.ConservativeAge(success, nowUtc) > TimeSpan.FromSeconds(ProductLimits.PreConnectFreshnessSeconds));
     }
 
-    public static async Task<bool> AdmitIfStaleAsync(
-        ICatalogue catalogue,
-        IProbeTransport transport,
-        Uri target,
-        string nodeId,
-        DateTimeOffset nowUtc,
-        CancellationToken cancellationToken,
-        SelectionPurpose purpose = SelectionPurpose.PreConnect)
+    public static async Task<bool> AdmitIfStaleAsync(ICatalogue catalogue, IProbeTransport transport,
+        Uri target, string nodeId, DateTimeOffset nowUtc, CancellationToken cancellationToken,
+        SelectionPurpose purpose = SelectionPurpose.PreConnect, IClock? clock = null)
     {
-        var node = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        if (node is null || !NeedsOnDemandAdmission(node, nowUtc, catalogue.NetworkEpoch))
+        lock (catalogue.SyncRoot)
         {
-            return false;
+            var node = catalogue.Nodes.FirstOrDefault(n => n.NodeId == nodeId);
+            if (node is null || !NeedsOnDemandAdmission(node, nowUtc, catalogue.NetworkEpoch) ||
+                node.Assessment?.RetryAfterUtc > nowUtc) return false;
         }
+        var result = await CheckAsync(catalogue, transport, target, nodeId, nowUtc, purpose,
+            cancellationToken, clock: clock).ConfigureAwait(false);
+        return result.Published && result.Success;
+    }
 
-        if (!Scheduled(node, catalogue.Settings, purpose))
-        {
-            return false;
-        }
-
-        var epoch = catalogue.NetworkEpoch;
-        var digest = node.Digest;
-        var settingsRevision = catalogue.Settings.Revision;
-        var allowInsecure = catalogue.Settings.AllowInsecureCertificates;
-        ProbeObservation observation;
+    public static async Task<ProbeCheckResult> CheckAsync(ICatalogue catalogue, IProbeTransport transport,
+        Uri target, string nodeId, DateTimeOffset nowUtc, SelectionPurpose purpose,
+        CancellationToken cancellationToken, TimeSpan? timeout = null, IClock? clock = null)
+    {
+        if (cancellationToken.IsCancellationRequested) return new(Canceled: true);
+        var authority = ProbeAuthority.For(catalogue);
+        var reservation = authority.Begin(nodeId, target, purpose);
+        if (reservation is null) return new();
+        var requested = reservation.Context;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout ?? TimeSpan.FromSeconds(ProductLimits.ProbeRequestTimeoutSeconds));
         try
         {
-            observation = await transport.ProbeAsync(node.Semantics, target, new ProbeAdmission(allowInsecure), cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            return false;
-        }
-
-        if (cancellationToken.IsCancellationRequested
-            || observation.Class is ProbeClass.Canceled or ProbeClass.Environment or ProbeClass.CoreFailure or ProbeClass.Unsupported
-            || (observation.Success && observation.Class != ProbeClass.Success)
-            || observation.ReasonCode == ReasonCodes.Canceled
-            || observation.UplinkOffline)
-        {
-            return false;
-        }
-
-        if (!observation.Success || observation.LatencyMs is not int latency || latency < 0 || !ProofAccepts(observation, digest, target) || ConsumedOnAnotherEpoch(catalogue, nodeId, observation, epoch))
-        {
-            if (catalogue.NetworkEpoch != epoch || !PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure, purpose))
+            ProbeObservation observed;
+            try
             {
-                return false;
+                observed = await transport.ProbeAsync(reservation.Semantics, target,
+                    new ProbeAdmission(reservation.AllowInsecureCertificates) { Attempt = requested },
+                    deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
             }
-
-            catalogue.ApplyAssessment(nodeId, new AssessmentSnapshot
+            catch (OperationCanceledException)
             {
-                Digest = digest,
-                NetworkEpoch = epoch,
-                Health = HealthState.Failed,
-                LastSuccessUtc = node.Assessment?.LastSuccessUtc,
-                LastFailureUtc = nowUtc,
-                MedianLatencyMs = node.Assessment?.MedianLatencyMs,
-                ConsecutiveFailures = (node.Assessment?.ConsecutiveFailures ?? 0) + 1,
-            });
-            return false;
+                if (cancellationToken.IsCancellationRequested) return new(Attempted: true, Canceled: true);
+                observed = new ProbeObservation(false, null, false, "PROBE_TIMEOUT") { Attempt = requested };
+            }
+            catch (Exception ex) when (ex is IOException or System.Net.Sockets.SocketException)
+            {
+                observed = new ProbeObservation(false, null, false, ReasonCodes.ProbeFailed) { Attempt = requested };
+            }
+            var bytes = Math.Max(observed.PayloadBytes, 0);
+            if (cancellationToken.IsCancellationRequested) return new(Attempted: true, Canceled: true, Bytes: bytes);
+            if (observed.Class == ProbeClass.CoreFailure)
+                return new(Attempted: true, CoreFailure: true, Bytes: bytes);
+            var environment = observed.UplinkOffline || observed.Class == ProbeClass.Environment;
+            var success = observed.Success && observed.Class == ProbeClass.Success && observed.ReasonCode is null &&
+                observed.LatencyMs is >= 0 && observed.CandidateDigest == requested.Digest &&
+                observed.TargetUri == target.AbsoluteUri && !string.IsNullOrWhiteSpace(observed.WorkerId) &&
+                observed.Attempt == requested;
+            var prior = reservation.PriorAssessment;
+            var completed = clock?.UtcNow ?? nowUtc;
+            var assessment = new AssessmentSnapshot
+            {
+                Digest = requested.Digest, NetworkEpoch = requested.NetworkEpoch,
+                Health = environment ? HealthState.EnvironmentUnknown : success ? HealthState.Healthy : HealthState.Failed,
+                EnvironmentFailure = environment,
+                LastSuccessUtc = success ? completed : prior?.LastSuccessUtc,
+                LastFailureUtc = success ? null : environment ? prior?.LastFailureUtc : completed,
+                MedianLatencyMs = success ? observed.LatencyMs : prior?.MedianLatencyMs,
+                ConsecutiveFailures = success ? 0 : (int)Math.Min((long)(prior?.ConsecutiveFailures ?? 0) + 1, int.MaxValue),
+                ProofToken = success ? requested.AttemptId : prior?.ProofToken,
+            };
+            var published = authority.Commit(requested, observed.Attempt, assessment, cancellationToken);
+            return new(Attempted: true, Published: published, Success: success, Environment: environment, Bytes: bytes);
         }
-
-        if (catalogue.NetworkEpoch != epoch || !PolicyHeld(catalogue, nodeId, settingsRevision, allowInsecure, purpose))
-        {
-            return false;
-        }
-
-        catalogue.ApplyAssessment(nodeId, new AssessmentSnapshot
-        {
-            Digest = digest,
-            NetworkEpoch = epoch,
-            Health = HealthState.Healthy,
-            LastSuccessUtc = nowUtc,
-            MedianLatencyMs = latency,
-            ConsecutiveFailures = 0,
-            ProofToken = ProofToken(observation),
-        });
-        return true;
-    }
-
-    private static bool TryApply(ICatalogue catalogue, string nodeId, string digest, long epoch, long stamp, AssessmentSnapshot assessment)
-    {
-        if (catalogue.NetworkEpoch != epoch)
-        {
-            return false;
-        }
-
-        var current = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        if (current is null || current.Digest != digest || current.ProbePublication != stamp)
-        {
-            return false;
-        }
-
-        catalogue.ApplyAssessment(nodeId, assessment);
-        return true;
-    }
-
-    private static bool Scheduled(CatalogueNode node, ProductSettings settings, SelectionPurpose purpose = SelectionPurpose.PreConnect)
-    {
-        if ((node.Excluded && purpose != SelectionPurpose.Manual) || node.PolicyReason is not null)
-        {
-            return false;
-        }
-
-        if (node.Semantics.SkipCertVerify && !settings.AllowInsecureCertificates)
-        {
-            return false;
-        }
-
-        var families = node.CurrentFamilies.Concat(node.HistoricalFamilies).ToArray();
-        if (families.Length > 0 && families.All(family => settings.DisabledFamilyIds.Contains(family)))
-        {
-            return false;
-        }
-
-        if (settings.CountryMode == CountryConstraint.Strict
-            && !string.Equals(node.AdvertisedCountry, settings.Country, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return true;
-    }
-
-    private static bool ProofAccepts(ProbeObservation observation, string digest, Uri target)
-    {
-        return observation.Class == ProbeClass.Success
-            && !string.IsNullOrEmpty(observation.CandidateDigest)
-            && string.Equals(observation.CandidateDigest, digest, StringComparison.Ordinal)
-            && !string.IsNullOrEmpty(observation.TargetUri)
-            && string.Equals(observation.TargetUri, target.AbsoluteUri, StringComparison.Ordinal)
-            && !string.IsNullOrEmpty(observation.WorkerId);
-    }
-
-    private static string ProofToken(ProbeObservation observation)
-    {
-        return string.Join('\n',
-            observation.CandidateDigest,
-            observation.TargetUri,
-            observation.WorkerId,
-            observation.Class.ToString(),
-            observation.LatencyMs?.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            observation.PayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture));
-    }
-
-    private static bool ConsumedOnAnotherEpoch(ICatalogue catalogue, string nodeId, ProbeObservation observation, long epoch)
-    {
-        var current = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        var prior = current?.Assessment;
-        return prior?.ProofToken is string token
-            && string.Equals(token, ProofToken(observation), StringComparison.Ordinal)
-            && prior.NetworkEpoch != epoch;
-    }
-
-    private static bool PolicyHeld(ICatalogue catalogue, string nodeId, int revision, bool allowInsecure, SelectionPurpose purpose = SelectionPurpose.PreConnect)
-    {
-        if (catalogue.Settings.Revision != revision || catalogue.Settings.AllowInsecureCertificates != allowInsecure)
-        {
-            return false;
-        }
-
-        var node = catalogue.Nodes.FirstOrDefault(item => item.NodeId == nodeId);
-        return node is not null && Scheduled(node, catalogue.Settings, purpose);
+        finally { authority.Cancel(requested); }
     }
 }
+
+public readonly record struct ProbeCheckResult(bool Attempted = false, bool Published = false,
+    bool Success = false, bool Environment = false, bool CoreFailure = false, bool Canceled = false, int Bytes = 0);

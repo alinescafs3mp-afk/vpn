@@ -19,4 +19,11 @@
     <ProjectReference Include="..\..\src\AutoVpn.Application\AutoVpn.Application.csproj" />
     <ProjectReference Include="..\..\src\AutoVpn.Infrastructure\AutoVpn.Infrastructure.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AutoVpn.ProcessFixture/AutoVpn.ProcessFixture.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="CopyManagedProcessFixture" AfterTargets="Build">
+    <ItemGroup><ChildFiles Include="../AutoVpn.ProcessFixture/bin/$(Configuration)/net10.0/*" /></ItemGroup>
+    <Copy SourceFiles="@(ChildFiles)" DestinationFolder="$(TargetDir)process-fixture" />
+  </Target>
 </Project>

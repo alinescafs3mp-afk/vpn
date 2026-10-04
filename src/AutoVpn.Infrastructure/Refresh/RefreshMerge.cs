@@ -45,7 +45,7 @@ public static class RefreshMerge
 
             if (artifact.NotModified)
             {
-                var represented = catalogue.Nodes.Any(node => node.ArtifactFamilies.ContainsKey(artifact.ArtifactId));
+                var represented = catalogue.HasCommittedSnapshot(artifact.ArtifactId, artifact.ContentHash);
                 refetch |= !represented;
                 continue;
             }

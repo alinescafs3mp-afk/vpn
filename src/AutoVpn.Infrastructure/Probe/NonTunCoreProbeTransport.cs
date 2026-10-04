@@ -98,6 +98,12 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
 
     public async Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, ProbeAdmission admission, CancellationToken cancellationToken)
     {
+        var result = await ProbeCoreAsync(node, target, admission, cancellationToken).ConfigureAwait(false);
+        return result with { Attempt = admission.Attempt };
+    }
+
+    private async Task<ProbeObservation> ProbeCoreAsync(NodeSemantics node, Uri target, ProbeAdmission admission, CancellationToken cancellationToken)
+    {
         var digest = CanonicalIdentity.Digest(node);
         if (target.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(target.UserInfo))
         {

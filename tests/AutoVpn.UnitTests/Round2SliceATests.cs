@@ -26,7 +26,7 @@ public sealed class Round2SliceATests
     private const string FixtureUri =
         "vless://11111111-1111-4111-8111-111111111111@203.0.113.10:443?encryption=none&security=tls&type=tcp&sni=www.example.com#fixture";
 
-    private const string CoreHash = "3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8";
+    private static string CoreHash => TestCorePins.ExpectedHash;
     private const string TreeSha = "0123456789abcdef0123456789abcdef01234567";
 
     [Fact]
@@ -134,7 +134,7 @@ public sealed class Round2SliceATests
         Assert.Equal(CanonicalIdentity.Digest(good), healthy.Nodes[0].Assessment?.Digest);
     }
 
-    [Fact]
+    [LinuxOnlyFact]
     public async Task Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess()
     {
         var markerA = "autovpn-rt03-a-" + Guid.NewGuid().ToString("N");
@@ -331,6 +331,8 @@ public sealed class Round2SliceATests
         var fetches = new List<string?>();
         var handler = new ScriptedHandler(request =>
         {
+            if (request.RequestUri!.AbsolutePath.Contains("/commits/", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"sha\":\"20c38289c29e4dba6b8f01ddd3273ec9ec169b46\",\"commit\":{\"tree\":{\"sha\":\"" + TreeSha + "\"}}}") };
             string? tag = request.Headers.TryGetValues("If-None-Match", out var tags) ? string.Join(",", tags) : null;
             fetches.Add(tag);
             if (tag is "\"tree-1\"")
@@ -374,7 +376,9 @@ public sealed class Round2SliceATests
             var repaired = await restartedCoordinator.DiscoverAsync(registry, CancellationToken.None, TimeSpan.FromSeconds(2));
             Assert.True(repaired.Complete);
             Assert.Single(repaired.Items);
-            Assert.Equal(before + 3, fetches.Count);
+            // Corrupt cached tree is detected BEFORE sending a conditional validator.
+            // Commit lookup is not counted as a tree fetch by this fixture.
+            Assert.Equal(before + 1, fetches.Count);
             Assert.Null(fetches[^1]);
         }
         finally
@@ -456,7 +460,7 @@ public sealed class Round2SliceATests
     [Fact]
     public async Task Rt17ReadsDoNotExhaustDisconnectAndConflictsStayUncertain()
     {
-        var dispatcher = new IpcDispatcher();
+        var dispatcher = new ProtocolTestDispatcher();
         var caller = new CallerIdentity { Sid = "owner", SessionId = 1 };
         var reads = 0;
         for (var index = 0; index < 1000; index++)
@@ -544,19 +548,19 @@ public sealed class Round2SliceATests
         Assert.Equal(0, expiredCalls);
         Assert.Equal(ReasonCodes.ReplayExpired, expired.ErrorCode);
 
-        var busyDispatcher = new IpcDispatcher();
+        var busyDispatcher = new ProtocolTestDispatcher();
         var blockers = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = 0;
         var running = new Task[64];
         for (var index = 0; index < running.Length; index++)
         {
             var id = "busy-" + index.ToString(CultureInfo.InvariantCulture);
-            running[index] = Task.Run(() => busyDispatcher.Dispatch(Request(IpcOperations.Connect, new { id }, id), caller, _ =>
+            running[index] = busyDispatcher.DispatchAsync(Request(IpcOperations.Connect, new { id }, id), caller, async _ =>
             {
                 Interlocked.Increment(ref started);
-                blockers.Task.GetAwaiter().GetResult();
+                await blockers.Task.ConfigureAwait(false);
                 return new IpcResponse { RequestId = id, Ok = true };
-            }));
+            });
         }
 
         var wait = System.Diagnostics.Stopwatch.StartNew();
@@ -1091,9 +1095,9 @@ public sealed class Round2SliceATests
         return new ProbeObservation(true, latency, false, null, bytes, ProbeClass.Success, "https://probe.example/generate_204", CanonicalIdentity.Digest(node), "unit-proof");
     }
 
-    private sealed class ScriptedTransport(Func<NodeSemantics, ProbeObservation> next) : IProbeTransport
+    private sealed class ScriptedTransport(Func<NodeSemantics, ProbeObservation> next) : BoundTestProbeTransport
     {
-        public Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
+        public override Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(next(node));

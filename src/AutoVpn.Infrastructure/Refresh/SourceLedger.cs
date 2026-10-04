@@ -160,13 +160,21 @@ public sealed class SourceLedger
 
     public IEnumerable<SourceEntry> LiveEntries()
     {
-        foreach (var entry in _entries.Values)
-        {
-            if (!IsImmutableTreeUrl(entry.Url))
-            {
-                yield return entry;
-            }
-        }
+        return _entries.Values.Where(e => !IsImmutableTreeUrl(e.Url))
+            .GroupBy(e => SchedulingIdentity(e.Url), StringComparer.Ordinal)
+            .Select(g => g.OrderByDescending(e => e.LastAttemptUtc ?? e.LastSuccessUtc ?? DateTimeOffset.MinValue)
+                .ThenByDescending(e => e.LastSuccessUtc ?? DateTimeOffset.MinValue).First())
+            .ToArray();
+    }
+
+    private static string SchedulingIdentity(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return url;
+        var parts = uri.AbsolutePath.Trim('/').Split('/');
+        if (uri.Host.Equals("raw.githubusercontent.com", StringComparison.OrdinalIgnoreCase) && parts.Length >= 4 &&
+            parts[2].Length == 40 && parts[2].All(Uri.IsHexDigit))
+            return "github:" + parts[0] + "/" + parts[1] + "/" + string.Join('/', parts.Skip(3));
+        return url;
     }
 
     /// <summary>

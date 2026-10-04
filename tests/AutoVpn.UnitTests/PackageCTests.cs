@@ -17,7 +17,7 @@ public sealed class PackageCTests
     {
         var engine = new BrokerEngine(new MemoryCatalogue(), new UnavailableNetworkGuard(), new RefusingCoreController());
         var pipe = "autovpn-c-" + Guid.NewGuid().ToString("N");
-        await using var server = LocalIpcServer.Start(pipe, new IpcDispatcher(), engine, Caller());
+        await using var server = LocalIpcServer.Start(pipe, new ProtocolTestDispatcher(), engine, Caller());
         await using var partial = await HoldAsync(pipe, [1, 2]);
         var partialWatch = Stopwatch.StartNew();
         var duringPartial = await LocalIpcServer.RoundTripAsync(pipe, Request(IpcOperations.GetSnapshot, new { }), CancellationToken.None);
@@ -52,7 +52,7 @@ public sealed class PackageCTests
         var core = new GateCore();
         var engine = new BrokerEngine(catalogue, new ArmingGuard(), core);
         var pipe = "autovpn-c-" + Guid.NewGuid().ToString("N");
-        await using var server = LocalIpcServer.Start(pipe, new IpcDispatcher(), engine, Caller());
+        await using var server = LocalIpcServer.Start(pipe, new ProtocolTestDispatcher(), engine, Caller());
         var node = catalogue.Nodes[0];
         var connectTask = LocalIpcServer.RoundTripAsync(pipe, Request(IpcOperations.Connect, new ConnectPayload
         {
@@ -80,7 +80,7 @@ public sealed class PackageCTests
         var catalogue = FreshCatalogue();
         var core = new CountingCore();
         var engine = new BrokerEngine(catalogue, new ArmingGuard(), core);
-        var dispatcher = new IpcDispatcher();
+        var dispatcher = new ProtocolTestDispatcher();
         var node = catalogue.Nodes[0];
         var connect = Request(IpcOperations.Connect, new ConnectPayload
         {
@@ -181,7 +181,7 @@ public sealed class PackageCTests
     {
         var opens = 0;
         var engine = new BrokerEngine(new MemoryCatalogue(), new UnavailableNetworkGuard(), new RefusingCoreController());
-        var server = LocalIpcServer.Start("autovpn-c-fault", new IpcDispatcher(), engine, Caller(), _ =>
+        var server = LocalIpcServer.Start("autovpn-c-fault", new ProtocolTestDispatcher(), engine, Caller(), _ =>
         {
             Interlocked.Increment(ref opens);
             throw new IOException("pipe denied");

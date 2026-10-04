@@ -29,6 +29,10 @@ public sealed class BrokerEngine
     private string? _operationId;
     private long _operationGeneration;
     private long _operationEpoch;
+    // Resource ownership is separate from usability. Partial starts and failed stops
+    // remain represented until the exact owned stop completes successfully.
+    private readonly HashSet<CoreOwnership> _ownedResources = new();
+    private string? _attemptDigest;
     private string? _ownedOperationId;
     private long _ownedGeneration;
     private bool? _sessionLanAccess;
@@ -124,6 +128,7 @@ public sealed class BrokerEngine
             ProtectionArmed = _state.ProtectionArmed,
             BlockReason = _state.BlockReason,
             CoreRunning = _coreRunning,
+            OwnedResourceCount = _ownedResources.Count,
             CoreVersion = ProductLimits.CoreVersion,
             CountryLabel = active?.AdvertisedCountry,
             ServerLabel = active?.Label,
@@ -163,6 +168,7 @@ public sealed class BrokerEngine
             return Fail(request, ReasonCodes.NoEligibleServer, Ru.NoServer);
         }
 
+        var policy = PolicyStamp.Capture(_catalogue.Settings);
         string yaml;
         var sessionLan = LanAccess(request, payload);
         try
@@ -201,13 +207,14 @@ public sealed class BrokerEngine
             {
                 recoveryBusy = true;
             }
-            else if (_state.ProtectionArmed || _state.Phase is TunnelPhase.Connected or TunnelPhase.Connecting or TunnelPhase.PreparingProtection or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
+            else if (_ownedResources.Count != 0 || _state.ProtectionArmed || _state.Phase is TunnelPhase.Connected or TunnelPhase.Connecting or TunnelPhase.PreparingProtection or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
             {
                 alreadyRunning = true;
             }
             else
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                _attemptDigest = selected.Digest;
                 _selectionPurpose = string.IsNullOrWhiteSpace(payload.NodeId) ? SelectionPurpose.Automatic : SelectionPurpose.Manual;
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Connect, _state.Generation, selected.NodeId));
                 _sequence++;
@@ -269,11 +276,25 @@ public sealed class BrokerEngine
             return Fail(request, refusal, BlockMessage(refusal));
         }
 
-        var policy = PolicyStamp.Capture(_catalogue.Settings);
+        if (!policy.Equals(PolicyStamp.Capture(_catalogue.Settings)))
+        {
+            lock (_gate)
+            {
+                if (_operationId == operationId && _state.Generation == armedGeneration)
+                {
+                    _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.VerifyFailed,
+                        armedGeneration, selected.NodeId, ReasonCodes.PolicyChanged));
+                    _sequence++;
+                    _operationId = null;
+                }
+            }
+            return Fail(request, ReasonCodes.PolicyChanged, "Настройки изменились при подготовке защиты. Профиль не запущен.");
+        }
+
         CoreStartResult started;
         try
         {
-            started = await _core.StartAsync(yaml, armedGeneration, operationId, cancellationToken).ConfigureAwait(false);
+            started = await StartOwnedAsync(yaml, armedGeneration, operationId, cancellationToken).ConfigureAwait(false);
         }
         catch (IOException)
         {
@@ -296,7 +317,7 @@ public sealed class BrokerEngine
         }
         catch (OperationCanceledException)
         {
-            await _core.StopAsync(armedGeneration, operationId, CancellationToken.None).ConfigureAwait(false);
+            await StopOwnedAsync(armedGeneration, operationId, CancellationToken.None).ConfigureAwait(false);
             lock (_gate)
             {
                 if (_state.Generation == armedGeneration && _state.Phase == TunnelPhase.Connecting)
@@ -369,7 +390,7 @@ public sealed class BrokerEngine
 
         if (abandon || startRefusal is not null)
         {
-            await _core.StopAsync(armedGeneration, operationId, CancellationToken.None).ConfigureAwait(false);
+            await StopOwnedAsync(armedGeneration, operationId, CancellationToken.None).ConfigureAwait(false);
         }
 
         if (startRefusal is not null)
@@ -392,6 +413,23 @@ public sealed class BrokerEngine
 
         _catalogue.SetActiveNode(selected.NodeId);
         return Ok(request, Snapshot(), "Ядро запущено. Канал ещё не подтверждён, состояние не «подключён».");
+    }
+
+    private readonly record struct CoreOwnership(long Generation, string OperationId);
+
+    private async Task<CoreStartResult> StartOwnedAsync(string yaml, long generation,
+        string operationId, CancellationToken cancellationToken)
+    {
+        lock (_gate) { _ownedResources.Add(new CoreOwnership(generation, operationId)); }
+        return await _core.StartAsync(yaml, generation, operationId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task StopOwnedAsync(long generation, string operationId, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        await _core.StopAsync(generation, operationId, deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
+        lock (_gate) { _ownedResources.Remove(new CoreOwnership(generation, operationId)); }
     }
 
     private bool Owns(string operationId, long generation)
@@ -432,12 +470,13 @@ public sealed class BrokerEngine
             var policyMoved = _commitPolicy is PolicyStamp committed && !committed.Equals(PolicyStamp.Capture(settings));
             var blocked = current is null
                 || (current.Excluded && _selectionPurpose != SelectionPurpose.Manual)
-                || (current.Semantics.SkipCertVerify && !settings.AllowInsecureCertificates);
+                || (current.Semantics.SkipCertVerify && !settings.AllowInsecureCertificates)
+                || current.Digest != _attemptDigest
+                || !IsCurrentlyEligible(current, NowUtc(), _selectionPurpose);
             if (policyMoved || blocked)
             {
                 _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.VerifyFailed, _state.Generation, _state.ActiveNodeId, ReasonCodes.PolicyChanged));
                 _sequence++;
-                _coreRunning = false;
                 _operationId = null;
                 return;
             }
@@ -499,7 +538,13 @@ public sealed class BrokerEngine
         {
             try
             {
-                await _core.StopAsync(cleanupGeneration, cleanupOperation, CancellationToken.None).ConfigureAwait(false);
+                CoreOwnership[] resources;
+                lock (_gate) { resources = _ownedResources.ToArray(); }
+                if (resources.Length == 0)
+                    await StopOwnedAsync(cleanupGeneration, cleanupOperation, CancellationToken.None).ConfigureAwait(false);
+                else
+                    foreach (var resource in resources)
+                        await StopOwnedAsync(resource.Generation, resource.OperationId, CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception)
             {
@@ -654,6 +699,8 @@ public sealed class BrokerEngine
                         switchTarget = candidate;
                         switchGeneration = _state.Generation;
                         switchOperation = Guid.NewGuid().ToString("N");
+                        _selectionPurpose = SelectionPurpose.Automatic;
+                        _attemptDigest = candidate.Digest;
                         _operationId = switchOperation;
                         _operationGeneration = switchGeneration;
                         _operationEpoch = _catalogue.NetworkEpoch;
@@ -682,6 +729,7 @@ public sealed class BrokerEngine
             var switched = false;
             try
             {
+                var policy = PolicyStamp.Capture(_catalogue.Settings);
                 var yaml = MihomoProfileGenerator.Build(new ProfileBuildRequest
                 {
                     Secret = NewSecret(),
@@ -692,8 +740,7 @@ public sealed class BrokerEngine
                     Nodes = [NodeWireFactory.FromCatalogue(switchTarget)],
                     SelectedNodeId = switchTarget.NodeId,
                 });
-                var policy = PolicyStamp.Capture(_catalogue.Settings);
-                var started = await _core.StartAsync(yaml, switchGeneration, switchOperation!, cancellationToken).ConfigureAwait(false);
+                var started = await StartOwnedAsync(yaml, switchGeneration, switchOperation!, cancellationToken).ConfigureAwait(false);
                 var policyChanged = !policy.Equals(PolicyStamp.Capture(_catalogue.Settings));
                 var live = _catalogue.Nodes.FirstOrDefault(node => node.NodeId == switchTarget.NodeId);
                 var stillHeld = live is not null
@@ -701,7 +748,7 @@ public sealed class BrokerEngine
                     && !live.Excluded
                     && string.Equals(live.Digest, switchTarget.Digest, StringComparison.Ordinal)
                     && CountryAllows(live)
-                    && IsCurrentlyEligible(live, now);
+                    && IsCurrentlyEligible(live, NowUtc());
                 var callerCanceled = cancellationToken.IsCancellationRequested;
                 var abandon = false;
                 lock (_gate)
@@ -738,14 +785,14 @@ public sealed class BrokerEngine
 
                 if (!switched)
                 {
-                    await _core.StopAsync(switchGeneration, switchOperation!, CancellationToken.None).ConfigureAwait(false);
+                    await StopOwnedAsync(switchGeneration, switchOperation!, CancellationToken.None).ConfigureAwait(false);
                 }
             }
-            catch (InvalidOperationException)
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or OperationCanceledException)
             {
                 lock (_gate)
                 {
-                    if (_state.Generation == switchGeneration && _state.Phase == TunnelPhase.Connected)
+                    if (_state.Generation == switchGeneration && !_state.DisconnectCommitted)
                     {
                         _state = TunnelReducer.Apply(_state, new TunnelCommand(TunnelCommandKind.Block, _state.Generation, _state.ActiveNodeId, ReasonCodes.CoreConfigRejected));
                         _sequence++;
@@ -855,7 +902,7 @@ public sealed class BrokerEngine
             {
                 staleRevision = true;
             }
-            else if (_lifecycle != 0 || _cleanupPending || _cleanupBusy || _state.ProtectionArmed || _state.Phase is TunnelPhase.PreparingProtection or TunnelPhase.Connecting or TunnelPhase.Connected or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
+            else if (_ownedResources.Count != 0 || _lifecycle != 0 || _cleanupPending || _cleanupBusy || _state.ProtectionArmed || _state.Phase is TunnelPhase.PreparingProtection or TunnelPhase.Connecting or TunnelPhase.Connected or TunnelPhase.Reconnecting or TunnelPhase.RestoringNetwork)
             {
                 blocked = true;
             }
@@ -1044,7 +1091,7 @@ public sealed class BrokerEngine
     private bool IsCurrentlyEligible(CatalogueNode node, DateTimeOffset now, SelectionPurpose purpose = SelectionPurpose.PreConnect)
     {
         var settings = _catalogue.Settings;
-        return MemoryCatalogue.IsEligible(node, new EligibilityContext
+        return CountryAllows(node) && MemoryCatalogue.IsEligible(node, new EligibilityContext
         {
             NowUtc = now,
             NetworkEpoch = _catalogue.NetworkEpoch,

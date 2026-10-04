@@ -100,7 +100,7 @@ public sealed class IndependentRound4Tests
     public async Task Q06_Valid304MustAdvanceSourceCheckFreshness()
     {
         var c = Catalogue(false); var ledger = new SourceLedger(); var item = Item("seed-0");
-        ledger.Remember(item.Urls[0].AbsoluteUri, "v1", "body", Now, null);
+        ledger.Remember(item.Urls[0].AbsoluteUri, "v1", c.ArtifactSnapshots.Single(a => a.ArtifactId == "seed-0").ContentHash, Now, null);
         using var fetcher = Fetcher(_ => new HttpResponseMessage(HttpStatusCode.NotModified));
         var coordinator = new CatalogueCoordinator(c, fetcher, new Scripted((n, t, _) => Task.FromResult(Success(n, t))), ledger);
         await coordinator.RefreshAsync([item], Now.AddHours(3), CancellationToken.None);
@@ -121,7 +121,9 @@ public sealed class IndependentRound4Tests
             ApprovedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "raw.githubusercontent.com" },
             RejectedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase),
         };
-        using var fetcher = new PolicyHttpFetcher(new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        using var fetcher = new PolicyHttpFetcher(new Handler(req => req.RequestUri!.AbsolutePath.Contains("/commits/", StringComparison.Ordinal)
+            ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"sha\":\"" + registry.PinnedCommit + "\",\"commit\":{\"tree\":{\"sha\":\"" + tree + "\"}}}") }
+            : new HttpResponseMessage(HttpStatusCode.OK)
         { Content = new StringContent("{\"sha\":\"" + tree + "\",\"truncated\":false,\"tree\":[{\"path\":\"BLACK_VLESS_RUS.txt\",\"type\":\"blob\",\"mode\":\"100644\",\"size\":30}]}") }),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "api.github.com" });
         var discovery = await new CatalogueCoordinator(Catalogue(false), fetcher, new Scripted((n, t, _) => Task.FromResult(Success(n, t))), new SourceLedger()).DiscoverAsync(registry, CancellationToken.None);
@@ -150,14 +152,14 @@ public sealed class IndependentRound4Tests
     [Fact]
     public void Q09_RetiredRequestCannotExecuteAgainAfterTombstoneEviction()
     {
-        var dispatcher = new IpcDispatcher();
+        var dispatcher = new ProtocolTestDispatcher();
         var caller = new CallerIdentity { Sid = "synthetic-owner", SessionId = 1, IsRemotePipe = false };
         var executions = 0;
         IpcResponse Handle(IpcRequest r) { executions++; return new IpcResponse { RequestId = r.RequestId, Ok = true }; }
-        var old = new IpcRequest { ProtocolVersion = 1, RequestId = "old", Operation = IpcOperations.ReportHealth };
+        var old = new IpcRequest { ProtocolVersion = ProductLimits.IpcProtocolVersion, RequestId = "old", Operation = IpcOperations.ReportHealth };
         dispatcher.Dispatch(old, caller, Handle);
         for (var i = 0; i < ProductLimits.IpcRetiredEntries + ProductLimits.IpcIdempotencyEntries + 5; i++)
-            dispatcher.Dispatch(new IpcRequest { ProtocolVersion = 1, RequestId = "new-" + i, Operation = IpcOperations.ReportHealth }, caller, Handle);
+            dispatcher.Dispatch(new IpcRequest { ProtocolVersion = ProductLimits.IpcProtocolVersion, RequestId = "new-" + i, Operation = IpcOperations.ReportHealth }, caller, Handle);
         var before = executions;
         dispatcher.Dispatch(old, caller, Handle);
         Assert.Equal(before, executions);
@@ -324,10 +326,10 @@ public sealed class IndependentRound4Tests
     private static Task<IpcResponse> Connect(BrokerEngine e, ICatalogue c, CancellationToken token = default) => e.HandleAsync(Request(e, IpcOperations.Connect,
         new ConnectPayload { NodeId = c.Nodes[0].NodeId, Digest = c.Nodes[0].Digest, NetworkEpoch = c.NetworkEpoch, ProtectionRequired = c.Settings.ProtectionOnConnect }), token);
     private static void Confirm(BrokerEngine e, ICatalogue c) { var s = e.Snapshot(); e.ConfirmProduction(s.BootId!, s.Generation, s.OperationId, s.ActiveNodeId, c.NetworkEpoch, true, null); }
-    private static IpcRequest Request(BrokerEngine e, string op, object payload) => new() { ProtocolVersion = 1, RequestId = Guid.NewGuid().ToString("N"), ExpectedStateRevision = e.Snapshot().Revision, Operation = op, Payload = JsonSerializer.SerializeToElement(payload, IpcJson.Options) };
+    private static IpcRequest Request(BrokerEngine e, string op, object payload) => new() { ProtocolVersion = ProductLimits.IpcProtocolVersion, RequestId = Guid.NewGuid().ToString("N"), ExpectedStateRevision = e.Snapshot().Revision, Operation = op, Payload = JsonSerializer.SerializeToElement(payload, IpcJson.Options) };
     private static IpcResponse Response(string boot, long sequence, string phase) => new() { RequestId = Guid.NewGuid().ToString("N"), Ok = true, Snapshot = new BrokerSnapshot { BootId = boot, Sequence = sequence, Revision = sequence, Phase = phase } };
-    private sealed class Scripted(Func<NodeSemantics, Uri, CancellationToken, Task<ProbeObservation>> run) : IProbeTransport
-    { public Task<ProbeObservation> ProbeAsync(NodeSemantics n, Uri t, CancellationToken token) => run(n, t, token); }
+    private sealed class Scripted(Func<NodeSemantics, Uri, CancellationToken, Task<ProbeObservation>> run) : BoundTestProbeTransport
+    { public override Task<ProbeObservation> ProbeAsync(NodeSemantics n, Uri t, CancellationToken token) => run(n, t, token); }
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> run) : HttpMessageHandler
     { protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) => Task.FromResult(run(request)); }
     private sealed class Guard : INetworkGuard

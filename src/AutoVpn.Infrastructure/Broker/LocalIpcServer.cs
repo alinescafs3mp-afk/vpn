@@ -1,5 +1,8 @@
 using System.Buffers.Binary;
 using System.IO.Pipes;
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using AutoVpn.Application;
 using AutoVpn.Contracts;
 using AutoVpn.Domain;
@@ -14,13 +17,15 @@ public sealed class LocalIpcServer : IAsyncDisposable
     private readonly IpcDispatcher _dispatcher;
     private readonly BrokerEngine _engine;
     private readonly Func<string, NamedPipeServerStream> _open;
+    private readonly string? _windowsOwnerSid;
     private readonly List<NamedPipeServerStream> _streams = [];
     private readonly List<Task> _sessions = [];
     private readonly Task _loop;
     private readonly TaskCompletionSource _completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private LocalIpcServer(string pipeName, IpcDispatcher dispatcher, BrokerEngine engine, Func<string, NamedPipeServerStream> open)
+    private LocalIpcServer(string pipeName, IpcDispatcher dispatcher, BrokerEngine engine, Func<string, NamedPipeServerStream> open, string? windowsOwnerSid)
     {
+        _windowsOwnerSid = windowsOwnerSid;
         _pipeName = pipeName;
         _dispatcher = dispatcher;
         _engine = engine;
@@ -52,8 +57,15 @@ public sealed class LocalIpcServer : IAsyncDisposable
         CallerIdentity localCaller,
         Func<string, NamedPipeServerStream>? openPipe = null)
     {
-        _ = localCaller;
-        return new LocalIpcServer(pipeName, dispatcher, engine, openPipe ?? OpenDefault);
+        string? sid = null;
+        if (OperatingSystem.IsWindows())
+        {
+            using var current = WindowsIdentity.GetCurrent();
+            sid = localCaller.Sid.StartsWith("S-1-", StringComparison.Ordinal) ? localCaller.Sid : current.User?.Value;
+            if (string.IsNullOrEmpty(sid)) throw new UnauthorizedAccessException("Windows owner SID is required.");
+        }
+        return new LocalIpcServer(pipeName, dispatcher, engine,
+            openPipe ?? (name => OpenDefault(name, sid)), sid);
     }
 
     public async ValueTask DisposeAsync()
@@ -90,15 +102,21 @@ public sealed class LocalIpcServer : IAsyncDisposable
 
         _completed.TrySetResult();
         _stop.Dispose();
+        SequencedPipeClient.Forget(_pipeName);
     }
 
-    public static async Task<IpcResponse?> RoundTripAsync(string pipeName, IpcRequest request, CancellationToken cancellationToken)
+    public static Task<IpcResponse?> RoundTripAsync(string pipeName, IpcRequest request, CancellationToken cancellationToken)
+        => SequencedPipeClient.For(pipeName).SendAsync(pipeName, request, cancellationToken);
+
+    internal static async Task<IpcResponse?> RawRoundTripAsync(string pipeName, IpcRequest request, CancellationToken cancellationToken)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(ProductLimits.IpcRoundTripTimeoutMs);
         try
         {
-            using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            using var client = OperatingSystem.IsWindows()
+                ? new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification)
+                : new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             await client.ConnectAsync(3000, budget.Token).ConfigureAwait(false);
             var frame = IpcFrames.Encode(request);
             await client.WriteAsync(frame, budget.Token).ConfigureAwait(false);
@@ -276,7 +294,7 @@ public sealed class LocalIpcServer : IAsyncDisposable
         }
         else
         {
-            var peer = PipePeer.Inspect(server);
+            var peer = PipePeer.Inspect(server, _windowsOwnerSid);
             if (!peer.Accepted || !peer.Verified)
             {
                 response = new IpcResponse
@@ -291,10 +309,10 @@ public sealed class LocalIpcServer : IAsyncDisposable
             }
             else
             {
-                var caller = new CallerIdentity { Sid = peer.Identity, SessionId = 0, IsRemotePipe = false };
+                var caller = new CallerIdentity { Sid = peer.Identity, SessionId = peer.SessionId, IsRemotePipe = false };
                 try
                 {
-                    response = _dispatcher.Dispatch(request, caller, incoming => _engine.HandleAsync(incoming, _stop.Token).GetAwaiter().GetResult());
+                    response = await _dispatcher.DispatchAsync(request, caller, incoming => _engine.HandleAsync(incoming, _stop.Token), _stop.Token).ConfigureAwait(false);
                 }
                 catch (Exception)
                 {
@@ -345,14 +363,33 @@ public sealed class LocalIpcServer : IAsyncDisposable
         _sessions.RemoveAll(session => session.IsCompleted);
     }
 
-    private static NamedPipeServerStream OpenDefault(string pipeName)
+    private static NamedPipeServerStream OpenDefault(string pipeName, string? windowsOwnerSid)
     {
+        if (OperatingSystem.IsWindows()) return OpenWindowsPipe(pipeName, windowsOwnerSid!);
         return new NamedPipeServerStream(
             pipeName,
             PipeDirection.InOut,
             ProductLimits.IpcPipeInstances,
             PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static NamedPipeServerStream OpenWindowsPipe(string name, string ownerSid)
+    {
+        var acl = new PipeSecurity();
+        acl.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        acl.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null),
+            PipeAccessRights.FullControl, AccessControlType.Deny));
+        acl.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+            PipeAccessRights.FullControl, AccessControlType.Allow));
+        acl.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(ownerSid),
+            PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize, AccessControlType.Allow));
+        using var self = WindowsIdentity.GetCurrent();
+        if (self.User is not null)
+            acl.AddAccessRule(new PipeAccessRule(self.User, PipeAccessRights.FullControl, AccessControlType.Allow));
+        return NamedPipeServerStreamAcl.Create(name, PipeDirection.InOut, ProductLimits.IpcPipeInstances,
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, acl);
     }
 
     private static async Task<bool> ReadExactAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)

@@ -314,7 +314,7 @@ public class AuditRegressionTests
         Assert.Equal(2, catalogue.Nodes.Count(node => node.CurrentFamilies.Count > 0));
 
         var cached = RefreshMerge.Ingest(catalogue, [
-            new IngestArtifact { ArtifactId = "alpha-body", FamilyId = "family-a", Enabled = true, NotModified = true, ContentHash = "same" },
+            new IngestArtifact { ArtifactId = "alpha-body", FamilyId = "family-a", Enabled = true, NotModified = true, ContentHash = catalogue.ArtifactSnapshots.Single(a => a.ArtifactId == "alpha-body").ContentHash },
         ], Now, false);
         Assert.False(cached.RefetchRequired);
         Assert.Contains("alpha-body", catalogue.Nodes.Single(node => node.Semantics.Host.EndsWith(".10", StringComparison.Ordinal)).ArtifactFamilies.Keys);
@@ -755,7 +755,7 @@ public class AuditRegressionTests
             Assert.NotEqual(current, replacement);
         }
 
-        using var connection = new SqliteConnection($"Data Source={path}");
+        using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = "UPDATE nodes SET digest=$next, assessment_json=replace(assessment_json, $current, $next);";
@@ -787,9 +787,9 @@ public class AuditRegressionTests
         };
     }
 
-    private sealed class AsyncTransport(Func<NodeSemantics, CancellationToken, Task<ProbeObservation>> next) : IProbeTransport
+    private sealed class AsyncTransport(Func<NodeSemantics, CancellationToken, Task<ProbeObservation>> next) : BoundTestProbeTransport
     {
-        public Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
+        public override Task<ProbeObservation> ProbeAsync(NodeSemantics node, Uri target, CancellationToken cancellationToken)
         {
             _ = target;
             return next(node, cancellationToken);
