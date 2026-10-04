@@ -291,7 +291,7 @@ public sealed class Round2SliceATests
                 Assert.True(reopened.Settings.DisclosureAccepted);
             }
 
-            using (var raw = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + path))
+            using (var raw = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + path + ";Pooling=False"))
             {
                 raw.Open();
                 using var delete = raw.CreateCommand();
