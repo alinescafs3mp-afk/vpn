@@ -25,6 +25,8 @@ public partial class MainWindow
             _mailbox.NoteDisclosure(false);
             _maintenance?.Pause();
             _connectCts?.Cancel();
+            _liveCts?.Cancel();
+            if (_liveClient is not null) _ = StopLiveAsync();
             _refresh?.Cancel();
             _fence.Begin();
             DetailText.Text = "Согласие отозвано. Новые загрузки и проверки остановлены; сохранённый каталог не удалён.";
@@ -33,6 +35,8 @@ public partial class MainWindow
         {
             _maintenance?.Pause();
             _connectCts?.Cancel();
+            _liveCts?.Cancel();
+            if (_liveClient is not null) _ = StopLiveAsync();
             _refresh?.Cancel();
             _fence.Begin();
             DetailText.Text = "Не удалось сохранить отзыв согласия. Проверки приостановлены: " + ex.GetType().Name;

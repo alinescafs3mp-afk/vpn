@@ -7,7 +7,7 @@
     <Grid.ColumnDefinitions><ColumnDefinition Width="200"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
     <StackPanel>
       <TextBlock Text="AutoVPN" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,4"/>
-      <TextBlock Text="Windows-клиент · V2" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,20"/>
+      <TextBlock Text="Windows-клиент · V3" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,20"/>
       <Button Content="Подключение" Click="ShowConnection" Style="{StaticResource NavButton}"/>
       <Button Content="Серверы" Click="ShowServers" Style="{StaticResource NavButton}"/>
       <Button Content="Подписки" Click="ShowSubscriptions" Style="{StaticResource NavButton}"/>
@@ -21,8 +21,13 @@
           <CheckBox x:Name="DisclosureBox" Margin="0,0,0,16" Checked="DisclosureConsentChanged" Unchecked="DisclosureConsentChanged">
             <TextBlock TextWrapping="Wrap" MaxWidth="520" Text="AutoVPN подключается к публичным серверам из стороннего списка. Их операторы не проверяются. Поставщик подписки видит запросы на скачивание, а проверки серверов обращаются к публичным адресам. Приложение не обещает анонимность. Обычный HTTPS по-прежнему нужен."/>
           </CheckBox>
-          <Button x:Name="ConnectButton" Content="Подключить" Width="180" Height="44" HorizontalAlignment="Left" Click="ConnectClick"/>
-          <TextBlock Margin="0,24,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Text="Версия для разработки. Подключение компьютера через TUN, защита и установщик ещё не завершены."/>
+          <ComboBox x:Name="LiveMode" SelectedIndex="0" Margin="0,0,0,10" HorizontalAlignment="Left" Width="320">
+            <ComboBoxItem Content="Прокси для приложений (без прав администратора)"/>
+            <ComboBoxItem Content="TUN всего компьютера (экспериментально)"/>
+          </ComboBox>
+          <TextBlock x:Name="SelectedServerText" Text="Сервер: автоматический выбор" TextWrapping="Wrap" Margin="0,0,0,10"/>
+          <Button x:Name="ConnectButton" Content="Подключить" Width="180" Height="44" HorizontalAlignment="Left" Click="ConnectLiveClick"/>
+          <TextBlock Margin="0,24,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Text="V3: реальный прокси-сеанс. TUN требует отдельного согласия и UAC. Аварийная блокировка при падении ядра ещё не готова; режим не предназначен для чувствительного трафика."/>
         </StackPanel>
         <StackPanel x:Name="ServersPage" Visibility="Collapsed">
           <TextBlock Text="Серверы" FontSize="28" FontWeight="SemiBold"/>
@@ -33,7 +38,13 @@
           </StackPanel>
           <TextBlock x:Name="MaintenanceStatus" Text="Ожидание запуска проверок." Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
           <Button x:Name="PauseChecksButton" Content="Приостановить проверки" Click="PauseChecksClick" HorizontalAlignment="Left" Margin="0,0,0,12"/>
-          <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="260">
+          <ListBox x:Name="ServerRows" DisplayMemberPath="Caption" Height="180" SelectionChanged="ServerSelectionChanged"/>
+          <WrapPanel Margin="0,8,0,8">
+            <Button Content="Проверить выбранный" Click="VerifySelectedClick" Margin="0,0,8,4"/>
+            <Button Content="Избранное ★" Click="ToggleFavoriteClick" Margin="0,0,8,4"/>
+            <Button Content="Импорт из файла" Click="ImportFileClick" Margin="0,0,8,4"/>
+          </WrapPanel>
+          <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="60">
             <TextBlock x:Name="ServerList" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Text="Рабочие серверы появятся после локальной проверки. Страна из названия не является измеренной геолокацией."/>
           </ScrollViewer>
         </StackPanel>
@@ -48,7 +59,7 @@
         </StackPanel>
         <StackPanel x:Name="SettingsPage" Visibility="Collapsed">
           <TextBlock Text="Настройки" FontSize="28" FontWeight="SemiBold"/>
-          <TextBlock Margin="0,12,0,8" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Text="Обновление по умолчанию: 120 минут ±10. Защита при обрыве рекомендуется. Выключение защиты не включает непроверенный туннель."/>
+          <TextBlock Margin="0,12,0,8" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Text="Обновление по умолчанию: 120 минут ±10. Защита при обрыве рекомендуется. Для экспериментального TUN V3 нужно явно отключить этот флаг и подтвердить предупреждение при подключении."/>
           <CheckBox x:Name="ProtectionBox" Content="Защита при обрыве" Margin="0,8,0,8" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
           <CheckBox x:Name="LanBox" Content="Разрешить доступ к локальной сети" Margin="0,0,0,8" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
           <CheckBox x:Name="InsecureBox" Content="Разрешить серверы без проверки сертификата" Margin="0,0,0,8" Checked="SettingsChanged" Unchecked="SettingsChanged"/>

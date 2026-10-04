@@ -342,6 +342,22 @@ public static class Socks5Client
             await ReadExactAsync(stream, pending, linked.Token).ConfigureAwait(false);
         }
 
+        return await ExchangeTlsAsync(stream, target, trustAnchors, linked.Token).ConfigureAwait(false);
+    }
+
+    public static async Task<TlsProbeExchange> ExchangeDirectAsync(IPAddress address, Uri target,
+        TimeSpan timeout, X509Certificate2Collection? trustAnchors, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
+        using var client = new TcpClient(address.AddressFamily);
+        await client.ConnectAsync(address, target.Port, deadline.Token).ConfigureAwait(false);
+        return await ExchangeTlsAsync(client.GetStream(), target, trustAnchors, deadline.Token).ConfigureAwait(false);
+    }
+
+    private static async Task<TlsProbeExchange> ExchangeTlsAsync(Stream stream, Uri target,
+        X509Certificate2Collection? trustAnchors, CancellationToken cancellationToken)
+    {
         await using var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
         var options = new SslClientAuthenticationOptions
         {
@@ -366,7 +382,7 @@ public static class Socks5Client
 
         try
         {
-            await ssl.AuthenticateAsClientAsync(options, linked.Token).ConfigureAwait(false);
+            await ssl.AuthenticateAsClientAsync(options, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is AuthenticationException or IOException or InvalidOperationException)
         {
@@ -375,12 +391,12 @@ public static class Socks5Client
 
         var http = "GET " + target.PathAndQuery + " HTTP/1.1\r\nHost: " + target.IdnHost + "\r\nConnection: close\r\n\r\n";
         var requestBytes = Encoding.ASCII.GetBytes(http);
-        await ssl.WriteAsync(requestBytes, linked.Token).ConfigureAwait(false);
+        await ssl.WriteAsync(requestBytes, cancellationToken).ConfigureAwait(false);
         var header = new byte[4096];
         var read = 0;
         while (read < header.Length)
         {
-            var count = await ssl.ReadAsync(header.AsMemory(read, header.Length - read), linked.Token).ConfigureAwait(false);
+            var count = await ssl.ReadAsync(header.AsMemory(read, header.Length - read), cancellationToken).ConfigureAwait(false);
             if (count == 0)
             {
                 break;
@@ -395,7 +411,7 @@ public static class Socks5Client
             }
 
             var head = text[..split];
-            var parsed = await ReadProbeResponseAsync(ssl, head, text[(split + 4)..], linked.Token).ConfigureAwait(false);
+            var parsed = await ReadProbeResponseAsync(ssl, head, text[(split + 4)..], cancellationToken).ConfigureAwait(false);
             return parsed with { PayloadBytes = read };
         }
 

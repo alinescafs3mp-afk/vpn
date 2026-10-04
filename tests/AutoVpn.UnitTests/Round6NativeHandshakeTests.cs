@@ -70,6 +70,20 @@ public sealed class Round6NativeHandshakeTests
             var broken=protocol=="trojan"?node with {Password="incorrect-synthetic-password"}:node with {UserId="22222222-2222-4222-8222-222222222222"};
             var bad=await probe.ProbeAsync(broken,url,new ProbeAdmission(true),budget.Token);
             Assert.False(bad.Success,"Incorrect "+variant+" credentials reached an authenticated success.");Assert.Equal(before,target.Accepts);
+            if (variant == "trojan")
+            {
+                var liveNode = new AutoVpn.Application.CatalogueNode { NodeId="live-v3", Digest=CanonicalIdentity.Digest(node), Semantics=node,Label="Controlled live proxy" };
+                await using var live = new AutoVpn.Infrastructure.Runtime.LiveCoreSession(binary!,hash!,[url,url],fixture);
+                await live.StartAsync(new AutoVpn.Contracts.LiveSessionRequest { Node=AutoVpn.Infrastructure.Broker.NodeWireFactory.FromCatalogue(liveNode),AllowInsecureProxy=true },budget.Token);
+                Assert.Equal("Connected",live.Snapshot.Phase);
+                Assert.True(live.Snapshot.HasOwnedProcess);
+                var pid=live.Snapshot.ProcessId!.Value;var proxyPort=live.Snapshot.ProxyPort!.Value;
+                var real=await Socks5Client.ExchangeAsync(new IPEndPoint(IPAddress.Loopback,proxyPort),url,TimeSpan.FromSeconds(8),fixture.TrustAnchors,budget.Token);
+                Assert.True(real.Authenticated&&real.Status==204&&real.Failure is null);
+                await live.StopAsync();Assert.Equal("Stopped",live.Snapshot.Phase);Assert.False(live.Snapshot.HasOwnedProcess);
+                Assert.False(ProbeWorker.ProcessOwnsLoopbackPort(pid,proxyPort));
+            }
+
         }
         finally
         {

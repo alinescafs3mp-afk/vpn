@@ -61,7 +61,7 @@ public partial class MainWindow : Window
             MaintenanceStatus.Text = "Проверки недоступны: требуется корректный набор двух HTTPS-адресов.";
         }
         _maintenanceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-        _maintenanceTimer.Tick += (_, _) => ShowMaintenance();
+        _maintenanceTimer.Tick += async (_, _) => { ShowMaintenance(); await PollLiveAsync(); };
         _scheduler = new RefreshScheduler(
             () => _catalogue.Settings,
             () => _ledger.LiveSuccessStamps(DateTimeOffset.UtcNow),
@@ -92,6 +92,7 @@ public partial class MainWindow : Window
         _mailbox.NoteDisclosure(_catalogue.Settings.DisclosureAccepted);
         ShowSession();
         _ready = true;
+        ShowLiveSession();
     }
 
     private static ICatalogue OpenCatalogue(string root)
@@ -104,9 +105,9 @@ public partial class MainWindow : Window
     private void ShowServers(object sender, RoutedEventArgs e) { ShowPage(ServersPage); ShowWorking(sender, e); }
     private void ShowSubscriptions(object sender, RoutedEventArgs e) => ShowPage(SubscriptionsPage);
     private void ShowSettings(object sender, RoutedEventArgs e) => ShowPage(SettingsPage);
-    private void ShowWorking(object sender, RoutedEventArgs e) { _serverView = "working"; RefreshServerView(); }
-    private void ShowFavorites(object sender, RoutedEventArgs e) { _serverView = "favorites"; RefreshServerView(); }
-    private void ShowAll(object sender, RoutedEventArgs e) { _serverView = "all"; RefreshServerView(); }
+    private void ShowWorking(object sender, RoutedEventArgs e) { _serverView = "working"; RefreshServerView(); UpdateServerRows(); }
+    private void ShowFavorites(object sender, RoutedEventArgs e) { _serverView = "favorites"; RefreshServerView(); UpdateServerRows(); }
+    private void ShowAll(object sender, RoutedEventArgs e) { _serverView = "all"; RefreshServerView(); UpdateServerRows(); }
 
     private void DisclosureChanged(object sender, RoutedEventArgs e)
     {
@@ -285,6 +286,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) when (ex is TimeoutException or IOException or OperationCanceledException) { _mailbox.ApplyTransportLoss(); }
         ShowSession();
+        ShowLiveSession();
     }
 
     private void ShowSession()
@@ -311,6 +313,8 @@ public partial class MainWindow : Window
 
     private async void ExitApplication()
     {
+        if (_liveClient is not null && !await StopLiveAsync()) return;
+        _liveCts?.Cancel();
         Volatile.Write(ref _shuttingDown, 1); _scheduleTimer.Stop(); _maintenanceTimer.Stop(); _maintenance?.Pause();
         _connectCts?.Cancel(); _refresh?.Cancel(); _fence.Begin();
         var generation = _connectLease.Supersede();
@@ -342,7 +346,7 @@ public partial class MainWindow : Window
     private void PauseChecksClick(object sender, RoutedEventArgs e)
     {
         _checksPaused = !_checksPaused;
-        if (_checksPaused) _maintenance?.Pause(); else _maintenance?.Resume();
+        if (_checksPaused || _liveClient is not null) _maintenance?.Pause(); else _maintenance?.Resume();
         PauseChecksButton.Content = _checksPaused ? "Продолжить проверки" : "Приостановить проверки";
         ShowMaintenance();
     }
@@ -364,6 +368,7 @@ public partial class MainWindow : Window
         MaintenanceStatus.Text = caption + ". За последний цикл: проверено " + state.Attempted +
             ", подтверждено " + state.Succeeded + ", неуспешно " + state.Failed + ".";
         RefreshServerView();
+        UpdateServerRows();
     }
     private void RefreshServerView()
     {
