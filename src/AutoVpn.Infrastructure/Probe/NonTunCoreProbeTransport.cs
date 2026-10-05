@@ -629,15 +629,19 @@ public sealed class ProbeWorker : IAsyncDisposable
 {
     private readonly Process? _process;
     private readonly CancellationTokenSource _output;
-    private readonly Task<int> _stdout;
-    private readonly Task<int> _stderr;
+    private readonly Task<ProbeOutputResult> _stdout;
+    private readonly Task<ProbeOutputResult> _stderr;
     private readonly string? _directory;
     private int _disposed;
     private readonly object _cleanupGate = new();
     private Task? _cleanupTask;
     private bool _resourcesReleased;
+    private bool _processExitConfirmed;
+    private bool _outputFailed;
+    private ProbeCleanupReport? _cleanupReport;
+    public ProbeCleanupReport? CleanupReport => Volatile.Read(ref _cleanupReport);
 
-    private ProbeWorker(Process? process, CancellationTokenSource output, Task<int> stdout, Task<int> stderr, string? directory, bool ready, string workerId, StringBuilder tail)
+    private ProbeWorker(Process? process, CancellationTokenSource output, Task<ProbeOutputResult> stdout, Task<ProbeOutputResult> stderr, string? directory, bool ready, string workerId, StringBuilder tail)
     {
         _process = process;
         _output = output;
@@ -653,7 +657,9 @@ public sealed class ProbeWorker : IAsyncDisposable
 
     public bool Ready { get; }
     public string WorkerId { get; }
+    // Compatibility name. This has always counted decoded characters, not bytes.
     public int OutputBytes { get; private set; }
+    public int OutputCharacters => OutputBytes;
     public bool DirectoryRemoved { get; private set; }
     public string? Diagnostic { get; private set; }
 
@@ -710,8 +716,8 @@ public sealed class ProbeWorker : IAsyncDisposable
         }
 
         var output = new CancellationTokenSource();
-        var stdout = CountAsync(process.StandardOutput, output.Token, null);
-        var stderr = CountAsync(process.StandardError, output.Token, sessionTail);
+        var stdout = ProbeOutputDrain.ReadAsync(process.StandardOutput, output.Token);
+        var stderr = ProbeOutputDrain.ReadAsync(process.StandardError, output.Token, sessionTail);
         var ready = false;
         var deadline = DateTimeOffset.UtcNow + timeout;
         while (DateTimeOffset.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
@@ -750,7 +756,7 @@ public sealed class ProbeWorker : IAsyncDisposable
 
     private static async Task<ProbeWorker> FailedStartAsync(string? directoryToDelete)
     {
-        var failed = new ProbeWorker(null, new CancellationTokenSource(), Task.FromResult(0), Task.FromResult(0), directoryToDelete, false, "", new StringBuilder());
+        var failed = new ProbeWorker(null, new CancellationTokenSource(), Task.FromResult(new ProbeOutputResult(0, ProbeOutputEnd.NotStarted)), Task.FromResult(new ProbeOutputResult(0, ProbeOutputEnd.NotStarted)), directoryToDelete, false, "", new StringBuilder());
         await failed.DisposeAsync().ConfigureAwait(false);
         return failed;
     }
@@ -888,6 +894,7 @@ public sealed class ProbeWorker : IAsyncDisposable
     {
         Interlocked.Exchange(ref _disposed, 1);
         var phase = "PROCESS_STOP";
+        var elapsed = Stopwatch.StartNew();
         try
         {
             if (!_resourcesReleased)
@@ -904,10 +911,12 @@ public sealed class ProbeWorker : IAsyncDisposable
                     }
                     await _process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
                 }
+                _processExitConfirmed = true;
                 phase = "OUTPUT_DRAIN";
                 _output.Cancel();
                 var counts = await Task.WhenAll(_stdout, _stderr).WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
-                OutputBytes = (int)Math.Min(int.MaxValue, (long)counts[0] + counts[1]);
+                OutputBytes = (int)Math.Min(int.MaxValue, (long)counts[0].Characters + counts[1].Characters);
+                _outputFailed = counts.Any(result => result.End == ProbeOutputEnd.Failed);
                 _output.Dispose();
                 _process?.Dispose();
                 _resourcesReleased = true;
@@ -915,52 +924,33 @@ public sealed class ProbeWorker : IAsyncDisposable
             phase = "DIRECTORY_CLEANUP";
             DirectoryRemoved = await DeleteDirectoryAsync(_directory).ConfigureAwait(false);
             if (!DirectoryRemoved) throw new ProbeCleanupException();
+            // Failed readers have completed, so their owned handles/files can be released.
+            // The probe still fails: a read fault must not silently become a healthy observation.
+            phase = "OUTPUT_RESULT";
+            if (_outputFailed) throw new ProbeCleanupException();
             Diagnostic = null;
             Volatile.Write(ref _disposed, 2);
+            Volatile.Write(ref _cleanupReport, Report("COMPLETED", null));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException
             or InvalidOperationException or Win32Exception or OperationCanceledException)
         {
             Diagnostic = phase + "_FAILED";
-            // Never dispose the process handle or delete its files after an
-            // unconfirmed stop. A caller must not publish probe success here.
-            throw new ProbeCleanupException();
+            var report = Report(phase + "_FAILED", ex);
+            Volatile.Write(ref _cleanupReport, report);
+            throw new ProbeCleanupException(report);
         }
-    }
 
-    private static async Task<int> CountAsync(StreamReader reader, CancellationToken cancellationToken, StringBuilder? tail)
-    {
-        var buffer = new char[1024];
-        var total = 0;
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
+        ProbeCleanupReport Report(string stage, Exception? error) => new(stage, _processExitConfirmed,
+            _resourcesReleased, DirectoryRemoved, elapsed.ElapsedMilliseconds, error switch
             {
-                var count = await reader.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false);
-                if (count == 0)
-                {
-                    break;
-                }
-
-                total = total > int.MaxValue - count ? int.MaxValue : total + count;
-                if (tail is not null && tail.Length < 2000)
-                {
-                    lock (tail)
-                    {
-                        var room = 2000 - tail.Length;
-                        if (room > 0)
-                        {
-                            tail.Append(buffer, 0, Math.Min(count, room));
-                        }
-                    }
-                }
-            }
-        }
-        catch (Exception ex) when (ex is OperationCanceledException or IOException)
-        {
-        }
-
-        return total;
+                null => "NONE", TimeoutException => "TIMEOUT", OperationCanceledException => "CANCELED",
+                UnauthorizedAccessException => "ACCESS", Win32Exception => "WIN32",
+                IOException => "IO", _ => "STATE",
+            }, error?.HResult ?? 0, _stdout.Status, _stderr.Status,
+            _stdout.IsCompletedSuccessfully ? _stdout.GetAwaiter().GetResult() : null,
+            _stderr.IsCompletedSuccessfully ? _stderr.GetAwaiter().GetResult() : null,
+            ThreadPool.ThreadCount, ThreadPool.PendingWorkItemCount);
     }
 
     private static async Task<bool> DeleteDirectoryAsync(string? directory)

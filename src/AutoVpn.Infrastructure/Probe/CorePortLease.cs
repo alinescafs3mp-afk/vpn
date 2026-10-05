@@ -87,5 +87,8 @@ public sealed class CorePortReservationException : IOException
 
 public sealed class ProbeCleanupException : IOException
 {
+    public ProbeCleanupReport? Report { get; }
     public ProbeCleanupException() : base("CORE_CLEANUP_REQUIRED") { }
+    public ProbeCleanupException(ProbeCleanupReport report) : base("CORE_CLEANUP_REQUIRED:" + report.Summary)
+    { Report = report; }
 }
