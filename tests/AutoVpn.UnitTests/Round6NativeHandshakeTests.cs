@@ -29,34 +29,46 @@ public sealed class Round6NativeHandshakeTests
         Assert.Equal(hash!.ToLowerInvariant(),Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(binary!))).ToLowerInvariant());
         using var certificate=Certificate();
         await using var target=await TlsPeer.StartAsync(certificate,"HTTP/1.1 204 No Content\r\n\r\n");
+        // This second Mihomo process is the controlled server, not the probe
+        // client. It has the same listener-before-dispatch startup ordering.
+        await using var inboundReadiness = new LoopbackCoreReadiness();
         var directory=Directory.CreateTempSubdirectory("autovpn-r6-native-");
         Process? server=null;Task? stdout=null;Task? stderr=null;var tail=new StringBuilder();var outputGate=new object();
         using var budget=new CancellationTokenSource(TimeSpan.FromSeconds(80));
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        var socksListener = new TcpListener(IPAddress.Loopback, 0);
         try
         {
             await File.WriteAllTextAsync(Path.Combine(directory.FullName,"cert.pem"),certificate.ExportCertificatePem(),budget.Token);
             using var rsa=certificate.GetRSAPrivateKey()!;
             await File.WriteAllTextAsync(Path.Combine(directory.FullName,"key.pem"),rsa.ExportPkcs8PrivateKeyPem(),budget.Token);
-            var listener=new TcpListener(IPAddress.Loopback,0);listener.Start();var port=((IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();
+            listener.Start();var port=((IPEndPoint)listener.LocalEndpoint).Port;
+            socksListener.Start();var socksPort=((IPEndPoint)socksListener.LocalEndpoint).Port;
             var protocol=variant.StartsWith("vmess",StringComparison.Ordinal)?"vmess":variant=="trojan"?"trojan":"vless";
             const string user="11111111-1111-4111-8111-111111111111";
             const string password="round6-synthetic-trojan-password";
             var transport=variant.EndsWith("-ws",StringComparison.Ordinal)?"ws":variant.EndsWith("-grpc",StringComparison.Ordinal)?"grpc":"tcp";
             var credentials=protocol=="trojan"?"      password: '"+password+"'\n":"      uuid: '"+user+"'\n"+(protocol=="vmess"?"      alterId: 0\n":"");
             var options=transport=="ws"?"    ws-path: '/round6-path'\n":transport=="grpc"?"    grpc-service-name: 'round6-service'\n":"";
-            var yaml="mixed-port: 0\nallow-lan: false\nmode: rule\nlog-level: warning\nipv6: false\ndns:\n  enable: false\ntun:\n  enable: false\nhosts:\n  'probe.example': '127.0.0.1'\nlisteners:\n  - name: 'controlled-peer'\n    type: "+protocol+"\n    listen: '127.0.0.1'\n    port: "+port.ToString(CultureInfo.InvariantCulture)+"\n    users:\n    - username: 'fixture'\n"+credentials+"    certificate: 'cert.pem'\n    private-key: 'key.pem'\n"+options+"rules:\n  - MATCH,DIRECT\n";
+            var yaml="mixed-port: 0\nsocks-port: "+socksPort.ToString(CultureInfo.InvariantCulture)+"\nbind-address: '127.0.0.1'\nallow-lan: false\nmode: rule\nlog-level: warning\nipv6: false\ndns:\n  enable: false\ntun:\n  enable: false\nhosts:\n  'probe.example': '127.0.0.1'\nlisteners:\n  - name: 'controlled-peer'\n    type: "+protocol+"\n    listen: '127.0.0.1'\n    port: "+port.ToString(CultureInfo.InvariantCulture)+"\n    users:\n    - username: 'fixture'\n"+credentials+"    certificate: 'cert.pem'\n    private-key: 'key.pem'\n"+options+"rules:\n  - MATCH,DIRECT\n";
+            yaml = inboundReadiness.AddToProfile(yaml);
             await File.WriteAllTextAsync(Path.Combine(directory.FullName,"server.yaml"),yaml,budget.Token);
             var start=new ProcessStartInfo(binary!) {WorkingDirectory=directory.FullName,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
             start.ArgumentList.Add("-d");start.ArgumentList.Add(directory.FullName);start.ArgumentList.Add("-f");start.ArgumentList.Add(Path.Combine(directory.FullName,"server.yaml"));
+            listener.Stop();socksListener.Stop();
             server=Process.Start(start)??throw new InvalidOperationException("Controlled native server did not start.");
             stdout=Drain(server.StandardOutput);stderr=Drain(server.StandardError);
             var ready=false;var watch=Stopwatch.StartNew();
+            bool Owns() => !server.HasExited && ProbeWorker.ProcessOwnsLoopbackPort(server.Id, socksPort);
             while(watch.Elapsed<TimeSpan.FromSeconds(10)&&!server.HasExited)
             {
-                try{using var tcp=new TcpClient();await tcp.ConnectAsync(IPAddress.Loopback,port,budget.Token);ready=true;break;}
-                catch(SocketException){await Task.Delay(40,budget.Token);}
+                if (Owns() && ProbeWorker.ProcessOwnsLoopbackPort(server.Id, port)) { ready=true;break; }
+                await Task.Delay(40,budget.Token);
             }
-            Assert.True(ready,"Controlled inbound readiness failed: "+Tail());
+            Assert.True(ready,"Controlled inbound listener readiness failed: "+Tail());
+            var remaining = TimeSpan.FromSeconds(10) - watch.Elapsed;
+            Assert.True(remaining > TimeSpan.Zero && await inboundReadiness.WaitAsync(socksPort, Owns, remaining, budget.Token),
+                "Controlled inbound dispatch readiness failed: " + Tail());
             var node=new NodeSemantics {Protocol=protocol=="vmess"?ProtocolKind.Vmess:protocol=="trojan"?ProtocolKind.Trojan:ProtocolKind.Vless,
                 Host="candidate.example",Port=port,UserId=protocol=="trojan"?null:user,Password=protocol=="trojan"?password:null,
                 Security="tls",Encryption=protocol=="vmess"?"auto":"none",Sni="candidate.example",Transport=transport,
@@ -74,6 +86,7 @@ public sealed class Round6NativeHandshakeTests
         }
         finally
         {
+            listener.Stop();socksListener.Stop();
             if(server is not null)
             {
                 try{if(!server.HasExited)server.Kill(entireProcessTree:true);await server.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));}

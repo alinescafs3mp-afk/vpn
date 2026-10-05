@@ -27,12 +27,11 @@ public sealed class AstraV3DStartupReadinessTests
         var target = new Uri("https://127.0.0.1:" + tls.Port.ToString(CultureInfo.InvariantCulture) + "/generate_204");
         var trust = new X509Certificate2Collection(certificate);
         var directory = Directory.CreateTempSubdirectory("autovpn-v3d-startup-");
+        var reserved = new TcpListener(IPAddress.Loopback, 0);
         try
         {
-            var reserved = new TcpListener(IPAddress.Loopback, 0);
             reserved.Start();
             var socks = ((IPEndPoint)reserved.LocalEndpoint).Port;
-            reserved.Stop();
             // The controlled provider must use DIRECT explicitly. Without that,
             // its own startup download follows MATCH,REJECT and never reaches us.
             var yaml = "mixed-port: 0\nsocks-port: " + socks.ToString(CultureInfo.InvariantCulture) +
@@ -47,8 +46,11 @@ public sealed class AstraV3DStartupReadinessTests
             var start = new ProcessStartInfo(binary!) { WorkingDirectory = directory.FullName };
             start.ArgumentList.Add("-d"); start.ArgumentList.Add(directory.FullName);
             start.ArgumentList.Add("-f"); start.ArgumentList.Add(config);
+            // Hold the port through fixture preparation, releasing only for the
+            // child's bind. This narrows, but does not eliminate, the bind race.
+            reserved.Stop();
             await using var worker = await ProbeWorker.StartAsync(start, socks, TimeSpan.FromSeconds(10), deadline.Token, directory.FullName);
-            Assert.True(worker.Ready, worker.OutputTail);
+            Assert.True(worker.Ready, "Controlled core did not acquire its listener: " + worker.Diagnostic + " " + worker.OutputTail);
             await heldProvider.Entered.Task.WaitAsync(deadline.Token);
             var pid = int.Parse(worker.WorkerId.Split(':')[0], CultureInfo.InvariantCulture);
             bool Owns() => ProbeWorker.ProcessOwnsLoopbackPort(pid, socks);
@@ -63,7 +65,7 @@ public sealed class AstraV3DStartupReadinessTests
             Assert.False(await readiness.WaitAsync(socks, Owns, TimeSpan.FromMilliseconds(250), deadline.Token));
             Assert.Equal(0, readiness.Responses);
             heldProvider.Release.TrySetResult();
-            Assert.True(await readiness.WaitAsync(socks, Owns, TimeSpan.FromSeconds(5), deadline.Token), worker.OutputTail);
+            Assert.True(await readiness.WaitAsync(socks, Owns, TimeSpan.FromSeconds(5), deadline.Token), "Local dispatch proof failed: " + worker.OutputTail);
             // Same core, same certificate and same target, after dispatch ready.
             var live = await Socks5Client.ExchangeAsync(new IPEndPoint(IPAddress.Loopback, socks), target,
                 TimeSpan.FromSeconds(2), trust, deadline.Token);
@@ -73,6 +75,7 @@ public sealed class AstraV3DStartupReadinessTests
         }
         finally
         {
+            reserved.Stop();
             heldProvider.Release.TrySetResult();
             if (Directory.Exists(directory.FullName)) Directory.Delete(directory.FullName, true);
         }
@@ -170,8 +173,9 @@ public sealed class AstraV3DStartupReadinessTests
         }
         public async ValueTask DisposeAsync()
         {
-            _stop.Cancel(); _listener.Stop(); Release.TrySetResult();
-            await _server; _stop.Dispose();
+            _stop.Cancel(); Release.TrySetResult();
+            try { await _server; }
+            finally { _listener.Stop(); _stop.Dispose(); }
         }
     }
 }
