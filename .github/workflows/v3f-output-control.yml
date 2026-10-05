@@ -1,0 +1,91 @@
+name: v3f-owned-pipe-control
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/v3f-output-control.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  control:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Create isolated native-pipe cancellation control
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('artifacts/output-control');p.mkdir(parents=True)
+          (p/'Control.csproj').write_text('<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>')
+          (p/'Program.cs').write_text('''using System.Diagnostics;
+          using System.IO.Pipes;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          using System.Text.Json;
+          using Microsoft.Win32.SafeHandles;
+          if (!OperatingSystem.IsWindows()) return 2;
+          var rows=new List<object>();
+          for(var i=0;i<12;i++)
+          foreach(var backend in new[]{"FileStream","AnonymousPipeClientStream"})
+          {
+              if(!Native.CreatePipe(out var read,out var write,IntPtr.Zero,4096)) throw new InvalidOperationException("CREATE_PIPE");
+              using(read) using(write)
+              using(var writer=new FileStream(write,FileAccess.Write,4096,false))
+              {
+                  Stream input=backend=="FileStream" ? new FileStream(read,FileAccess.Read,4096,false)
+                      : new AnonymousPipeClientStream(PipeDirection.In,new SafePipeHandle(read.DangerousGetHandle(),false));
+                  using(input) using(var reader=new StreamReader(input,Encoding.UTF8,false,1024,true))
+                  using(var stop=new CancellationTokenSource())
+                  {
+                      writer.WriteByte(120); writer.Flush();
+                      var seed=new char[1];
+                      if(await reader.ReadAsync(seed.AsMemory())!=1 || seed[0]!='x') throw new InvalidOperationException("SEED_READ");
+                      var pending=reader.ReadAsync(new char[1024].AsMemory(),stop.Token).AsTask();
+                      await Task.Delay(100);
+                      if(pending.IsCompleted) throw new InvalidOperationException("NO_PENDING_READ");
+                      var watch=Stopwatch.StartNew(); stop.Cancel();
+                      string result;
+                      try { result="READ_RETURNED_"+await pending.WaitAsync(TimeSpan.FromSeconds(1)); }
+                      catch(OperationCanceledException) { result="CANCELED"; }
+                      catch(TimeoutException) { result="STILL_PENDING"; }
+                      catch(IOException ex) { result="IO_"+ex.HResult.ToString("X8"); }
+                      rows.Add(new {iteration=i,backend,result,elapsedMs=watch.ElapsedMilliseconds,taskState=pending.Status.ToString(),writerHeldOpen=true});
+                      Console.WriteLine(JsonSerializer.Serialize(rows[^1]));
+                      writer.Dispose();
+                      try { await pending.WaitAsync(TimeSpan.FromSeconds(2)); }
+                      catch(OperationCanceledException) { }
+                  }
+              }
+          }
+          await File.WriteAllTextAsync("artifacts/output-control/results.json",JsonSerializer.Serialize(rows,new JsonSerializerOptions{WriteIndented=true}));
+          return 0;
+          static class Native
+          {
+              [DllImport("kernel32.dll",SetLastError=true)]
+              [return:MarshalAs(UnmanagedType.Bool)]
+              internal static extern bool CreatePipe(out SafeFileHandle read,out SafeFileHandle write,IntPtr attributes,uint size);
+          }
+          ''',encoding='utf-8')
+      - name: Execute bounded control without modifying product sources
+        shell: pwsh
+        run: |
+          dotnet --info | Set-Content artifacts/output-control/dotnet-info.txt
+          dotnet run --project artifacts/output-control/Control.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'Pipe control failed.' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-V3F-owned-pipe-control
+          path: |
+            artifacts/output-control/*.cs
+            artifacts/output-control/*.csproj
+            artifacts/output-control/*.json
+            artifacts/output-control/*.txt
+          if-no-files-found: error
+          retention-days: 90
