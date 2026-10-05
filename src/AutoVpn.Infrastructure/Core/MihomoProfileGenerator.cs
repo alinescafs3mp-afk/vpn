@@ -10,6 +10,7 @@ public sealed record ProfileBuildRequest
     public required string Secret { get; init; }
     public required int ControllerPort { get; init; }
     public int? SocksPort { get; init; }
+    public int? ProbeReadinessPort { get; init; }
     public bool Tun { get; init; }
     public bool LanAccess { get; init; } = true;
     public string TunDeviceName { get; init; } = "AutoVPN";
@@ -37,6 +38,10 @@ public static class MihomoProfileGenerator
         {
             throw new InvalidOperationException("Controller port is invalid.");
         }
+
+        if (request.ProbeReadinessPort is int readiness &&
+            (request.Tun || request.LanAccess || request.ExternalController || request.SocksPort is null or < 1 or > 65535 || readiness is < 1024 or > 65535 || readiness == request.SocksPort))
+            throw new InvalidOperationException("PROBE_READINESS_SCOPE");
 
         var builder = new StringBuilder();
         builder.AppendLine("allow-lan: false");
@@ -158,6 +163,12 @@ public static class MihomoProfileGenerator
         }
 
         builder.AppendLine("rules:");
+        if (request.ProbeReadinessPort is int localPort)
+        {
+            // Only the exact owned IPv4 loopback challenge endpoint can bypass the
+            // candidate. This is never emitted in a TUN or general LAN profile.
+            builder.AppendLine($"  - AND,((NETWORK,tcp),(DST-PORT,{localPort.ToString(CultureInfo.InvariantCulture)}),(IP-CIDR,127.0.0.1/32,no-resolve)),DIRECT");
+        }
         builder.AppendLine("  - AND,((NETWORK,udp),(DST-PORT,53)),AUTO_SELECT");
         builder.AppendLine("  - AND,((NETWORK,tcp),(DST-PORT,53)),AUTO_SELECT");
         if (request.LanAccess)

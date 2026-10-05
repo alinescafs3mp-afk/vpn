@@ -10,6 +10,13 @@ public static class InstalledServiceProtocol
     public const int TimeoutMs = 2000;
     public const string Mode = "ControlPlaneOnly";
 
+    // SCM state alone cannot authenticate an endpoint, including SERVICE_RUNNING.
+    public static InstalledServiceCheck NonRunningCheck(uint state) => new(state switch
+    {
+        1 => "Stopped", 2 => "Starting", 3 => "Stopping", 5 => "Resuming",
+        6 => "Pausing", 7 => "Paused", _ => "Unavailable",
+    });
+
     public static bool ValidId(string? value) => value is { Length: 32 } &&
         Guid.TryParseExact(value, "N", out var id) && id != Guid.Empty &&
         value == id.ToString("N");
@@ -66,7 +73,12 @@ public sealed record InstalledServiceCheck(string State, ServiceStatusReply? Rep
     {
         "Ready" => "Служба Windows работает, подлинность канала проверена. Подключение VPN ещё недоступно.",
         "NotInstalled" => "Служба Windows не установлена.",
-        "Stopped" => "Служба Windows остановлена или ещё запускается.",
+        "Stopped" => "Служба Windows остановлена.",
+        "Starting" => "Служба Windows запускается. Готовность ещё не подтверждена.",
+        "Stopping" => "Служба Windows завершает работу.",
+        "Resuming" => "Служба Windows возобновляет работу.",
+        "Pausing" => "Служба Windows переходит в состояние паузы.",
+        "Paused" => "Служба Windows приостановлена.",
         "AccessDenied" => "Нет доступа к службе: проверьте назначенного при установке пользователя.",
         "AuthenticationFailed" => "Подлинность канала службы не подтверждена. Данные не отправлены.",
         "ProtocolError" => "Ответ службы не соответствует протоколу.",

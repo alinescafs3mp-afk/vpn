@@ -26,8 +26,9 @@ public sealed class Round6NativeHandshakeTests
         var binary=Environment.GetEnvironmentVariable("R5_CORE_PATH");var hash=Environment.GetEnvironmentVariable("R5_CORE_HASH");
         Assert.False(string.IsNullOrWhiteSpace(binary));Assert.False(string.IsNullOrWhiteSpace(hash));
         Assert.Equal(hash!.ToLowerInvariant(),Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(binary!))).ToLowerInvariant());
+        await using var readiness = new ProbeLoopbackReadiness();
         using var certificate=Certificate();
-        await using var target=await TlsPeer.StartAsync(certificate,"HTTP/1.1 204 No Content\r\n\r\n");
+        await using var target=new OwnedTlsProbePeer(certificate);
         var directory=Directory.CreateTempSubdirectory("autovpn-r6-native-");
         Process? server=null;Task? stdout=null;Task? stderr=null;var tail=new StringBuilder();var outputGate=new object();
         using var budget=new CancellationTokenSource(TimeSpan.FromSeconds(80));
@@ -36,14 +37,17 @@ public sealed class Round6NativeHandshakeTests
             await File.WriteAllTextAsync(Path.Combine(directory.FullName,"cert.pem"),certificate.ExportCertificatePem(),budget.Token);
             using var rsa=certificate.GetRSAPrivateKey()!;
             await File.WriteAllTextAsync(Path.Combine(directory.FullName,"key.pem"),rsa.ExportPkcs8PrivateKeyPem(),budget.Token);
-            var listener=new TcpListener(IPAddress.Loopback,0);listener.Start();var port=((IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();
+            var listener=new TcpListener(IPAddress.Loopback,0);listener.Start();var port=((IPEndPoint)listener.LocalEndpoint).Port;
+            var readinessListener=new TcpListener(IPAddress.Loopback,0);readinessListener.Start();
+            var readinessSocks=((IPEndPoint)readinessListener.LocalEndpoint).Port;
+            listener.Stop();readinessListener.Stop();
             var protocol=variant.StartsWith("vmess",StringComparison.Ordinal)?"vmess":variant=="trojan"?"trojan":"vless";
             const string user="11111111-1111-4111-8111-111111111111";
             const string password="round6-synthetic-trojan-password";
             var transport=variant.EndsWith("-ws",StringComparison.Ordinal)?"ws":variant.EndsWith("-grpc",StringComparison.Ordinal)?"grpc":"tcp";
             var credentials=protocol=="trojan"?"      password: '"+password+"'\n":"      uuid: '"+user+"'\n"+(protocol=="vmess"?"      alterId: 0\n":"");
             var options=transport=="ws"?"    ws-path: '/round6-path'\n":transport=="grpc"?"    grpc-service-name: 'round6-service'\n":"";
-            var yaml="mixed-port: 0\nallow-lan: false\nmode: rule\nlog-level: warning\nipv6: false\ndns:\n  enable: false\ntun:\n  enable: false\nhosts:\n  'probe.example': '127.0.0.1'\nlisteners:\n  - name: 'controlled-peer'\n    type: "+protocol+"\n    listen: '127.0.0.1'\n    port: "+port.ToString(CultureInfo.InvariantCulture)+"\n    users:\n    - username: 'fixture'\n"+credentials+"    certificate: 'cert.pem'\n    private-key: 'key.pem'\n"+options+"rules:\n  - MATCH,DIRECT\n";
+            var yaml="socks-port: "+readinessSocks.ToString(CultureInfo.InvariantCulture)+"\nbind-address: 127.0.0.1\nmixed-port: 0\nallow-lan: false\nmode: rule\nlog-level: warning\nipv6: false\ndns:\n  enable: false\ntun:\n  enable: false\nhosts:\n  'probe.example': '127.0.0.1'\nlisteners:\n  - name: 'controlled-peer'\n    type: "+protocol+"\n    listen: '127.0.0.1'\n    port: "+port.ToString(CultureInfo.InvariantCulture)+"\n    users:\n    - username: 'fixture'\n"+credentials+"    certificate: 'cert.pem'\n    private-key: 'key.pem'\n"+options+"rules:\n  - MATCH,DIRECT\n";
             await File.WriteAllTextAsync(Path.Combine(directory.FullName,"server.yaml"),yaml,budget.Token);
             var start=new ProcessStartInfo(binary!) {WorkingDirectory=directory.FullName,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
             start.ArgumentList.Add("-d");start.ArgumentList.Add(directory.FullName);start.ArgumentList.Add("-f");start.ArgumentList.Add(Path.Combine(directory.FullName,"server.yaml"));
@@ -56,6 +60,7 @@ public sealed class Round6NativeHandshakeTests
                 catch(SocketException){await Task.Delay(40,budget.Token);}
             }
             Assert.True(ready,"Controlled inbound readiness failed: "+Tail());
+            Assert.True(await readiness.WaitAsync(readinessSocks,TimeSpan.FromSeconds(10),budget.Token),"Controlled upstream routing did not become ready.");
             var node=new NodeSemantics {Protocol=protocol=="vmess"?ProtocolKind.Vmess:protocol=="trojan"?ProtocolKind.Trojan:ProtocolKind.Vless,
                 Host="candidate.example",Port=port,UserId=protocol=="trojan"?null:user,Password=protocol=="trojan"?password:null,
                 Security="tls",Encryption=protocol=="vmess"?"auto":"none",Sni="candidate.example",Transport=transport,

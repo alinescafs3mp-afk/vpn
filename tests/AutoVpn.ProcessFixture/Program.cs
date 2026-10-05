@@ -3,6 +3,7 @@ using System.Diagnostics;
 if (args.Length != 1) return 2;
 if (args[0] == "sleep") { await Task.Delay(TimeSpan.FromSeconds(30)); return 0; }
 if (args[0] == "exit") return 0;
+if (args[0] == "exit259") return 259;
 if (args[0] != "flood") return 2;
 var clock = Stopwatch.StartNew();
 var buffer = new string('x', 4096);
