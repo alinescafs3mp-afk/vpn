@@ -30,14 +30,15 @@ public static class InstalledServiceClient
             if (service.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
             if (!ValidConfiguration(service)) return new("AuthenticationFailed");
             var before = ReadStatus(service);
-            if (before.CurrentState != 4 || before.ProcessId == 0) return new("Stopped");
+            if (before.CurrentState != 4) return InstalledServiceProtocol.NonRunningCheck(before.CurrentState);
+            if (before.ProcessId is 0 or > int.MaxValue) return new("Unavailable");
             using var client = new NamedPipeClientStream(".", InstalledServiceProtocol.PipeName,
                 PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize, PipeOptions.Asynchronous,
                 TokenImpersonationLevel.Identification, HandleInheritability.None);
             await client.ConnectAsync(InstalledServiceProtocol.TimeoutMs, budget.Token).ConfigureAwait(false);
             if (!Native.GetNamedPipeServerProcessId(client.SafePipeHandle, out var pipePid) ||
                 pipePid != before.ProcessId || before.ServiceType != 0x10) return new("AuthenticationFailed");
-            using var process = Native.OpenProcess(0x1000, false, pipePid);
+            using var process = Native.OpenProcess(0x101000, false, pipePid);
             if (process.IsInvalid) return new("AuthenticationFailed");
             var path = new StringBuilder(32768); var length = path.Capacity;
             if (!Native.QueryFullProcessImageName(process, 0, path, ref length) ||
@@ -48,7 +49,7 @@ public static class InstalledServiceClient
             var request = new ServiceStatusRequest { ProtocolVersion = 1, RequestId = id, Operation = "GetStatus" };
             await client.WriteAsync(ServiceStatusFrames.Encode(request), budget.Token).ConfigureAwait(false);
             var reply = await ServiceStatusFrames.ReadAsync<ServiceStatusReply>(client, budget.Token).ConfigureAwait(false);
-            if (!StillRunning(service, process, pipePid)) return new("Unavailable");
+            if (!StillRunning(service, process, pipePid) || !ValidConfiguration(service)) return new("Unavailable");
             return InstalledServiceProtocol.ValidReply(reply, id, checked((int)pipePid))
                 ? new("Ready", reply) : new("ProtocolError");
         }
@@ -90,7 +91,7 @@ public static class InstalledServiceClient
     private static bool StillRunning(Native.ServiceHandle service, SafeProcessHandle process, uint pid)
     {
         var status = ReadStatus(service);
-        return status.ServiceType == 0x10 && status.CurrentState == 4 && status.ProcessId == pid && Native.GetExitCodeProcess(process, out var exitCode) && exitCode == 259;
+        return status.ServiceType == 0x10 && status.CurrentState == 4 && status.ProcessId == pid && ProcessHandleLiveness.IsRunning(process);
     }
 
     private static class Native
@@ -135,8 +136,5 @@ public static class InstalledServiceClient
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool QueryFullProcessImageName(SafeProcessHandle process, uint flags, StringBuilder name, ref int size);
-        [DllImport("kernel32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool GetExitCodeProcess(SafeProcessHandle handle, out uint exitCode);
     }
 }

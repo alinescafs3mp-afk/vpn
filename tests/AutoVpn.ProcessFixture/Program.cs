@@ -1,8 +1,10 @@
-// Finite synthetic owned child. No network or file input. Readiness is written only in its test-owned working directory.
+// Finite synthetic owned child. No network or file input. Markers use only its test-owned working directory.
 using System.Diagnostics;
 if (args.Length != 1) return 2;
 if (args[0] == "sleep") { await Task.Delay(TimeSpan.FromSeconds(30)); return 0; }
 if (args[0] == "exit") return 0;
+if (args[0] == "exit259") return 259;
+if (args[0] == "mark") { File.WriteAllText("spawned.txt", "synthetic owned fixture"); return 0; }
 if (args[0] != "flood") return 2;
 var clock = Stopwatch.StartNew();
 var buffer = new string('x', 4096);

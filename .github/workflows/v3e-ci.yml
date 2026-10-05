@@ -1,0 +1,90 @@
+name: v3e-main-resource-validation
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/integrate-v3e.py', '.github/workflows/v3e-ci.yml']
+permissions:
+  contents: read
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      source: ${{ steps.apply.outputs.source }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - id: apply
+        name: Apply exact source integration and publish a normal main fast-forward
+        env:
+          GIT_AUTHOR_NAME: AutoVPN development
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: AutoVPN development
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          python scripts/integrate-v3e.py
+          git diff --check
+          git add src/AutoVpn.Infrastructure/Probe/NonTunCoreProbeTransport.cs tests/AutoVpn.UnitTests/Round6NativeHandshakeTests.cs tests/AutoVpn.UnitTests/AstraV3DStartupReadinessTests.cs Directory.Build.props
+          git commit -m 'fix(v3e): reserve TCP and UDP together and require owned-process exit before cleanup'
+          git push origin HEAD:refs/heads/main
+          echo "source=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  validate:
+    needs: integrate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.integrate.outputs.source }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Verify source boundaries and retain exact source
+        shell: python
+        run: |
+          import hashlib, json, pathlib, subprocess, zipfile
+          base='121215c46d0f02c4f5b8f5ed417952866364bb6c'
+          p='src/AutoVpn.Infrastructure/Probe/NonTunCoreProbeTransport.cs'
+          def git(*args): return subprocess.check_output(['git',*args])
+          def tls(data): return data.split(b'public readonly record struct TlsProbeExchange',1)[1].split(b'public sealed class ProbeWorker',1)[0]
+          assert tls(git('show',base+':'+p)) == tls(git('show','HEAD:'+p))
+          for p in ['config/core-manifest.json','global.json','src/AutoVpn.Infrastructure/Core/MihomoProfileGenerator.cs']:
+            assert git('show',base+':'+p)==git('show','HEAD:'+p)
+          root=pathlib.Path('artifacts/v3e');root.mkdir(parents=True)
+          sha=git('rev-parse','HEAD').decode().strip()
+          tree=git('rev-parse','HEAD^{tree}').decode().strip()
+          files={}
+          with zipfile.ZipFile(root/'AutoVPN-V3E-source.zip','w',zipfile.ZIP_DEFLATED) as z:
+            for entry in git('ls-tree','-rz','HEAD').split(b'\0'):
+              if not entry: continue
+              meta,name=entry.split(b'\t',1);mode,kind,oid=meta.decode().split()
+              assert kind=='blob' and mode in ('100644','100755')
+              data=git('cat-file','blob',oid);name=name.decode()
+              z.writestr('source/'+name,data)
+              files[name]={'sha256':hashlib.sha256(data).hexdigest(),'size':len(data),'gitBlob':oid}
+          with zipfile.ZipFile(root/'AutoVPN-V3E-source.zip') as z: assert z.testzip() is None
+          (root/'source-manifest.json').write_text(json.dumps({'commit':sha,'tree':tree,'tlsUnchanged':True,'files':files},indent=2))
+          (root/'AutoVPN-V3E-from-V3D.patch').write_bytes(git('diff','--binary','--full-index',base,'HEAD'))
+          print('Source commit:',sha,'files:',len(files),'TLS unchanged')
+      - name: Build and run six complete suites with every failure retained
+        shell: pwsh
+        run: ./scripts/test-v3e.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-V3E-${{ needs.integrate.outputs.source }}-${{ matrix.os }}
+          path: artifacts/v3e/
+          if-no-files-found: error
+          retention-days: 90
