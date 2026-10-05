@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Retain exact tracked source and verify the intentionally unchanged TLS policy.
+"""Retain canonical Git blob bytes, independent of checkout EOL conversion.
 
 This script runs in CI. It never commits, pushes, installs or changes networking.
 A source snapshot is not an assertion that tests have passed.
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -22,7 +23,6 @@ def git(*arguments: str) -> bytes:
 
 
 def tls_segment(data: bytes) -> bytes:
-    # Normalize checkout line endings only; do not normalize any code or policy.
     text = data.replace(b"\r\n", b"\n")
     return text.split(b"public readonly record struct TlsProbeExchange", 1)[1].split(b"public sealed class ProbeWorker", 1)[0]
 
@@ -36,28 +36,44 @@ def main() -> None:
         assert git("show", f"{BASE}:{item}") == git("show", f"HEAD:{item}"), f"Unexpected change: {item}"
     head = git("rev-parse", "HEAD").decode().strip()
     tree = git("rev-parse", "HEAD^{tree}").decode().strip()
-    archive = OUT / "AutoVPN-V3D-source.zip"
-    subprocess.run(["git", "archive", "--format=zip", "--prefix=source/", "-o", str(archive), "HEAD"], cwd=ROOT, check=True)
+    epoch = int(git("show", "-s", "--format=%ct", "HEAD"))
+    timestamp = datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).timetuple()[:6]
     files = {}
+    source = {}
+    for entry in git("ls-tree", "-rz", "HEAD").split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_path = entry.split(b"\t", 1)
+        mode, kind, object_id = metadata.decode("ascii").split()
+        assert kind == "blob" and mode in ("100644", "100755"), "Unsupported source entry"
+        relative = raw_path.decode("utf-8")
+        assert not relative.startswith("/") and ".." not in relative.split("/"), "Unsafe source path"
+        data = git("cat-file", "blob", object_id)
+        assert hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest() == object_id, "Git object mismatch"
+        source[relative] = (mode, data)
+        files[relative] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest(), "gitBlob": object_id}
+    base_paths = {item.decode("utf-8") for item in git("ls-tree", "-rz", "--name-only", BASE).split(b"\0") if item}
+    assert base_paths <= files.keys(), "Base source paths were lost"
+    archive = OUT / "AutoVPN-V3D-source.zip"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for relative, (mode, data) in sorted(source.items()):
+            info = zipfile.ZipInfo("source/" + relative, timestamp)
+            info.create_system = 3
+            info.external_attr = int(mode, 8) << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            bundle.writestr(info, data)
     with zipfile.ZipFile(archive) as bundle:
         assert bundle.testzip() is None, "Source ZIP CRC failure"
-        for entry in bundle.infolist():
-            if entry.is_dir():
-                continue
-            relative = entry.filename.removeprefix("source/")
-            data = bundle.read(entry)
-            assert data == git("show", f"HEAD:{relative}"), f"Archive mismatch: {relative}"
-            files[relative] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
-    base_paths = set(git("ls-tree", "-r", "--name-only", BASE).decode().splitlines())
-    assert base_paths <= files.keys(), "Base source paths were lost"
-    patch = git("diff", "--binary", "--full-index", BASE, "HEAD")
-    (OUT / "AutoVPN-V3D-from-V3C.patch").write_bytes(patch)
+        assert len(bundle.infolist()) == len(source), "Incomplete source ZIP"
+        for relative, (_, data) in source.items():
+            assert bundle.read("source/" + relative) == data, f"Archive mismatch: {relative}"
+    (OUT / "AutoVPN-V3D-from-V3C.patch").write_bytes(git("diff", "--binary", "--full-index", BASE, "HEAD"))
     index = {"schemaVersion": 1, "status": "SOURCE_SNAPSHOT_TEST_OUTCOMES_ARE_SEPARATE", "base": BASE,
              "commit": head, "tree": tree, "fileCount": len(files), "allBasePathsRetained": True,
              "unchangedTlsHttpImplementation": True, "unchangedFiles": unchanged,
              "sourceZipSha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "files": files}
     (OUT / "SOURCE-MANIFEST.json").write_text(json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({key: value for key, value in index.items() if key != "files"}, ensure_ascii=False))
+    print(json.dumps({key: value for key, value in index.items() if key != "files"}, ensure_ascii=True))
 
 
 if __name__ == "__main__":
