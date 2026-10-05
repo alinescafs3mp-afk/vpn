@@ -181,8 +181,14 @@ public sealed class LoopbackCoreReadiness : IAsyncDisposable
     private async Task DisposeCoreAsync()
     {
         _stop.Cancel();
-        _listener.Stop();
+        // Accept/read/write all observe this token. Join the loop before closing
+        // its listening socket, avoiding Stop racing a Windows AcceptAsync call.
         try { await _server.ConfigureAwait(false); }
-        finally { CryptographicOperations.ZeroMemory(_key); _stop.Dispose(); }
+        finally
+        {
+            _listener.Stop();
+            CryptographicOperations.ZeroMemory(_key);
+            _stop.Dispose();
+        }
     }
 }

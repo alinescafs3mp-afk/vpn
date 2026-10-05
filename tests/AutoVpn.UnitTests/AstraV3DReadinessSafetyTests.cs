@@ -147,8 +147,10 @@ public sealed class AstraV3DReadinessSafetyTests
         }
         public async ValueTask DisposeAsync()
         {
-            _stop.Cancel(); _listener.Stop();
-            await _server; _stop.Dispose();
+            _stop.Cancel();
+            // Do not close the listening socket concurrently with AcceptAsync.
+            try { await _server; }
+            finally { _listener.Stop(); _stop.Dispose(); }
         }
     }
 }
