@@ -1,0 +1,224 @@
+name: astra-v3d-source-delivery
+on:
+  workflow_dispatch:
+  push:
+    branches: [implementation/astra-v3d-tls]
+    paths: ['.github/workflows/astra-v3d-delivery.yml', 'docs/evidence/V3D_VALIDATION.json']
+permissions:
+  contents: read
+  actions: read
+env:
+  TESTED_COMMIT: 63fb4c96afb8d73df8b5c7a306e2cfe142ad32be
+  VALIDATION_RUN_ID: '37344416073'
+jobs:
+  retain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Bind delivery to tested code and retain canonical source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code "$TESTED_COMMIT" HEAD -- src tests scripts config Directory.Build.props global.json AutoVpn.slnx
+          python scripts/v3d-source-snapshot.py
+          mkdir -p artifacts/v3d-delivery
+          cp artifacts/v3d-source/* artifacts/v3d-delivery/
+          cp README_V3D_RU.md artifacts/v3d-delivery/START-HERE.md
+      - name: Retain isolated observations
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37336477856
+          path: artifacts/v3d-delivery/evidence/isolated
+      - name: Retain reproduced pre-fix failures
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37337183746
+          path: artifacts/v3d-delivery/evidence/before
+      - name: Retain first controlled fixture failure
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37338889327
+          path: artifacts/v3d-delivery/evidence/fixture-first
+      - name: Retain corrected controlled proof
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37339960790
+          path: artifacts/v3d-delivery/evidence/controlled-proof
+      - name: Retain first integrated run and packaging failure
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37340995123
+          path: artifacts/v3d-delivery/evidence/integrated-first
+      - name: Retain Windows startup, disposal and timing failures
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37341316366
+          path: artifacts/v3d-delivery/evidence/integrated-second
+      - name: Retain client-only gate results, including residual TLS failures
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37343244080
+          path: artifacts/v3d-delivery/evidence/client-only-gate
+      - name: Retain final two-sided readiness results
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ env.VALIDATION_RUN_ID }}
+          path: artifacts/v3d-delivery/evidence/after
+      - name: Recount original outcomes and verify reversible source package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import collections, hashlib, json, os, pathlib, re, shutil, subprocess, tempfile, xml.etree.ElementTree as ET, zipfile
+          root = pathlib.Path('artifacts/v3d-delivery')
+          tested = os.environ['TESTED_COMMIT']
+          results = {}
+          protocol_prefix = 'AutoVpn.UnitTests.Round6NativeHandshakeTests.Native_Round5_R6_ActualProtocolHandshakeAndWrongCredentialNegative'
+          for platform in ('ubuntu-latest','windows-latest'):
+              folder = root/'evidence/after'/f'V3D-source-and-evidence-{tested}-{platform}'/'v3d-tls'
+              summary = json.loads((folder/'summary.json').read_text(encoding='utf-8-sig'))
+              assert summary['sourceCommit']==tested
+              assert summary['plannedRuns']==summary['completedRuns']==len(summary['runs'])==12
+              allowed = set() if platform=='ubuntu-latest' else {
+                  'AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess',
+                  'AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap',
+                  'AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess'}
+              counts, native_counts, new_counts = collections.Counter(), collections.Counter(), collections.Counter()
+              failures, run_exits = [], []
+              for i in range(1,13):
+                  cases = [x for x in ET.parse(folder/f'run-{i}/results.trx').iter() if x.tag.rsplit('}',1)[-1]=='UnitTestResult']
+                  assert len(cases)==len({x.attrib['testName'] for x in cases})==486
+                  outcomes = collections.Counter(x.attrib['outcome'] for x in cases)
+                  assert set(outcomes) <= {'Passed','Failed','NotExecuted'}
+                  assert {x.attrib['testName'] for x in cases if x.attrib['outcome']=='NotExecuted'}==allowed
+                  record = summary['runs'][i-1]
+                  assert record['iteration']==i and record['total']==486
+                  assert record['passed']==outcomes['Passed'] and record['failed']==outcomes['Failed']
+                  assert record['valid']==(record['exitCode']==0 and outcomes['Failed']==0 and outcomes['Passed']==486-len(allowed))
+                  run_exits.append(record['exitCode']); counts.update(outcomes)
+                  native = [x for x in cases if x.attrib['testName'].startswith(protocol_prefix)]
+                  assert len(native)==6
+                  native_counts.update(x.attrib['outcome'] for x in native)
+                  newer = [x for x in cases if '.AstraV3DStartupReadinessTests.' in x.attrib['testName'] or '.AstraV3DReadinessSafetyTests.' in x.attrib['testName']]
+                  assert len(newer)==17
+                  new_counts.update(x.attrib['outcome'] for x in newer)
+                  failures.extend({'iteration':i,'test':x.attrib['testName'],'detail':''.join(x.itertext()).strip()} for x in cases if x.attrib['outcome']=='Failed')
+              build = (folder/'build.log').read_text(encoding='utf-8-sig')
+              assert re.search(r'\b0 Warning\(s\)',build) and re.search(r'\b0 Error\(s\)',build)
+              results[platform] = {'runs':12,'casesPerRun':486,'outcomes':dict(counts),'originalProtocolOutcomes':dict(native_counts),
+                  'newStartupSafetyOutcomes':dict(new_counts),'exitCodes':run_exits,'failures':failures,'buildWarnings':0,'buildErrors':0,
+                  'suitePassed':not failures and all(code==0 for code in run_exits)}
+          assert len(list((root/'evidence/before').rglob('results.trx')))==24
+          proofs = []
+          for file in (root/'evidence/controlled-proof').rglob('startup.trx'):
+              cases = [x for x in ET.parse(file).iter() if x.tag.rsplit('}',1)[-1]=='UnitTestResult']
+              assert len(cases)==8 and all(x.attrib['outcome']=='Passed' for x in cases)
+              proofs.append(str(file.relative_to(root)))
+          assert len(proofs)==2
+          manifest = json.loads((root/'SOURCE-MANIFEST.json').read_text())
+          head = subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          tree = subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip()
+          patch = (root/'AutoVPN-V3D-from-V3C.patch').resolve()
+          with tempfile.TemporaryDirectory(prefix='autovpn-index-') as temp:
+              env = dict(os.environ,GIT_INDEX_FILE=str(pathlib.Path(temp)/'index'))
+              def git(*args): return subprocess.check_output(['git',*args],env=env).decode().strip()
+              git('read-tree',manifest['base']); git('apply','--cached','--check',str(patch)); git('apply','--cached',str(patch))
+              assert git('write-tree')==tree
+              git('apply','--cached','--reverse',str(patch))
+              assert git('write-tree')==git('rev-parse',manifest['base']+'^{tree}')
+          with zipfile.ZipFile(root/'AutoVPN-V3D-source.zip') as bundle:
+              assert bundle.testzip() is None
+              for entry in bundle.infolist():
+                  name = pathlib.PurePosixPath(entry.filename)
+                  assert name.parts[0]=='source' and '..' not in name.parts and not name.is_absolute()
+              bundle.extractall(root)
+          all_passed = all(entry['suitePassed'] for entry in results.values())
+          index = {'schemaVersion':1,'checkpoint':'V3D','status':'SOURCE_CANDIDATE_NOT_INSTALLED_VPN',
+              'deliveryCommit':head,'deliveryTree':tree,'testedCommit':tested,'finalRun':int(os.environ['VALIDATION_RUN_ID']),'attempt':1,
+              'results':results,'testSuitePassed':all_passed,'controlledStartupProofs':proofs,'sourceFileCount':manifest['fileCount'],
+              'sourceZipSha256':manifest['sourceZipSha256'],'patchForwardAndReverseVerified':True,
+              'tlsImplementationUnchanged':manifest['unchangedTlsHttpImplementation'],'mainUpdated':False,'newWindowsBinary':False,'installedVpnTested':False,
+              'unresolvedPriorIncidents':['Windows IPC/fetch/budget/catalogue timing failures','Controlled fixture worker.Ready failures before TLS'],
+              'note':'Finite controlled CI evidence. Packaging success is not test or VPN acceptance. All prior failures are retained.'}
+          (root/'DELIVERY-VALIDATION.json').write_text(json.dumps(index,indent=2)+'\n')
+          report = '# AutoVPN V3D: проверка последнего исходного среза\n\nКод: `'+tested+'`. Полный комплект: `'+head+'`.\n\n'
+          report += '**Общий статус тестов: '+('PASS' if all_passed else 'НЕ ПРОЙДЕН')+'**. Это не приёмка системного VPN.\n\n'
+          for platform,value in results.items():
+              report += '## '+platform+'\n\n12 полных прогонов по 486 случаев.\n\nРезультаты: `'+json.dumps(value['outcomes'])+'`.\n\n'
+              report += 'Исходные шесть протокольных сценариев: `'+json.dumps(value['originalProtocolOutcomes'])+'`.\n\n'
+              report += 'Новые 17 сценариев готовности и остановки: `'+json.dumps(value['newStartupSafetyOutcomes'])+'`.\n\n'
+              for failure in value['failures']: report += '- Прогон '+str(failure['iteration'])+': `'+failure['test']+'`\n'
+              report += '\n'
+          report += 'Причины отказов и исходные результаты: `DELIVERY-VALIDATION.json` и `evidence/`. Предыдущие отказы не исчезают после удачного повтора. Установка службы и TUN не выполнялись.\n'
+          (root/'RESULT_RU.md').write_text(report,encoding='utf-8')
+          verifier = '''#!/usr/bin/env python3
+          import hashlib, json, pathlib
+          root=pathlib.Path(__file__).resolve().parent
+          manifest=json.loads((root/'SOURCE-MANIFEST.json').read_text(encoding='utf-8'))
+          source=root/'source'
+          if source.is_symlink() or not source.is_dir(): raise SystemExit('Invalid source root')
+          actual={}
+          for path in source.rglob('*'):
+              if path.is_symlink(): raise SystemExit('Symlink rejected: '+str(path))
+              if path.is_file(): actual[path.relative_to(source).as_posix()]=path
+          if set(actual)!=set(manifest['files']): raise SystemExit('Missing or extra source files')
+          for name,info in manifest['files'].items():
+              data=actual[name].read_bytes()
+              if len(data)!=info['size'] or hashlib.sha256(data).hexdigest()!=info['sha256']: raise SystemExit('Changed source: '+name)
+          print('Verified source files:',len(actual))
+          '''
+          (root/'verify_source.py').write_text(verifier)
+          subprocess.run(['python',str(root/'verify_source.py')],check=True)
+          # Check verifier negatives in a disposable copy, never alter delivery.
+          with tempfile.TemporaryDirectory(prefix='autovpn-verify-') as temp:
+              trial=pathlib.Path(temp)
+              shutil.copytree(root/'source',trial/'source')
+              shutil.copy(root/'SOURCE-MANIFEST.json',trial/'SOURCE-MANIFEST.json')
+              shutil.copy(root/'verify_source.py',trial/'verify_source.py')
+              sample=trial/'source'/next(iter(manifest['files']))
+              saved=sample.read_bytes()
+              sample.write_bytes(saved+b'changed')
+              assert subprocess.run(['python',str(trial/'verify_source.py')],capture_output=True).returncode!=0
+              sample.unlink()
+              assert subprocess.run(['python',str(trial/'verify_source.py')],capture_output=True).returncode!=0
+              sample.write_bytes(saved)
+              extra=trial/'source'/'unexpected-file'; extra.write_text('extra')
+              assert subprocess.run(['python',str(trial/'verify_source.py')],capture_output=True).returncode!=0
+              extra.unlink(); sample.unlink(); sample.symlink_to(trial/'SOURCE-MANIFEST.json')
+              assert subprocess.run(['python',str(trial/'verify_source.py')],capture_output=True).returncode!=0
+          index['sourceVerifierNegativesPassed']=4
+          (root/'DELIVERY-VALIDATION.json').write_text(json.dumps(index,indent=2)+'\n')
+          hashes=[]
+          for file in sorted(root.rglob('*')):
+              if file.is_file(): hashes.append(hashlib.sha256(file.read_bytes()).hexdigest()+'  '+file.relative_to(root).as_posix())
+          (root/'SHA256SUMS.txt').write_text('\n'.join(hashes)+'\n')
+          print(json.dumps(index,indent=2))
+          PY
+      - name: Retained suite verdict, separate from package integrity
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          value=json.load(open('artifacts/v3d-delivery/DELIVERY-VALIDATION.json'))
+          if not value['testSuitePassed']: raise SystemExit('Candidate contains failed outcomes; not a green validation.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-V3D-candidate-${{ github.sha }}
+          path: artifacts/v3d-delivery/
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: true
