@@ -48,6 +48,7 @@ internal sealed class NativeServiceHost
         {
             Report();
             var config = InstalledServiceLayout.LoadOwner();
+            ServiceProcessQueryAccess.GrantToOwner(config.OwnerSid);
             server = new InstalledStatusServer(config.OwnerSid);
             if (!_lifecycle.TryMarkReady()) throw new InvalidOperationException("START_CANCELLED");
             Report();

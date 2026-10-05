@@ -63,10 +63,15 @@ internal static class ServiceLab
                     var check = await InstalledServiceClient.QueryAsync(budget.Token);
                     var expected = args[0] switch { "ready" => "Ready", "denied" => "AccessDenied", "stopped" => "Stopped", "missing" => "NotInstalled", _ => "INVALID_VERB" };
                     Demand(check.State == expected, "STATE_" + expected + "_ACTUAL_" + check.State + "_DETAIL_" + (check.DiagnosticCode ?? "NONE") + "_WIN32_" + (check.NativeErrorCode ?? 0));
-                    if (check.State == "Ready") Demand(check.Reply is { CanConnect: false, ProtectionArmed: false, CoreRunning: false }, "FALSE_VPN_CLAIM");
+                    if (check.State == "Ready")
+                    {
+                        Demand(check.Reply is { CanConnect: false, ProtectionArmed: false, CoreRunning: false }, "FALSE_VPN_CLAIM");
+                        DemandReadOnlyProcessAccess(checked((uint)check.Reply!.ProcessId));
+                    }
                     Console.WriteLine(JsonSerializer.Serialize(new { standardUser = true, state = check.State,
                         instanceId = check.Reply?.InstanceId, processId = check.Reply?.ProcessId,
-                        canConnect = check.Reply?.CanConnect ?? false, coreRunning = check.Reply?.CoreRunning ?? false }));
+                        canConnect = check.Reply?.CanConnect ?? false, coreRunning = check.Reply?.CoreRunning ?? false,
+                        readOnlyProcessAccess = check.State == "Ready" }));
                     return 0;
                 });
             }
@@ -105,6 +110,21 @@ internal static class ServiceLab
         try { Demand(await pipe.ReadAsync(new byte[1], token) == 0, "MALFORMED_REPLIED"); }
         catch (IOException) { /* A closed/reset owned pipe is the required refusal, not a timeout. */ }
     }
+    private static void DemandReadOnlyProcessAccess(uint processId)
+    {
+        using var query = OpenProcess(ServiceProcessQueryAccess.RequiredAccess, false, processId);
+        Demand(!query.IsInvalid && ProcessHandleLiveness.IsRunning(query), "READONLY_PROCESS_HANDLE");
+        // Request handles only. Never perform these operations against the running service.
+        foreach (var right in new uint[] { 1, 2, 8, 0x10, 0x20, 0x40, 0x200, 0x40000, 0x80000 })
+        {
+            using var forbidden = OpenProcess(right, false, processId);
+            var error = Marshal.GetLastWin32Error();
+            Demand(forbidden.IsInvalid && error == 5, "PROCESS_MUTATION_ACCESS_" + right);
+        }
+    }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint processId);
+
     private static void Demand(bool value, string code) { if (!value) throw new InvalidOperationException("LAB_" + code); }
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
