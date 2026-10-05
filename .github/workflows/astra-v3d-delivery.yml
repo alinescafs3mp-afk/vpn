@@ -96,10 +96,22 @@ jobs:
                   'AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap',
                   'AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess'}
               counts, native_counts, new_counts = collections.Counter(), collections.Counter(), collections.Counter()
-              failures, run_exits = [], []
+              failures, run_exits, duplicate_names = [], [], {}
+              expected_test_ids = None
               for i in range(1,13):
-                  cases = [x for x in ET.parse(folder/f'run-{i}/results.trx').iter() if x.tag.rsplit('}',1)[-1]=='UnitTestResult']
-                  assert len(cases)==len({x.attrib['testName'] for x in cases})==486
+                  doc = ET.parse(folder/f'run-{i}/results.trx')
+                  cases = [x for x in doc.iter() if x.tag.rsplit('}',1)[-1]=='UnitTestResult']
+                  # Display names may truncate long theory arguments. Real TRX
+                  # test identities must be unique and identical in every run.
+                  ids = {x.attrib['testId'] for x in cases}
+                  print(platform, i, 'results', len(cases), 'testIds', len(ids), 'displayNames', len({x.attrib['testName'] for x in cases}))
+                  assert len(cases)==len(ids)==486, 'Duplicate or missing test identity'
+                  if expected_test_ids is None: expected_test_ids = ids
+                  assert ids==expected_test_ids, 'Different case set between repeated runs'
+                  definitions = {x.attrib['id'] for x in doc.iter() if x.tag.rsplit('}',1)[-1]=='UnitTest'}
+                  assert ids==definitions, 'Results do not match TRX test definitions'
+                  names = collections.Counter(x.attrib['testName'] for x in cases)
+                  duplicate_names[str(i)] = {name: count for name,count in names.items() if count>1}
                   outcomes = collections.Counter(x.attrib['outcome'] for x in cases)
                   assert set(outcomes) <= {'Passed','Failed','NotExecuted'}
                   assert {x.attrib['testName'] for x in cases if x.attrib['outcome']=='NotExecuted'}==allowed
@@ -114,11 +126,12 @@ jobs:
                   newer = [x for x in cases if '.AstraV3DStartupReadinessTests.' in x.attrib['testName'] or '.AstraV3DReadinessSafetyTests.' in x.attrib['testName']]
                   assert len(newer)==17
                   new_counts.update(x.attrib['outcome'] for x in newer)
-                  failures.extend({'iteration':i,'test':x.attrib['testName'],'detail':''.join(x.itertext()).strip()} for x in cases if x.attrib['outcome']=='Failed')
+                  failures.extend({'iteration':i,'test':x.attrib['testName'],'testId':x.attrib['testId'],'detail':''.join(x.itertext()).strip()} for x in cases if x.attrib['outcome']=='Failed')
               build = (folder/'build.log').read_text(encoding='utf-8-sig')
               assert re.search(r'\b0 Warning\(s\)',build) and re.search(r'\b0 Error\(s\)',build)
               results[platform] = {'runs':12,'casesPerRun':486,'outcomes':dict(counts),'originalProtocolOutcomes':dict(native_counts),
                   'newStartupSafetyOutcomes':dict(new_counts),'exitCodes':run_exits,'failures':failures,'buildWarnings':0,'buildErrors':0,
+                  'caseIdentitiesVerified':True,'duplicateDisplayNames':duplicate_names,
                   'suitePassed':not failures and all(code==0 for code in run_exits)}
           assert len(list((root/'evidence/before').rglob('results.trx')))==24
           proofs = []
@@ -151,6 +164,7 @@ jobs:
               'sourceZipSha256':manifest['sourceZipSha256'],'patchForwardAndReverseVerified':True,
               'tlsImplementationUnchanged':manifest['unchangedTlsHttpImplementation'],'mainUpdated':False,'newWindowsBinary':False,'installedVpnTested':False,
               'unresolvedPriorIncidents':['Windows IPC/fetch/budget/catalogue timing failures','Controlled fixture worker.Ready failures before TLS'],
+              'packagingHistory':{'firstRun':37345452969,'failure':'Incorrect assumption that theory display names are unique; replaced by stable TRX testId and definition-set checks. No outcome changed.'},
               'note':'Finite controlled CI evidence. Packaging success is not test or VPN acceptance. All prior failures are retained.'}
           (root/'DELIVERY-VALIDATION.json').write_text(json.dumps(index,indent=2)+'\n')
           report = '# AutoVPN V3D: проверка последнего исходного среза\n\nКод: `'+tested+'`. Полный комплект: `'+head+'`.\n\n'
