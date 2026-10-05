@@ -1,41 +1,13 @@
 name: v3e-main-resource-validation
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-    paths: ['scripts/integrate-v3e.py', '.github/workflows/v3e-ci.yml']
+    paths: ['src/**', 'tests/**', 'config/**', 'scripts/test-v3e.ps1', '.github/workflows/v3e-ci.yml', 'Directory.Build.props', 'global.json', 'AutoVpn.slnx']
 permissions:
   contents: read
 jobs:
-  integrate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    outputs:
-      source: ${{ steps.apply.outputs.source }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.sha }}
-      - id: apply
-        name: Apply exact source integration and publish a normal main fast-forward
-        env:
-          GIT_AUTHOR_NAME: AutoVPN development
-          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-          GIT_COMMITTER_NAME: AutoVPN development
-          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: |
-          set -euo pipefail
-          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
-          python scripts/integrate-v3e.py
-          git diff --check
-          git add src/AutoVpn.Infrastructure/Probe/NonTunCoreProbeTransport.cs tests/AutoVpn.UnitTests/Round6NativeHandshakeTests.cs tests/AutoVpn.UnitTests/AstraV3DStartupReadinessTests.cs Directory.Build.props
-          git commit -m 'fix(v3e): reserve TCP and UDP together and require owned-process exit before cleanup'
-          git push origin HEAD:refs/heads/main
-          echo "source=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   validate:
-    needs: integrate
     strategy:
       fail-fast: false
       matrix:
@@ -45,13 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.integrate.outputs.source }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
-      - name: Verify source boundaries and retain exact source
+      - name: Verify unchanged TLS and retain canonical source
         shell: python
         run: |
           import hashlib, json, pathlib, subprocess, zipfile
@@ -84,7 +56,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: AutoVPN-V3E-${{ needs.integrate.outputs.source }}-${{ matrix.os }}
+          name: AutoVPN-V3E-${{ github.sha }}-${{ matrix.os }}
           path: artifacts/v3e/
           if-no-files-found: error
           retention-days: 90

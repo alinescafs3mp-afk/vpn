@@ -1,12 +1,12 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 
 namespace AutoVpn.Infrastructure.Probe;
 
 /// <summary>
-/// Holds one IPv4 loopback port in both transport namespaces. A free TCP port
-/// alone does not establish UDP bindability on Windows. The lease must be
-/// released immediately before the child binds; that handoff is not atomic.
+/// Holds an exclusive IPv4 loopback port in both transport namespaces.
+/// Release immediately before the child binds. That handoff is not atomic.
 /// </summary>
 public sealed class CorePortLease : IDisposable
 {
@@ -25,9 +25,17 @@ public sealed class CorePortLease : IDisposable
 
     public static CorePortLease Reserve()
     {
-        // Retry local bind collisions only, never a remote handshake or probe.
+        // Choose dispersed explicit candidates instead of repeatedly relying
+        // on one transport's ephemeral allocator. Its admissible range does
+        // not imply that the same port is admissible for the other transport.
+        // Retry local reservations only, never remote TLS or a candidate probe.
+        var first = RandomNumberGenerator.GetInt32(49152, 65536);
+        var step = RandomNumberGenerator.GetInt32(1, 8192) * 2 + 1;
         for (var attempt = 0; attempt < 32; attempt++)
-            if (TryReserve(0, out var lease)) return lease!;
+        {
+            var port = 49152 + ((first - 49152 + attempt * step) % 16384);
+            if (TryReserve(port, out var lease)) return lease!;
+        }
         throw new CorePortReservationException();
     }
 
@@ -39,8 +47,6 @@ public sealed class CorePortLease : IDisposable
         Socket? tcp = null;
         try
         {
-            // UDP chooses its own admissible ephemeral port first. Reusing a
-            // TCP-selected ephemeral port can hit a Windows UDP exclusion range.
             udp = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
                 { ExclusiveAddressUse = true };
             udp.Bind(new IPEndPoint(IPAddress.Loopback, requestedPort));

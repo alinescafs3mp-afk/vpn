@@ -57,7 +57,8 @@ public sealed class AstraV3EResourceTests
     {
         var initial = CorePortLease.Reserve(); initial.Dispose();
         using var tcp = Bind(initial.Port, ProtocolType.Tcp);
-        Assert.False(CorePortLease.TryReserve(initial.Port, out var failed));
+        var acquired = CorePortLease.TryReserve(initial.Port, out var failed);
+        using (failed) Assert.False(acquired);
         Assert.Null(failed);
         using var udp = Bind(initial.Port, ProtocolType.Udp);
     }
@@ -67,7 +68,8 @@ public sealed class AstraV3EResourceTests
     {
         var initial = CorePortLease.Reserve(); initial.Dispose();
         using var udp = Bind(initial.Port, ProtocolType.Udp);
-        Assert.False(CorePortLease.TryReserve(initial.Port, out var failed));
+        var acquired = CorePortLease.TryReserve(initial.Port, out var failed);
+        using (failed) Assert.False(acquired);
         Assert.Null(failed);
         using var tcp = Bind(initial.Port, ProtocolType.Tcp);
     }
@@ -112,7 +114,7 @@ public sealed class AstraV3EResourceTests
         Assert.True(worker.Ready, worker.OutputTail);
         using var child = Process.GetProcessById(int.Parse(worker.WorkerId.Split(':')[0], CultureInfo.InvariantCulture));
         _ = child.Handle;
-        await worker.DisposeAsync();
+        await StopAsync(worker);
         Assert.True(child.HasExited);
         Assert.True(worker.DirectoryRemoved);
         Assert.False(Directory.Exists(directory.FullName));
@@ -134,11 +136,11 @@ public sealed class AstraV3EResourceTests
             Assert.True(child.HasExited);
             Assert.False(worker.DirectoryRemoved);
             held.Dispose();
-            await worker.DisposeAsync();
+            await StopAsync(worker);
             Assert.True(worker.DirectoryRemoved);
             Assert.False(Directory.Exists(directory.FullName));
         }
-        finally { held.Dispose(); await worker.DisposeAsync(); }
+        finally { held.Dispose(); await StopAsync(worker); }
     }
 
     [Fact]
@@ -147,7 +149,7 @@ public sealed class AstraV3EResourceTests
         var directory = Directory.CreateTempSubdirectory("autovpn-v3e-concurrent-");
         await using var worker = await ProbeWorker.StartAsync(Fixture(directory.FullName, "sleep"), null, TimeSpan.FromSeconds(2), CancellationToken.None, directory.FullName);
         Assert.True(worker.Ready);
-        await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => worker.DisposeAsync().AsTask()));
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => StopAsync(worker)));
         Assert.True(worker.DirectoryRemoved);
         Assert.False(Directory.Exists(directory.FullName));
     }
@@ -172,11 +174,20 @@ public sealed class AstraV3EResourceTests
         Assert.True(a.Ready); Assert.True(b.Ready);
         using var child = Process.GetProcessById(int.Parse(b.WorkerId.Split(':')[0], CultureInfo.InvariantCulture));
         _ = child.Handle;
-        await a.DisposeAsync();
+        await StopAsync(a);
         Assert.False(child.HasExited);
         Assert.True(Directory.Exists(second.FullName));
-        await b.DisposeAsync();
+        await StopAsync(b);
         Assert.False(Directory.Exists(second.FullName));
+    }
+
+    private static async Task StopAsync(ProbeWorker worker)
+    {
+        try { await worker.DisposeAsync(); }
+        catch (ProbeCleanupException ex)
+        {
+            throw new InvalidOperationException("Owned fixture cleanup failed at " + worker.Diagnostic, ex);
+        }
     }
 
     private static ProcessStartInfo Fixture(string directory, string mode)
@@ -192,7 +203,14 @@ public sealed class AstraV3EResourceTests
     {
         var socket = new Socket(AddressFamily.InterNetwork, protocol == ProtocolType.Tcp ? SocketType.Stream : SocketType.Dgram, protocol)
             { ExclusiveAddressUse = true };
-        try { socket.Bind(new IPEndPoint(IPAddress.Loopback, port)); return socket; }
+        try
+        {
+            socket.Bind(new IPEndPoint(IPAddress.Loopback, port));
+            // Model a real TCP server, not only an unconnected bound socket.
+            // The production lease already calls Listen before claiming success.
+            if (protocol == ProtocolType.Tcp) socket.Listen(1);
+            return socket;
+        }
         catch { socket.Dispose(); throw; }
     }
 
