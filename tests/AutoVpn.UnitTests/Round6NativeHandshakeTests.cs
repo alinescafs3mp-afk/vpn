@@ -23,6 +23,7 @@ public sealed class Round6NativeHandshakeTests
     [InlineData("vless-grpc")]
     public async Task Native_Round5_R6_ActualProtocolHandshakeAndWrongCredentialNegative(string variant)
     {
+        using var trace = new ControlledTlsTrace();
         var binary=Environment.GetEnvironmentVariable("R5_CORE_PATH");var hash=Environment.GetEnvironmentVariable("R5_CORE_HASH");
         Assert.False(string.IsNullOrWhiteSpace(binary));Assert.False(string.IsNullOrWhiteSpace(hash));
         Assert.Equal(hash!.ToLowerInvariant(),Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(binary!))).ToLowerInvariant());
@@ -65,7 +66,7 @@ public sealed class Round6NativeHandshakeTests
             var url=new Uri("https://probe.example:"+target.Port.ToString(CultureInfo.InvariantCulture)+"/generate_204");
             // Synthetic proxy certificate opts in locally; target HTTPS authentication remains mandatory.
             var good=await probe.ProbeAsync(node,url,new ProbeAdmission(true),budget.Token);
-            Assert.True(good.Success,"Positive "+variant+": "+probe.LastDiagnostic+"; controlled peer="+Tail());Assert.True(target.Accepts>0);
+            Assert.True(good.Success,"Positive "+variant+": "+probe.LastDiagnostic+"; controlled peer="+Tail()+"\nTLS events (process-wide observation, not proof of correlation):\n"+trace.Snapshot());Assert.True(target.Accepts>0);
             var before=target.Accepts;
             var broken=protocol=="trojan"?node with {Password="incorrect-synthetic-password"}:node with {UserId="22222222-2222-4222-8222-222222222222"};
             var bad=await probe.ProbeAsync(broken,url,new ProbeAdmission(true),budget.Token);
