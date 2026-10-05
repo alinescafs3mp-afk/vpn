@@ -12,7 +12,21 @@ public sealed record ProbeOutputResult(int Characters, ProbeOutputEnd End,
 
 public static class ProbeOutputDrain
 {
+    // Call only once for each fresh Process stream, before any reads on the original reader.
     public static async Task<ProbeOutputResult> ReadAsync(StreamReader reader, CancellationToken token,
+        StringBuilder? retainedPrefix = null)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        if (OperatingSystem.IsWindows() && reader.BaseStream is FileStream { IsAsync: false } file)
+        {
+            using var stream = AvailablePipeReadStream.ForOwnedHandle(file.SafeFileHandle);
+            using var decoded = new StreamReader(stream, reader.CurrentEncoding, true, 1024);
+            return await ReadCoreAsync(decoded, token, retainedPrefix).ConfigureAwait(false);
+        }
+        return await ReadCoreAsync(reader, token, retainedPrefix).ConfigureAwait(false);
+    }
+
+    internal static async Task<ProbeOutputResult> ReadCoreAsync(StreamReader reader, CancellationToken token,
         StringBuilder? retainedPrefix = null)
     {
         ArgumentNullException.ThrowIfNull(reader);

@@ -18,6 +18,7 @@ internal static class ServiceLab
     public static async Task<int> RunAsync(string[] args)
     {
         if (args.Length != 1 || Environment.GetEnvironmentVariable("AUTOVPN_DISPOSABLE_SERVICE_LAB") != "1") return 5;
+        var phase = "AccountLogon";
         try
         {
             var user = Environment.GetEnvironmentVariable("AUTOVPN_LAB_USER") ?? "";
@@ -34,6 +35,7 @@ internal static class ServiceLab
                     using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                     if (args[0] == "negative")
                     {
+                        phase = "UnsupportedOperation";
                         var id = Guid.NewGuid().ToString("N");
                         await using (var pipe = await ConnectAsync(budget.Token))
                         {
@@ -43,25 +45,36 @@ internal static class ServiceLab
                             Demand(!reply.Ok && reply.ErrorCode == "OPERATION_NOT_SUPPORTED" &&
                                 !reply.CanConnect && !reply.ProtectionArmed && !reply.CoreRunning, "OPERATION_REFUSAL");
                         }
+                        phase = "RecoveryAfterUnsupported";
                         await RequireReadyAsync(budget.Token);
+                        phase = "DuplicateFrame";
                         await RejectedFrameAsync(Encoding.UTF8.GetBytes("{\"requestId\":\"a\",\"requestId\":\"b\"}"), false, budget.Token);
+                        phase = "RecoveryAfterDuplicate";
                         await RequireReadyAsync(budget.Token);
+                        phase = "OversizedFrame";
                         await RejectedFrameAsync([], true, budget.Token);
+                        phase = "RecoveryAfterOversized";
                         await RequireReadyAsync(budget.Token);
+                        phase = "IdleClient";
                         // Hold a connected client without a frame. Its two-second server budget must expire.
                         await using (var pipe = await ConnectAsync(budget.Token))
                         {
                             var read = new byte[1];
                             Demand(await pipe.ReadAsync(read, budget.Token) == 0, "IDLE_CLIENT_NOT_CLOSED");
                         }
+                        phase = "RecoveryAfterIdle";
                         var last = await RequireReadyAsync(budget.Token);
                         Console.WriteLine(JsonSerializer.Serialize(new { standardUser = true, cases = 8,
                             operationRejected = true, duplicateRejected = true, oversizedRejected = true,
                             idleClosed = true, listenerSurvived = true, instanceId = last.Reply!.InstanceId }));
                         return 0;
                     }
+                    phase = "QueryStatus";
                     var check = await InstalledServiceClient.QueryAsync(budget.Token);
                     var expected = args[0] switch { "ready" => "Ready", "denied" => "AccessDenied", "stopped" => "Stopped", "missing" => "NotInstalled", _ => "INVALID_VERB" };
+                    if (check.State != expected)
+                        Console.Error.WriteLine(JsonSerializer.Serialize(new { phase, expected, actual = check.State,
+                            diagnostic = check.Diagnostic, check.DiagnosticCode, check.NativeErrorCode }));
                     Demand(check.State == expected, "STATE_" + expected + "_ACTUAL_" + check.State + "_DETAIL_" + (check.DiagnosticCode ?? "NONE") + "_WIN32_" + (check.NativeErrorCode ?? 0));
                     if (check.State == "Ready")
                     {
@@ -81,6 +94,8 @@ internal static class ServiceLab
             // Only assertion identifiers are emitted. Never log the account password or arbitrary system text.
             var code = ex is InvalidOperationException && ex.Message.StartsWith("LAB_", StringComparison.Ordinal)
                 && ex.Message.All(c => char.IsAsciiLetterOrDigit(c) || c == '_') ? ex.Message : "LAB_FAILURE";
+            Console.Error.WriteLine(JsonSerializer.Serialize(new { phase, code, exceptionType = ex.GetType().Name,
+                hresult = ex.HResult.ToString("X8") }));
             Console.Error.WriteLine(code + ":" + ex.GetType().Name + ":" + ex.HResult.ToString("X8"));
             return 1;
         }
@@ -89,6 +104,9 @@ internal static class ServiceLab
     private static async Task<InstalledServiceCheck> RequireReadyAsync(CancellationToken token)
     {
         var check = await InstalledServiceClient.QueryAsync(token);
+        if (check.State != "Ready")
+            Console.Error.WriteLine(JsonSerializer.Serialize(new { expected = "Ready", actual = check.State,
+                diagnostic = check.Diagnostic, check.DiagnosticCode, check.NativeErrorCode }));
         Demand(check.State == "Ready" && check.Reply is { CanConnect: false, CoreRunning: false, ProtectionArmed: false },
             "LISTENER_RECOVERY_" + check.State);
         return check;

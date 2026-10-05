@@ -72,6 +72,7 @@ public sealed record InstalledServiceCheck(string State, ServiceStatusReply? Rep
     // Local diagnostics only, not fields of the service wire protocol. No paths or peer bytes.
     public string? DiagnosticCode { get; init; }
     public int? NativeErrorCode { get; init; }
+    public ServiceCheckDiagnostic? Diagnostic { get; init; }
 
     public string Message => State switch
     {

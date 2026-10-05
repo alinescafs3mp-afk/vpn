@@ -14,91 +14,102 @@ public static class InstalledServiceClient
     public static Task<InstalledServiceCheck> QueryAsync(CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
-        return OperatingSystem.IsWindows() ? QueryWindowsAsync(token) : Task.FromResult(new InstalledServiceCheck("Unsupported"));
+        return OperatingSystem.IsWindows()
+            ? QueryWindowsAsync(token)
+            : Task.FromResult(new InstalledServiceCheck("Unsupported"));
     }
 
     [SupportedOSPlatform("windows")]
-    private static async Task<InstalledServiceCheck> QueryWindowsAsync(CancellationToken token)
+    private static Task<InstalledServiceCheck> QueryWindowsAsync(CancellationToken token) =>
+        InstalledServiceQuery.RunAsync(() => new WindowsSession(), token);
+
+    [SupportedOSPlatform("windows")]
+    private sealed class WindowsSession : IInstalledServiceSession
     {
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-        budget.CancelAfter(InstalledServiceProtocol.TimeoutMs);
-        try
+        private Native.ServiceHandle? _manager;
+        private Native.ServiceHandle? _service;
+        private NamedPipeClientStream? _pipe;
+        private SafeProcessHandle? _process;
+        private Native.ServiceHandle Service => _service ?? throw new InvalidOperationException();
+        public Stream Pipe => _pipe ?? throw new InvalidOperationException();
+
+        public void OpenManager()
         {
-            using var scm = Native.OpenSCManager(null, null, 1);
-            if (scm.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-            using var service = Native.OpenService(scm, InstalledServiceProtocol.ServiceName, 5);
-            if (service.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-            if (!ValidConfiguration(service)) return AuthenticationFailure("SCM_CONFIGURATION");
-            var before = ReadStatus(service);
-            if (before.CurrentState != 4) return InstalledServiceProtocol.NonRunningCheck(before.CurrentState);
-            if (before.ProcessId is 0 or > int.MaxValue) return new("Unavailable");
-            using var client = new NamedPipeClientStream(".", InstalledServiceProtocol.PipeName,
+            _manager = Native.OpenSCManager(null, null, 1); // SC_MANAGER_CONNECT only
+            if (_manager.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        public void OpenService()
+        {
+            _service = Native.OpenService(_manager ?? throw new InvalidOperationException(),
+                InstalledServiceProtocol.ServiceName, 5); // QUERY_CONFIG | QUERY_STATUS
+            if (_service.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        public void ValidateConfiguration()
+        {
+            var unexpectedSuccess = Native.QueryServiceConfig(Service, IntPtr.Zero, 0, out var required);
+            var error = Marshal.GetLastWin32Error();
+            if (unexpectedSuccess || error != 122)
+                throw new ServiceIdentityException(ServiceCheckFailure.NativeCall, unexpectedSuccess ? null : error);
+            if (required is <= 0 or > 65536) throw new ServiceIdentityException(ServiceCheckFailure.ConfigurationSize);
+            var buffer = Marshal.AllocHGlobal(required);
+            try
+            {
+                if (!Native.QueryServiceConfig(Service, buffer, required, out _))
+                    throw new ServiceIdentityException(ServiceCheckFailure.NativeCall, Marshal.GetLastWin32Error());
+                var config = Marshal.PtrToStructure<Native.ServiceConfig>(buffer);
+                if (config.ServiceType != 0x10) throw new ServiceIdentityException(ServiceCheckFailure.ServiceType);
+                if (!string.Equals(Marshal.PtrToStringUni(config.Account), "LocalSystem", StringComparison.OrdinalIgnoreCase))
+                    throw new ServiceIdentityException(ServiceCheckFailure.ServiceAccount);
+                if (!string.Equals(Marshal.PtrToStringUni(config.BinaryPath),
+                    "\"" + InstalledServiceLayout.ExecutablePath + "\" --service", StringComparison.OrdinalIgnoreCase))
+                    throw new ServiceIdentityException(ServiceCheckFailure.ServiceExecutable);
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+        public ServiceProcessIdentity ReadStatus()
+        {
+            if (!Native.QueryServiceStatusEx(Service, 0, out var status, Marshal.SizeOf<Native.ServiceProcessStatus>(), out _))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            return new(status.ServiceType, status.CurrentState, status.ProcessId);
+        }
+        public async Task ConnectAsync(CancellationToken token)
+        {
+            _pipe = new NamedPipeClientStream(".", InstalledServiceProtocol.PipeName,
                 PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize, PipeOptions.Asynchronous,
                 TokenImpersonationLevel.Identification, HandleInheritability.None);
-            await client.ConnectAsync(InstalledServiceProtocol.TimeoutMs, budget.Token).ConfigureAwait(false);
-            if (!Native.GetNamedPipeServerProcessId(client.SafePipeHandle, out var pipePid))
-                return AuthenticationFailure("PIPE_PROCESS_QUERY", Marshal.GetLastWin32Error());
-            if (pipePid != before.ProcessId || before.ServiceType != 0x10)
-                return AuthenticationFailure("PIPE_PROCESS_MISMATCH");
-            using var process = Native.OpenProcess(0x101000, false, pipePid);
-            if (process.IsInvalid) return AuthenticationFailure("PROCESS_OPEN", Marshal.GetLastWin32Error());
-            var path = new StringBuilder(32768); var length = path.Capacity;
-            if (!Native.QueryFullProcessImageName(process, 0, path, ref length))
-                return AuthenticationFailure("PROCESS_IMAGE_QUERY", Marshal.GetLastWin32Error());
-            if (!string.Equals(path.ToString(), InstalledServiceLayout.ExecutablePath, StringComparison.OrdinalIgnoreCase))
-                return AuthenticationFailure("PROCESS_IMAGE_MISMATCH");
-            if (!StillRunning(service, process, pipePid)) return AuthenticationFailure("PROCESS_LIVENESS");
-            // The handle is retained until the exchange ends. Nothing is sent before authentication.
-            var id = Guid.NewGuid().ToString("N");
-            var request = new ServiceStatusRequest { ProtocolVersion = 1, RequestId = id, Operation = "GetStatus" };
-            await client.WriteAsync(ServiceStatusFrames.Encode(request), budget.Token).ConfigureAwait(false);
-            var reply = await ServiceStatusFrames.ReadAsync<ServiceStatusReply>(client, budget.Token).ConfigureAwait(false);
-            if (!StillRunning(service, process, pipePid) || !ValidConfiguration(service)) return new("Unavailable");
-            return InstalledServiceProtocol.ValidReply(reply, id, checked((int)pipePid))
-                ? new("Ready", reply) : new("ProtocolError");
+            await _pipe.ConnectAsync(InstalledServiceProtocol.TimeoutMs, token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!token.IsCancellationRequested) { return new("Timeout"); }
-        catch (TimeoutException) { return new("Timeout"); }
-        catch (UnauthorizedAccessException) { return new("AccessDenied"); }
-        catch (Win32Exception ex) { return new(ex.NativeErrorCode == 1060 ? "NotInstalled" : ex.NativeErrorCode == 5 ? "AccessDenied" : "Unavailable"); }
-        catch (InvalidDataException) { return new("ProtocolError"); }
-        catch (IOException) { return new("Unavailable"); }
-    }
-
-    private static InstalledServiceCheck AuthenticationFailure(string code, int? nativeError = null) =>
-        new("AuthenticationFailed") { DiagnosticCode = code, NativeErrorCode = nativeError };
-
-    [SupportedOSPlatform("windows")]
-    private static bool ValidConfiguration(Native.ServiceHandle service)
-    {
-        Native.QueryServiceConfig(service, IntPtr.Zero, 0, out var required);
-        if (Marshal.GetLastWin32Error() != 122 || required is <= 0 or > 65536) return false;
-        var buffer = Marshal.AllocHGlobal(required);
-        try
+        public uint GetPipeProcessId()
         {
-            if (!Native.QueryServiceConfig(service, buffer, required, out _)) return false;
-            var config = Marshal.PtrToStructure<Native.ServiceConfig>(buffer);
-            return config.ServiceType == 0x10 &&
-                string.Equals(Marshal.PtrToStringUni(config.Account), "LocalSystem", StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(Marshal.PtrToStringUni(config.BinaryPath),
-                    "\"" + InstalledServiceLayout.ExecutablePath + "\" --service", StringComparison.OrdinalIgnoreCase);
+            if (!Native.GetNamedPipeServerProcessId((_pipe ?? throw new InvalidOperationException()).SafePipeHandle, out var pid))
+                throw new ServiceIdentityException(ServiceCheckFailure.NativeCall, Marshal.GetLastWin32Error());
+            return pid;
         }
-        finally { Marshal.FreeHGlobal(buffer); }
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static Native.ServiceProcessStatus ReadStatus(Native.ServiceHandle service)
-    {
-        if (!Native.QueryServiceStatusEx(service, 0, out var status, Marshal.SizeOf<Native.ServiceProcessStatus>(), out _))
-            throw new Win32Exception(Marshal.GetLastWin32Error());
-        return status;
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static bool StillRunning(Native.ServiceHandle service, SafeProcessHandle process, uint pid)
-    {
-        var status = ReadStatus(service);
-        return status.ServiceType == 0x10 && status.CurrentState == 4 && status.ProcessId == pid && ProcessHandleLiveness.IsRunning(process);
+        public void OpenProcess(uint processId)
+        {
+            // Preserve the retained-handle liveness check. Do not fall back to PID-only
+            // authentication or grant broader process rights when Windows denies access.
+            const uint queryLimitedAndSynchronize = 0x101000;
+            _process = Native.OpenProcess(queryLimitedAndSynchronize, false, processId);
+            if (_process.IsInvalid)
+                throw new ServiceIdentityException(ServiceCheckFailure.ProcessAccess, Marshal.GetLastWin32Error());
+        }
+        public void ValidateProcessImage()
+        {
+            var path = new StringBuilder(32768); var length = path.Capacity;
+            if (!Native.QueryFullProcessImageName(_process ?? throw new InvalidOperationException(), 0, path, ref length))
+                throw new ServiceIdentityException(ServiceCheckFailure.ProcessImageQuery, Marshal.GetLastWin32Error());
+            if (!string.Equals(path.ToString(), InstalledServiceLayout.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+                throw new ServiceIdentityException(ServiceCheckFailure.ProcessImageMismatch);
+        }
+        public bool IsProcessRunning() => ProcessHandleLiveness.IsRunning(_process ?? throw new InvalidOperationException());
+        public void Dispose()
+        {
+            _pipe?.Dispose();
+            _process?.Dispose();
+            _service?.Dispose();
+            _manager?.Dispose();
+        }
     }
 
     private static class Native
