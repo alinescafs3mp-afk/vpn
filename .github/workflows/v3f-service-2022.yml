@@ -1,0 +1,32 @@
+name: v3f-service-windows-2022
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/v3f-service-2022.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  service:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 9a27921842d3e83209860cc4d39c6422a6ba8e94
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Same SCM fixture, separate Windows image, no VPN networking
+        shell: pwsh
+        run: ./scripts/lab/service-smoke.ps1 -DisposableRunner
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-V3F-service-9a279218-windows-2022
+          path: |
+            artifacts/v3f-service/*.json
+            artifacts/v3f-service/*.log
+          if-no-files-found: error
+          retention-days: 90
