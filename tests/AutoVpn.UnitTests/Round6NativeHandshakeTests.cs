@@ -35,15 +35,15 @@ public sealed class Round6NativeHandshakeTests
         var directory=Directory.CreateTempSubdirectory("autovpn-r6-native-");
         Process? server=null;Task? stdout=null;Task? stderr=null;var tail=new StringBuilder();var outputGate=new object();
         using var budget=new CancellationTokenSource(TimeSpan.FromSeconds(80));
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        var socksListener = new TcpListener(IPAddress.Loopback, 0);
+        using var listener = CorePortLease.Reserve();
+        using var socksListener = CorePortLease.Reserve();
         try
         {
             await File.WriteAllTextAsync(Path.Combine(directory.FullName,"cert.pem"),certificate.ExportCertificatePem(),budget.Token);
             using var rsa=certificate.GetRSAPrivateKey()!;
             await File.WriteAllTextAsync(Path.Combine(directory.FullName,"key.pem"),rsa.ExportPkcs8PrivateKeyPem(),budget.Token);
-            listener.Start();var port=((IPEndPoint)listener.LocalEndpoint).Port;
-            socksListener.Start();var socksPort=((IPEndPoint)socksListener.LocalEndpoint).Port;
+            var port=listener.Port;
+            var socksPort=socksListener.Port;
             var protocol=variant.StartsWith("vmess",StringComparison.Ordinal)?"vmess":variant=="trojan"?"trojan":"vless";
             const string user="11111111-1111-4111-8111-111111111111";
             const string password="round6-synthetic-trojan-password";
@@ -55,7 +55,7 @@ public sealed class Round6NativeHandshakeTests
             await File.WriteAllTextAsync(Path.Combine(directory.FullName,"server.yaml"),yaml,budget.Token);
             var start=new ProcessStartInfo(binary!) {WorkingDirectory=directory.FullName,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
             start.ArgumentList.Add("-d");start.ArgumentList.Add(directory.FullName);start.ArgumentList.Add("-f");start.ArgumentList.Add(Path.Combine(directory.FullName,"server.yaml"));
-            listener.Stop();socksListener.Stop();
+            listener.Dispose();socksListener.Dispose();
             server=Process.Start(start)??throw new InvalidOperationException("Controlled native server did not start.");
             stdout=Drain(server.StandardOutput);stderr=Drain(server.StandardError);
             var ready=false;var watch=Stopwatch.StartNew();
@@ -86,7 +86,7 @@ public sealed class Round6NativeHandshakeTests
         }
         finally
         {
-            listener.Stop();socksListener.Stop();
+            listener.Dispose();socksListener.Dispose();
             if(server is not null)
             {
                 try{if(!server.HasExited)server.Kill(entireProcessTree:true);await server.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));}

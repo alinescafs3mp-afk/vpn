@@ -149,7 +149,8 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             LastSeenUtc = DateTimeOffset.UnixEpoch,
         };
         var directory = Directory.CreateTempSubdirectory("autovpn-probe-");
-        var listeners = new List<TcpListener>();
+        var cleanupOwnedByWorker = false;
+        var listeners = new List<CorePortLease>();
         try
         {
             // Declared before the core session so the local endpoint remains
@@ -177,7 +178,7 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             await File.WriteAllTextAsync(config, yaml, cancellationToken).ConfigureAwait(false);
             foreach (var listener in listeners)
             {
-                listener.Stop();
+                listener.Dispose();
             }
 
             listeners.Clear();
@@ -196,6 +197,7 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             start.ArgumentList.Add(directory.FullName);
             start.Environment["HOME"] = directory.FullName;
             var startup = Stopwatch.StartNew();
+            cleanupOwnedByWorker = true;
             await using var session = await ProbeWorker.StartAsync(start, socksPort, _connectTimeout, cancellationToken, directory.FullName).ConfigureAwait(false);
             LastDiagnostic = session.Diagnostic;
             if (cancellationToken.IsCancellationRequested)
@@ -252,16 +254,26 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
         {
             return Fail(ProbeClass.Canceled, ReasonCodes.Canceled, digest, target);
         }
+        catch (CorePortReservationException)
+        {
+            LastDiagnostic = "CORE_PORT_UNAVAILABLE";
+            return Fail(ProbeClass.CoreFailure, LastDiagnostic, digest, target);
+        }
+        catch (ProbeCleanupException)
+        {
+            LastDiagnostic = "CORE_CLEANUP_REQUIRED";
+            return Fail(ProbeClass.CoreFailure, LastDiagnostic, digest, target);
+        }
         finally
         {
             foreach (var listener in listeners)
             {
-                listener.Stop();
+                listener.Dispose();
             }
 
             try
             {
-                if (directory.Exists)
+                if (!cleanupOwnedByWorker && directory.Exists)
                 {
                     directory.Delete(recursive: true);
                 }
@@ -277,12 +289,11 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
         return new ProbeObservation(false, null, false, reason, 0, kind, target.AbsoluteUri, digest, worker);
     }
 
-    private static int ReservePort(List<TcpListener> held)
+    private static int ReservePort(List<CorePortLease> held)
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
+        var listener = CorePortLease.Reserve();
         held.Add(listener);
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
+        return listener.Port;
     }
 }
 
@@ -622,6 +633,9 @@ public sealed class ProbeWorker : IAsyncDisposable
     private readonly Task<int> _stderr;
     private readonly string? _directory;
     private int _disposed;
+    private readonly object _cleanupGate = new();
+    private Task? _cleanupTask;
+    private bool _resourcesReleased;
 
     private ProbeWorker(Process? process, CancellationTokenSource output, Task<int> stdout, Task<int> stderr, string? directory, bool ready, string workerId, StringBuilder tail)
     {
@@ -674,6 +688,8 @@ public sealed class ProbeWorker : IAsyncDisposable
         CancellationToken cancellationToken,
         string? directoryToDelete)
     {
+        if (cancellationToken.IsCancellationRequested)
+            return await FailedStartAsync(directoryToDelete).ConfigureAwait(false);
         startInfo.UseShellExecute = false;
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -856,49 +872,60 @@ public sealed class ProbeWorker : IAsyncDisposable
         public static extern uint GetExtendedTcpTable(IntPtr table, ref int size, bool order, uint family, int tableClass, uint reserved);
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        lock (_cleanupGate)
         {
-            return;
+            // Concurrent callers join one attempt. A failed attempt remains
+            // observable and can be retried after the cause has been removed.
+            if (_cleanupTask is null || _cleanupTask.IsFaulted || _cleanupTask.IsCanceled)
+                _cleanupTask = CleanupAsync();
+            return new ValueTask(_cleanupTask);
         }
+    }
 
+    private async Task CleanupAsync()
+    {
+        Interlocked.Exchange(ref _disposed, 1);
+        var phase = "PROCESS_STOP";
         try
         {
-            if (_process is { HasExited: false })
+            if (!_resourcesReleased)
             {
-                _process.Kill(entireProcessTree: true);
+                if (_process is not null)
+                {
+                    try
+                    {
+                        if (!_process.HasExited) _process.Kill(entireProcessTree: true);
+                    }
+                    catch (Exception ex) when ((ex is InvalidOperationException or Win32Exception) && _process.HasExited)
+                    {
+                        // A natural exit may race Kill. Still wait on the retained object.
+                    }
+                    await _process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                }
+                phase = "OUTPUT_DRAIN";
+                _output.Cancel();
+                var counts = await Task.WhenAll(_stdout, _stderr).WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                OutputBytes = (int)Math.Min(int.MaxValue, (long)counts[0] + counts[1]);
+                _output.Dispose();
+                _process?.Dispose();
+                _resourcesReleased = true;
             }
+            phase = "DIRECTORY_CLEANUP";
+            DirectoryRemoved = await DeleteDirectoryAsync(_directory).ConfigureAwait(false);
+            if (!DirectoryRemoved) throw new ProbeCleanupException();
+            Diagnostic = null;
+            Volatile.Write(ref _disposed, 2);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException
+            or InvalidOperationException or Win32Exception or OperationCanceledException)
         {
+            Diagnostic = phase + "_FAILED";
+            // Never dispose the process handle or delete its files after an
+            // unconfirmed stop. A caller must not publish probe success here.
+            throw new ProbeCleanupException();
         }
-
-        try
-        {
-            if (_process is { HasExited: false })
-            {
-                await _process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
-            }
-        }
-        catch (Exception ex) when (ex is TimeoutException or InvalidOperationException)
-        {
-        }
-
-        _output.Cancel();
-        try
-        {
-            OutputBytes = await _stdout.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
-            OutputBytes += await _stderr.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException or IOException)
-        {
-            Diagnostic = ex.GetType().Name;
-        }
-
-        _output.Dispose();
-        _process?.Dispose();
-        DirectoryRemoved = DeleteDirectory(_directory);
     }
 
     private static async Task<int> CountAsync(StreamReader reader, CancellationToken cancellationToken, StringBuilder? tail)
@@ -936,21 +963,26 @@ public sealed class ProbeWorker : IAsyncDisposable
         return total;
     }
 
-    private static bool DeleteDirectory(string? directory)
+    private static async Task<bool> DeleteDirectoryAsync(string? directory)
     {
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return true;
+        var elapsed = Stopwatch.StartNew();
+        while (true)
         {
-            return true;
-        }
-
-        try
-        {
-            Directory.Delete(directory, recursive: true);
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return false;
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+                return true;
+            }
+            catch (DirectoryNotFoundException) { return true; }
+            catch (IOException ex) when (OperatingSystem.IsWindows() &&
+                ((ex.HResult & 0xffff) is 32 or 33) && elapsed.Elapsed < TimeSpan.FromSeconds(1))
+            {
+                // Only a transient sharing/lock violation, after confirmed
+                // owned-process exit. No handshake or test is retried.
+                await Task.Delay(25).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
         }
     }
 }

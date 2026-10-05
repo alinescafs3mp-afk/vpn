@@ -27,11 +27,10 @@ public sealed class AstraV3DStartupReadinessTests
         var target = new Uri("https://127.0.0.1:" + tls.Port.ToString(CultureInfo.InvariantCulture) + "/generate_204");
         var trust = new X509Certificate2Collection(certificate);
         var directory = Directory.CreateTempSubdirectory("autovpn-v3d-startup-");
-        var reserved = new TcpListener(IPAddress.Loopback, 0);
+        using var reserved = CorePortLease.Reserve();
         try
         {
-            reserved.Start();
-            var socks = ((IPEndPoint)reserved.LocalEndpoint).Port;
+            var socks = reserved.Port;
             // The controlled provider must use DIRECT explicitly. Without that,
             // its own startup download follows MATCH,REJECT and never reaches us.
             var yaml = "mixed-port: 0\nsocks-port: " + socks.ToString(CultureInfo.InvariantCulture) +
@@ -48,7 +47,7 @@ public sealed class AstraV3DStartupReadinessTests
             start.ArgumentList.Add("-f"); start.ArgumentList.Add(config);
             // Hold the port through fixture preparation, releasing only for the
             // child's bind. This narrows, but does not eliminate, the bind race.
-            reserved.Stop();
+            reserved.Dispose();
             await using var worker = await ProbeWorker.StartAsync(start, socks, TimeSpan.FromSeconds(10), deadline.Token, directory.FullName);
             Assert.True(worker.Ready, "Controlled core did not acquire its listener: " + worker.Diagnostic + " " + worker.OutputTail);
             await heldProvider.Entered.Task.WaitAsync(deadline.Token);
@@ -75,7 +74,7 @@ public sealed class AstraV3DStartupReadinessTests
         }
         finally
         {
-            reserved.Stop();
+            reserved.Dispose();
             heldProvider.Release.TrySetResult();
             if (Directory.Exists(directory.FullName)) Directory.Delete(directory.FullName, true);
         }
