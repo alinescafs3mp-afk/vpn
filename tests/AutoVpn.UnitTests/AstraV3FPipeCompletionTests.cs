@@ -116,7 +116,10 @@ public sealed class AstraV3FPipeCompletionTests
         public static async Task<PipeFixture> ConnectAsync(CancellationToken token)
         {
             var name = "AutoVPN-local-test-" + Guid.NewGuid().ToString("N");
-            var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            // Match the installed server. A zero-buffer Windows fixture requires a peer
+            // read to finish its write, which contradicts this test's writer-first barrier.
+            var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous, InstalledServiceProtocol.MaxFrameBytes, InstalledServiceProtocol.MaxFrameBytes);
             var client = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
             try
             {
