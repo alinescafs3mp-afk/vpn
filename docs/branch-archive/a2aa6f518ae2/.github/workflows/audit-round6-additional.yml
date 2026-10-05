@@ -1,0 +1,98 @@
+name: independent-round6-additional
+on:
+  push:
+    branches: ['audit/round6-bee2602-independent']
+    paths: ['.github/workflows/audit-round6-additional.yml', 'tests/AutoVpn.UnitTests/IndependentRound6Tests.cs', 'tests/AutoVpn.AuditRound6*/**']
+permissions:
+  contents: read
+jobs:
+  regressions:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Compile application and independent acceptance tests
+        run: |
+          New-Item -ItemType Directory -Force audit-results | Out-Null
+          git rev-parse HEAD | Out-File audit-results/commit.txt
+          dotnet build AutoVpn.slnx -c Release --nologo
+          exit $LASTEXITCODE
+      - name: Execute bounded adverse cases and positive controls
+        run: |
+          dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --no-build --nologo --filter FullyQualifiedName~IndependentRound6Tests --logger 'trx;LogFileName=independent.trx' --results-directory audit-results --blame-hang-timeout 60s
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: round6-independent-${{ matrix.os }}
+          path: audit-results/
+          retention-days: 14
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Measure current SQLite at 1000, 5000 and 10000 nodes
+        run: dotnet run --project tests/AutoVpn.AuditRound6Measure -c Release -- audit-measure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: round6-measure-${{ matrix.os }}
+          path: audit-measure/
+          retention-days: 14
+  wpf:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Actual WPF navigation and normal settings reopen
+        run: dotnet run --project tests/AutoVpn.AuditRound6Wpf -c Release -- audit-wpf
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: round6-wpf
+          path: audit-wpf/
+          retention-days: 14
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir audit-fixtures
+          git archive --format=tar HEAD > audit-fixtures/audit-source.tar
+          git ls-tree -r HEAD > audit-fixtures/tree.txt
+          git rev-parse HEAD > audit-fixtures/commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: round6-audit-fixtures
+          path: audit-fixtures/
+          retention-days: 14

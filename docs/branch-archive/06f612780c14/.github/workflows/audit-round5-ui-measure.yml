@@ -1,0 +1,61 @@
+name: round5-ui-and-measurements
+on:
+  push:
+    branches: ['audit/round5-49e5bd5-independent']
+    paths: ['.github/workflows/audit-round5-ui-measure.yml', 'tests/AutoVpn.AuditRound5*/**']
+permissions:
+  contents: read
+jobs:
+  wpf:
+    runs-on: windows-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-dotnet@v4
+        with: {global-json-file: global.json}
+      - name: Actual WPF navigation and settings persistence without consent
+        shell: pwsh
+        run: |
+          dotnet run --project tests/AutoVpn.AuditRound5Wpf -c Release -- audit-wpf-results
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: round5-wpf, path: audit-wpf-results/, retention-days: 14}
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-dotnet@v4
+        with: {global-json-file: global.json}
+      - name: SQLite workload at 1000, 5000 and 10000 synthetic nodes
+        shell: pwsh
+        run: |
+          dotnet run --project tests/AutoVpn.AuditRound5Measure -c Release -- audit-measure-results
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: round5-measure-${{ matrix.os }}
+          path: audit-measure-results/
+          retention-days: 14
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - shell: bash
+        run: |
+          mkdir audit-fixtures
+          git archive --format=tar HEAD > audit-fixtures/audit-source.tar
+          git ls-tree -r HEAD > audit-fixtures/audit-tree.txt
+          git rev-parse HEAD > audit-fixtures/audit-commit.txt
+      - uses: actions/upload-artifact@v4
+        with: {name: round5-all-fixtures, path: audit-fixtures/, retention-days: 14}

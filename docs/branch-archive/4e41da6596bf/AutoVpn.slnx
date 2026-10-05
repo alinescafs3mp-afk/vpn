@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AutoVpn.Application/AutoVpn.Application.csproj" />
+    <Project Path="src/AutoVpn.Contracts/AutoVpn.Contracts.csproj" />
+    <Project Path="src/AutoVpn.Desktop/AutoVpn.Desktop.csproj" />
+    <Project Path="src/AutoVpn.Domain/AutoVpn.Domain.csproj" />
+    <Project Path="src/AutoVpn.Infrastructure/AutoVpn.Infrastructure.csproj" />
+    <Project Path="src/AutoVpn.Inventory/AutoVpn.Inventory.csproj" />
+    <Project Path="src/AutoVpn.Recovery/AutoVpn.Recovery.csproj" />
+    <Project Path="src/AutoVpn.Service/AutoVpn.Service.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AutoVpn.ProcessFixture/AutoVpn.ProcessFixture.csproj" />
+    <Project Path="tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj" />
+  </Folder>
+  <Project Path="src/AutoVpn.SessionHost/AutoVpn.SessionHost.csproj" />
+</Solution>

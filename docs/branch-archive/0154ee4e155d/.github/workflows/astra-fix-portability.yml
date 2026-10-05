@@ -1,0 +1,48 @@
+name: astra-r1-portability-correction
+on:
+  push:
+    branches: [implementation/astra-r1]
+    paths: [.github/workflows/astra-fix-portability.yml]
+permissions:
+  contents: write
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply reviewed source corrections without changing test assertions
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = implementation/astra-r1
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, subprocess
+          p=Path('tests/AutoVpn.UnitTests/Round2SliceATests.cs')
+          b=p.read_bytes()
+          assert hashlib.sha256(b).hexdigest()=='8b8acdb8c27029d639b13080dba1657e26b39bdb6d55b75825ed6ace0dc3b8c1'
+          old=b'new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + path)'
+          assert b.count(old)==1
+          b=b.replace(old,b'new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + path + ";Pooling=False")')
+          assert hashlib.sha256(b).hexdigest()=='c73ca0191d9dcf6a757eb1c852a26720a5c911096ccdc00c317459ae75f72eb4'
+          p.write_bytes(b)
+          p=Path('src/AutoVpn.Infrastructure/Probe/NonTunCoreProbeTransport.cs')
+          b=p.read_bytes()
+          assert hashlib.sha256(b).hexdigest()=='188b9287fcd480c7f6470d7bcd8379081c4f6ce3dcfd107cf3ec46af8ef474ad'
+          old=b'            var watch = Stopwatch.StartNew();\n            await using var session = await ProbeWorker.StartAsync'
+          assert b.count(old)==1
+          b=b.replace(old,b'            await using var session = await ProbeWorker.StartAsync')
+          old=b'            TlsProbeExchange exchange;\n            try'
+          assert b.count(old)==1
+          b=b.replace(old,b'            // Measure the candidate exchange, not local process creation/readiness.\n            var watch = Stopwatch.StartNew();\n            TlsProbeExchange exchange;\n            try')
+          assert hashlib.sha256(b).hexdigest()=='3c0c5d3aa32747bcedbe2ea85b0468142fa5a2b0fc7a499167ecb3e47b330d66'
+          p.write_bytes(b)
+          subprocess.run(['git','add','tests/AutoVpn.UnitTests/Round2SliceATests.cs',str(p)],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          PY
+          git config user.name 'Astra implementation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: exclude local core startup from network latency and close fixture-only SQLite pools'
+          git push origin HEAD:refs/heads/implementation/astra-r1

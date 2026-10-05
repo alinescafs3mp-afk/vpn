@@ -1,0 +1,118 @@
+name: independent-round6-baseline
+on:
+  push:
+    branches: ['audit/round6-bee2602-independent']
+    paths: ['.github/workflows/audit-round6-baseline.yml']
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Export exact production tree and reachable history
+        shell: bash
+        run: |
+          set -euo pipefail
+          P=bee26022245fb7fd1ede1d5edbe845db97e1205b
+          mkdir -p audit-source
+          git archive --format=tar "$P" > audit-source/production.tar
+          git ls-tree -r "$P" > audit-source/tree.txt
+          git log --format='%H %P %s' "$P" > audit-source/history.txt
+          git diff --stat 49e5bd54e41731b9b96b83789def31e86c701ee6 "$P" > audit-source/changes.txt
+          git diff 49e5bd54e41731b9b96b83789def31e86c701ee6 "$P" -- src tests config scripts .github > audit-source/changes.patch
+          git update-ref refs/heads/audit-source-pin "$P"
+          git bundle create audit-source/production.bundle refs/heads/audit-source-pin
+          sha256sum audit-source/* > audit-source/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: round6-production-source
+          path: audit-source/
+          retention-days: 14
+  platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: bee26022245fb7fd1ede1d5edbe845db97e1205b
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build pinned production without audit test modifications
+        run: |
+          New-Item -ItemType Directory -Force audit-results | Out-Null
+          git rev-parse HEAD | Out-File audit-results/commit.txt
+          dotnet --info | Out-File audit-results/dotnet-info.txt
+          dotnet build AutoVpn.slnx -c Release --nologo
+          exit $LASTEXITCODE
+      - name: Existing suite without provisioned native core
+        id: unit
+        continue-on-error: true
+        env:
+          AUTOVPN_MIHOMO_PATH: ''
+          R5_CORE_PATH: ''
+          R5_CORE_HASH: ''
+        run: |
+          dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName!~Native_Round5' --logger 'trx;LogFileName=unit.trx' --results-directory audit-results --blame-hang-timeout 90s
+          exit $LASTEXITCODE
+      - name: Provision exact official native binary with both hash checks
+        id: core
+        run: |
+          @'
+          import gzip, hashlib, io, json, os, pathlib, urllib.request, zipfile
+          m=json.loads(pathlib.Path('config/core-manifest.json').read_text())
+          hashes={a['name']:a['sha256'] for a in m['assets']}
+          win=os.name=='nt'
+          name='mihomo-windows-amd64-v1.19.32.zip' if win else 'mihomo-linux-amd64-v1.19.32.gz'
+          raw=urllib.request.urlopen('https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/'+name, timeout=40).read()
+          assert hashlib.sha256(raw).hexdigest()==hashes[name], 'archive mismatch'
+          if win:
+              z=zipfile.ZipFile(io.BytesIO(raw)); entries=[n for n in z.namelist() if n.endswith('.exe')]
+              assert len(entries)==1, entries
+              binary=z.read(entries[0]); bn='mihomo-windows-amd64.exe'
+          else:
+              binary=gzip.decompress(raw); bn='mihomo-linux-amd64'
+          digest=hashlib.sha256(binary).hexdigest()
+          assert digest==hashes[bn], 'binary mismatch'
+          dest=pathlib.Path(os.environ['RUNNER_TEMP'])/('round6-mihomo.exe' if win else 'round6-mihomo')
+          dest.write_bytes(binary); dest.chmod(0o700)
+          pathlib.Path('audit-results/core.json').write_text(json.dumps({'version':m['version'],'commit':m['commit'],'archive':name,'archive_sha256':hashlib.sha256(raw).hexdigest(),'binary_sha256':digest}))
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              for key,value in [('AUTOVPN_MIHOMO_PATH',str(dest)),('R5_CORE_PATH',str(dest)),('R5_CORE_HASH',digest)]: f.write(key+'='+value+'\n')
+          '@ | python -
+          exit $LASTEXITCODE
+      - name: Full existing suite with real non-TUN native checks
+        id: native
+        continue-on-error: true
+        run: |
+          dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --no-build --nologo --logger 'trx;LogFileName=native.trx' --results-directory audit-results --blame-hang-timeout 90s
+          exit $LASTEXITCODE
+      - name: Transitive NuGet advisory query
+        id: advisory
+        continue-on-error: true
+        run: |
+          dotnet list AutoVpn.slnx package --vulnerable --include-transitive --format json > audit-results/nuget-advisories.json
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: round6-baseline-${{ matrix.os }}
+          path: audit-results/
+          retention-days: 14
+      - name: Preserve actual failed outcomes
+        if: always()
+        run: |
+          if ('${{ steps.unit.outcome }}' -ne 'success' -or '${{ steps.native.outcome }}' -ne 'success' -or '${{ steps.core.outcome }}' -ne 'success') { exit 1 }

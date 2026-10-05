@@ -1,0 +1,71 @@
+name: astra-toolchain
+on:
+  push:
+    branches: [astra/implementation-r6]
+    paths: [.github/workflows/astra-toolchain.yml]
+permissions:
+  contents: read
+jobs:
+  toolchain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install isolated pinned SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/autovpn-env/sdk" "$RUNNER_TEMP/autovpn-env/packages" "$RUNNER_TEMP/autovpn-env/assets"
+          curl --fail --location --retry 2 https://dot.net/v1/dotnet-install.sh -o "$RUNNER_TEMP/install-dotnet.sh"
+          bash "$RUNNER_TEMP/install-dotnet.sh" --version 10.0.112 --install-dir "$RUNNER_TEMP/autovpn-env/sdk"
+          echo "DOTNET_ROOT=$RUNNER_TEMP/autovpn-env/sdk" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/autovpn-env/sdk" >> "$GITHUB_PATH"
+          echo "NUGET_PACKAGES=$RUNNER_TEMP/autovpn-env/packages" >> "$GITHUB_ENV"
+      - name: Restore build inputs and planned Windows host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build AutoVpn.slnx -c Release --nologo
+          mkdir -p "$RUNNER_TEMP/host-deps"
+          cat > "$RUNNER_TEMP/host-deps/deps.csproj" <<'EOF'
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0-windows</TargetFramework><EnableWindowsTargeting>true</EnableWindowsTargeting></PropertyGroup><ItemGroup><PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.12"/><PackageReference Include="System.IO.Pipes.AccessControl" Version="5.0.0"/></ItemGroup></Project>
+          EOF
+          dotnet restore "$RUNNER_TEMP/host-deps/deps.csproj"
+          dotnet restore src/AutoVpn.Desktop/AutoVpn.Desktop.csproj -r win-x64
+          dotnet restore src/AutoVpn.Service/AutoVpn.Service.csproj -r win-x64
+          python3 - <<'PY'
+          import hashlib,json,os,urllib.request,zipfile,gzip,pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'autovpn-env/assets'
+          manifest=json.load(open('config/core-manifest.json'))
+          expected={x['name']:x['sha256'] for x in manifest['assets']}
+          for name in ['mihomo-linux-amd64-v1.19.32.gz','mihomo-windows-amd64-v1.19.32.zip','wintun-0.14.1.zip']:
+            url=('https://www.wintun.net/builds/'+name) if name.startswith('wintun') else ('https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/'+name)
+            data=urllib.request.urlopen(url,timeout=90).read()
+            assert hashlib.sha256(data).hexdigest()==expected[name],name
+            (root/name).write_bytes(data)
+          raw=gzip.decompress((root/'mihomo-linux-amd64-v1.19.32.gz').read_bytes())
+          assert hashlib.sha256(raw).hexdigest()==expected['mihomo-linux-amd64']
+          (root/'mihomo').write_bytes(raw);(root/'mihomo').chmod(0o755)
+          with zipfile.ZipFile(root/'mihomo-windows-amd64-v1.19.32.zip') as z:
+            raw=z.read(next(n for n in z.namelist() if n.endswith('.exe')))
+          assert hashlib.sha256(raw).hexdigest()==expected['mihomo-windows-amd64.exe']
+          (root/'mihomo.exe').write_bytes(raw)
+          with zipfile.ZipFile(root/'wintun-0.14.1.zip') as z: raw=z.read('wintun/bin/amd64/wintun.dll')
+          assert hashlib.sha256(raw).hexdigest()==next(x['amd64DllSha256'] for x in manifest['assets'] if x['name'].startswith('wintun'))
+          (root/'wintun.dll').write_bytes(raw)
+          PY
+      - name: Export environment without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir export
+          tar -C "$RUNNER_TEMP/autovpn-env" -czf export/autovpn-build-env.tar.gz sdk packages assets
+          sha256sum export/autovpn-build-env.tar.gz > export/SHA256SUMS.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: astra-offline-toolchain
+          path: export/
+          retention-days: 2
+          compression-level: 0

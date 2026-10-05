@@ -1,0 +1,51 @@
+name: astra-apply-verified-source
+on:
+  push:
+    branches: [implementation/astra-r1]
+    paths: [.astra-transfer/**, .github/workflows/astra-apply.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact source patch and apply only reviewed paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = implementation/astra-r1
+          python3 - <<'PY'
+          import base64, hashlib, lzma, pathlib, subprocess
+          root=pathlib.Path('.astra-transfer')
+          encoded=''.join((root/f'part{i}.txt').read_text() for i in range(1,5))
+          packed=base64.b64decode(encoded, validate=True)
+          assert hashlib.sha256(packed).hexdigest() == '821645c5388f527492fb6fea81e7b1a5302adbb9f6e26bf855e881061b0c6539'
+          patch=lzma.decompress(packed)
+          assert len(patch)==205513
+          assert hashlib.sha256(patch).hexdigest() == 'b4122112c5984a338c041771f405107098634227616c832e7a17a1df4e8ac487'
+          subprocess.run(['git','diff','--exit-code','cf619323be36130977dfd27832a495a442cb3b6a','HEAD','--','src','scripts','tests','docs','AutoVpn.slnx','Directory.Build.props'],check=True)
+          for line in patch.decode('utf-8').splitlines():
+              if line.startswith('+++ b/'):
+                  path=line[6:]
+                  assert '..' not in pathlib.PurePosixPath(path).parts
+                  assert path.startswith(('src/','tests/','scripts/','docs/')) or path in ('AutoVpn.slnx','Directory.Build.props','README_ASTRA_R1_RU.md'), path
+          target=root/'verified.patch';target.write_bytes(patch)
+          subprocess.run(['git','apply','--check','--unidiff-zero',str(target)],check=True)
+          subprocess.run(['git','apply','--index','--unidiff-zero',str(target)],check=True)
+          path=pathlib.Path('src/AutoVpn.Application/Catalogue.cs')
+          before=path.read_bytes()
+          assert hashlib.sha256(before).hexdigest()=='511fe3e71cd9d47321674101f0f46f7b1132e449aaca8fa854dbe37160cbf876'
+          after=b'\n'.join(line.rstrip(b' \t') for line in before.split(b'\n'))
+          assert hashlib.sha256(after).hexdigest()=='d453e94e8ad24c5daaf4fc1a5b6c99afa5b89efc2dc1131f3aa0e3fca30e3d20'
+          path.write_bytes(after)
+          subprocess.run(['git','add',str(path)],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          PY
+          git config user.name 'Astra implementation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: implement Astra R1 audited catalogue, lifecycle, IPC and build checkpoint'
+          git push origin HEAD:refs/heads/implementation/astra-r1
