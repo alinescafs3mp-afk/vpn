@@ -1,0 +1,72 @@
+name: astra-v3d-tls-investigation
+on:
+  workflow_dispatch:
+  push:
+    branches: [implementation/astra-v3d-tls]
+    paths: ['tests/**', 'src/**', 'scripts/**', '.github/workflows/astra-v3d-tls.yml']
+permissions:
+  contents: read
+jobs:
+  investigate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build unchanged production code with test-only observation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory artifacts/v3d-tls -Force | Out-Null
+          dotnet --info | Set-Content artifacts/v3d-tls/dotnet-info.txt
+          dotnet build AutoVpn.slnx -c Release --nologo '-p:Platform=Any CPU'
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+      - name: Twenty independent observations; any failure stays failed
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $core = ./scripts/fetch-core.ps1
+          $manifest = Get-Content config/core-manifest.json -Raw | ConvertFrom-Json
+          $asset = if ($IsWindows) { 'mihomo-windows-amd64.exe' } else { 'mihomo-linux-amd64' }
+          $hash = ($manifest.assets | Where-Object name -eq $asset).sha256
+          if ((Get-FileHash -LiteralPath $core -Algorithm SHA256).Hash -ne $hash) { throw 'Core hash mismatch.' }
+          $env:R5_CORE_PATH = (Resolve-Path -LiteralPath $core).Path
+          $env:R5_CORE_HASH = $hash
+          $env:AUTOVPN_TLS_DIAGNOSTICS = '1'
+          $runs = @()
+          for ($i = 1; $i -le 20; $i++) {
+            $dir = "artifacts/v3d-tls/run-$i"
+            New-Item -ItemType Directory $dir -Force | Out-Null
+            dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~AstraV3DTlsInvestigationTests' --logger 'trx;LogFileName=results.trx' --results-directory $dir --blame-hang-timeout 90s --blame-hang-dump-type none *> "$dir/test.log"
+            $code = $LASTEXITCODE
+            if (!(Test-Path "$dir/results.trx")) { throw "Missing evidence for run $i." }
+            [xml]$trx = Get-Content "$dir/results.trx" -Raw
+            $results = @($trx.SelectNodes("//*[local-name()='UnitTestResult']"))
+            $failed = @($results | Where-Object outcome -eq 'Failed')
+            $passed = @($results | Where-Object outcome -eq 'Passed')
+            $runs += [ordered]@{iteration=$i; exitCode=$code; total=$results.Count; passed=$passed.Count; failed=$failed.Count; failures=@($failed | ForEach-Object { @{name=$_.testName; message=$_.Output.ErrorInfo.Message} })}
+            Write-Host "Run $i : passed=$($passed.Count) failed=$($failed.Count) total=$($results.Count) exit=$code"
+          }
+          [ordered]@{sourceCommit=$env:GITHUB_SHA; sourceTree=(& git rev-parse 'HEAD^{tree}'); coreSha256=$hash; scope='Loopback-only original Round6 scenarios; observations are not retries to green'; runs=$runs} | ConvertTo-Json -Depth 10 | Set-Content artifacts/v3d-tls/summary.json -Encoding utf8NoBOM
+          $bad = @($runs | Where-Object { $_.exitCode -ne 0 -or $_.total -ne 6 -or $_.passed -ne 6 })
+          if ($bad.Count -gt 0) {
+            $bad | ConvertTo-Json -Depth 10 | Write-Host
+            throw "$($bad.Count) of 20 observations failed; all results retained."
+          }
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3D-TLS-${{ github.sha }}-${{ matrix.os }}
+          path: artifacts/v3d-tls/
+          if-no-files-found: error
+          retention-days: 30
