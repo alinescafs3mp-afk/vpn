@@ -1,0 +1,31 @@
+name: astra-v3d-retained-evidence
+on:
+  workflow_dispatch:
+  push:
+    branches: [implementation/astra-v3d-tls]
+    paths: ['.github/workflows/astra-v3d-evidence.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37341316366
+          name: V3D-source-and-evidence-1ce4b5ea49fc4e68becb81307821f54d6d47f3e1-windows-latest
+          path: retained
+      - name: Read original failure detail, not a rerun
+        shell: bash
+        run: |
+          python - <<'PY'
+          import pathlib, xml.etree.ElementTree as ET
+          for path in sorted(pathlib.Path('retained').rglob('results.trx')):
+              for item in ET.parse(path).iter():
+                  if item.tag.rsplit('}',1)[-1] == 'UnitTestResult' and item.attrib.get('outcome') == 'Failed':
+                      print(path, item.attrib.get('testName'))
+                      print(''.join(item.itertext()))
+          PY
