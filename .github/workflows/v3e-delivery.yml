@@ -1,0 +1,53 @@
+name: v3e-source-and-history-delivery
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/v3e-delivery.yml', 'tools/assemble-v3e-delivery.py']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  retain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37353615748
+          name: AutoVPN-branch-backup-1bc1426da022f880998085b90bd506f3b71c386b
+          path: artifacts/v3e-delivery/history
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37355416544
+          pattern: AutoVPN-V3E-*
+          path: artifacts/v3e-delivery/evidence/first
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37356265309
+          pattern: AutoVPN-V3E-*
+          path: artifacts/v3e-delivery/evidence/final
+      - name: Recount original tests and verify source, ancestry and reversible patch
+        run: python tools/assemble-v3e-delivery.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoVPN-V3E-DEVELOPMENT-source-evidence-history-${{ github.sha }}
+          path: artifacts/v3e-delivery/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
+      - name: Preserve the failed Windows acceptance independently of package integrity
+        run: |
+          python - <<'PY'
+          import json
+          report=json.load(open('artifacts/v3e-delivery/DELIVERY-VALIDATION.json'))
+          if not report['testSuitePassed']:
+              raise SystemExit('Windows test acceptance is not clear. The verified source/evidence artifact was retained; packaging did not rerun or approve tests.')
+          PY
