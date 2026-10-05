@@ -62,7 +62,7 @@ internal static class ServiceLab
                     }
                     var check = await InstalledServiceClient.QueryAsync(budget.Token);
                     var expected = args[0] switch { "ready" => "Ready", "denied" => "AccessDenied", "stopped" => "Stopped", "missing" => "NotInstalled", _ => "INVALID_VERB" };
-                    Demand(check.State == expected, "STATE_" + expected + "_ACTUAL_" + check.State);
+                    Demand(check.State == expected, "STATE_" + expected + "_ACTUAL_" + check.State + "_DETAIL_" + (check.DiagnosticCode ?? "NONE") + "_WIN32_" + (check.NativeErrorCode ?? 0));
                     if (check.State == "Ready") Demand(check.Reply is { CanConnect: false, ProtectionArmed: false, CoreRunning: false }, "FALSE_VPN_CLAIM");
                     Console.WriteLine(JsonSerializer.Serialize(new { standardUser = true, state = check.State,
                         instanceId = check.Reply?.InstanceId, processId = check.Reply?.ProcessId,

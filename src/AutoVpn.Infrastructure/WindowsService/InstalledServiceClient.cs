@@ -28,7 +28,7 @@ public static class InstalledServiceClient
             if (scm.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
             using var service = Native.OpenService(scm, InstalledServiceProtocol.ServiceName, 5);
             if (service.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-            if (!ValidConfiguration(service)) return new("AuthenticationFailed");
+            if (!ValidConfiguration(service)) return AuthenticationFailure("SCM_CONFIGURATION");
             var before = ReadStatus(service);
             if (before.CurrentState != 4) return InstalledServiceProtocol.NonRunningCheck(before.CurrentState);
             if (before.ProcessId is 0 or > int.MaxValue) return new("Unavailable");
@@ -36,14 +36,18 @@ public static class InstalledServiceClient
                 PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize, PipeOptions.Asynchronous,
                 TokenImpersonationLevel.Identification, HandleInheritability.None);
             await client.ConnectAsync(InstalledServiceProtocol.TimeoutMs, budget.Token).ConfigureAwait(false);
-            if (!Native.GetNamedPipeServerProcessId(client.SafePipeHandle, out var pipePid) ||
-                pipePid != before.ProcessId || before.ServiceType != 0x10) return new("AuthenticationFailed");
+            if (!Native.GetNamedPipeServerProcessId(client.SafePipeHandle, out var pipePid))
+                return AuthenticationFailure("PIPE_PROCESS_QUERY", Marshal.GetLastWin32Error());
+            if (pipePid != before.ProcessId || before.ServiceType != 0x10)
+                return AuthenticationFailure("PIPE_PROCESS_MISMATCH");
             using var process = Native.OpenProcess(0x101000, false, pipePid);
-            if (process.IsInvalid) return new("AuthenticationFailed");
+            if (process.IsInvalid) return AuthenticationFailure("PROCESS_OPEN", Marshal.GetLastWin32Error());
             var path = new StringBuilder(32768); var length = path.Capacity;
-            if (!Native.QueryFullProcessImageName(process, 0, path, ref length) ||
-                !string.Equals(path.ToString(), InstalledServiceLayout.ExecutablePath, StringComparison.OrdinalIgnoreCase) ||
-                !StillRunning(service, process, pipePid)) return new("AuthenticationFailed");
+            if (!Native.QueryFullProcessImageName(process, 0, path, ref length))
+                return AuthenticationFailure("PROCESS_IMAGE_QUERY", Marshal.GetLastWin32Error());
+            if (!string.Equals(path.ToString(), InstalledServiceLayout.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+                return AuthenticationFailure("PROCESS_IMAGE_MISMATCH");
+            if (!StillRunning(service, process, pipePid)) return AuthenticationFailure("PROCESS_LIVENESS");
             // The handle is retained until the exchange ends. Nothing is sent before authentication.
             var id = Guid.NewGuid().ToString("N");
             var request = new ServiceStatusRequest { ProtocolVersion = 1, RequestId = id, Operation = "GetStatus" };
@@ -60,6 +64,9 @@ public static class InstalledServiceClient
         catch (InvalidDataException) { return new("ProtocolError"); }
         catch (IOException) { return new("Unavailable"); }
     }
+
+    private static InstalledServiceCheck AuthenticationFailure(string code, int? nativeError = null) =>
+        new("AuthenticationFailed") { DiagnosticCode = code, NativeErrorCode = nativeError };
 
     [SupportedOSPlatform("windows")]
     private static bool ValidConfiguration(Native.ServiceHandle service)
