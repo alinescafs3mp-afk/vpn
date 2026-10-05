@@ -1,0 +1,147 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
+using AutoVpn.Infrastructure.Probe;
+
+namespace AutoVpn.UnitTests;
+
+public sealed class AstraV3DStartupReadinessTests
+{
+    [Fact]
+    public async Task Native_Round5_V3D_OpenPortPrecedesDispatchAndLocalProofWaitsForDispatch()
+    {
+        var binary = Environment.GetEnvironmentVariable("R5_CORE_PATH");
+        var hash = Environment.GetEnvironmentVariable("R5_CORE_HASH");
+        Assert.False(string.IsNullOrWhiteSpace(binary));
+        Assert.False(string.IsNullOrWhiteSpace(hash));
+        Assert.Equal(hash!.ToUpperInvariant(), Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(binary!))));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var heldProvider = new HeldProvider();
+        await using var readiness = new LoopbackCoreReadiness();
+        var directory = Directory.CreateTempSubdirectory("autovpn-v3d-startup-");
+        try
+        {
+            var reserved = new TcpListener(IPAddress.Loopback, 0);
+            reserved.Start();
+            var socks = ((IPEndPoint)reserved.LocalEndpoint).Port;
+            reserved.Stop();
+            var yaml = "mixed-port: 0\nsocks-port: " + socks.ToString(CultureInfo.InvariantCulture) +
+                "\nallow-lan: false\nbind-address: 127.0.0.1\nmode: rule\nlog-level: warning\nipv6: false\ndns:\n  enable: false\ntun:\n  enable: false\n" +
+                "rule-providers:\n  startup:\n    type: http\n    behavior: classical\n    url: 'http://127.0.0.1:" + heldProvider.Port.ToString(CultureInfo.InvariantCulture) +
+                "/held.yaml'\n    path: './held.yaml'\n    interval: 3600\nrules:\n  - RULE-SET,startup,REJECT\n  - MATCH,REJECT\n";
+            yaml = readiness.AddToProfile(yaml);
+            var config = Path.Combine(directory.FullName, "config.yaml");
+            await File.WriteAllTextAsync(config, yaml, deadline.Token);
+            var start = new ProcessStartInfo(binary!) { WorkingDirectory = directory.FullName };
+            start.ArgumentList.Add("-d"); start.ArgumentList.Add(directory.FullName);
+            start.ArgumentList.Add("-f"); start.ArgumentList.Add(config);
+            await using var worker = await ProbeWorker.StartAsync(start, socks, TimeSpan.FromSeconds(10), deadline.Token, directory.FullName);
+            Assert.True(worker.Ready, worker.OutputTail);
+            await heldProvider.Entered.Task.WaitAsync(deadline.Token);
+            var pid = int.Parse(worker.WorkerId.Split(':')[0], CultureInfo.InvariantCulture);
+            bool Owns() => ProbeWorker.ProcessOwnsLoopbackPort(pid, socks);
+            Assert.True(Owns());
+            // This is the old readiness predicate, proven true while core dispatch
+            // is still held by a local startup provider. No public destination exists.
+            Assert.False(await readiness.WaitAsync(socks, Owns, TimeSpan.FromMilliseconds(250), deadline.Token));
+            Assert.Equal(0, readiness.Responses);
+            heldProvider.Release.TrySetResult();
+            Assert.True(await readiness.WaitAsync(socks, Owns, TimeSpan.FromSeconds(5), deadline.Token), worker.OutputTail);
+            Assert.True(readiness.Responses > 0);
+        }
+        finally
+        {
+            heldProvider.Release.TrySetResult();
+            if (Directory.Exists(directory.FullName)) Directory.Delete(directory.FullName, true);
+        }
+    }
+
+    [Theory]
+    [InlineData("rules:\n  - MATCH,REJECT\n")]
+    [InlineData("mode: rule\r\nrules:\r\n  - MATCH,REJECT\r\n")]
+    public async Task RuleIsLimitedToOwnedTcpEndpointAndPreservesReject(string profile)
+    {
+        await using var ready = new LoopbackCoreReadiness();
+        var result = ready.AddToProfile(profile);
+        Assert.Contains("(NETWORK,tcp)", result, StringComparison.Ordinal);
+        Assert.Contains("(DST-PORT," + ready.Port.ToString(CultureInfo.InvariantCulture) + ")", result, StringComparison.Ordinal);
+        Assert.Contains("(IP-CIDR,127.0.0.1/32,no-resolve)", result, StringComparison.Ordinal);
+        Assert.Contains("MATCH,REJECT", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("MATCH,DIRECT", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("external-controller", result, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("mode: rule\n")]
+    [InlineData("rules:\n  - MATCH,REJECT\nrules:\n  - MATCH,DIRECT\n")]
+    [InlineData("tun:\n  enable: true\nrules:\n  - MATCH,REJECT\n")]
+    public async Task UnsupportedProfileIsRejected(string profile)
+    {
+        await using var ready = new LoopbackCoreReadiness();
+        Assert.Throws<InvalidOperationException>(() => ready.AddToProfile(profile));
+    }
+
+    [Fact]
+    public async Task OwnershipFailureCannotBecomeReady()
+    {
+        await using var ready = new LoopbackCoreReadiness();
+        Assert.False(await ready.WaitAsync(12345, () => false, TimeSpan.FromSeconds(1), CancellationToken.None));
+        Assert.Equal(0, ready.Responses);
+    }
+
+    [Fact]
+    public async Task CancellationIsNotConvertedToSuccess()
+    {
+        await using var ready = new LoopbackCoreReadiness();
+        using var canceled = new CancellationTokenSource(); canceled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ready.WaitAsync(12345, () => true, TimeSpan.FromSeconds(1), canceled.Token));
+    }
+
+    private sealed class HeldProvider : IAsyncDisposable
+    {
+        private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource _stop = new();
+        private readonly Task _server;
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Port { get; }
+        public HeldProvider()
+        {
+            _listener.Start(); Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+            _server = ServeAsync();
+        }
+        private async Task ServeAsync()
+        {
+            try
+            {
+                using var client = await _listener.AcceptTcpClientAsync(_stop.Token);
+                await using var stream = client.GetStream();
+                var header = new byte[4096]; var used = 0;
+                while (used < header.Length)
+                {
+                    var count = await stream.ReadAsync(header.AsMemory(used), _stop.Token);
+                    if (count == 0) throw new IOException("Provider request ended early.");
+                    used += count;
+                    if (Encoding.ASCII.GetString(header, 0, used).Contains("\r\n\r\n", StringComparison.Ordinal)) break;
+                }
+                Entered.TrySetResult();
+                await Release.Task.WaitAsync(_stop.Token);
+                const string body = "payload: []\n";
+                var response = "HTTP/1.1 200 OK\r\nContent-Type: text/yaml\r\nConnection: close\r\nContent-Length: " + body.Length.ToString(CultureInfo.InvariantCulture) + "\r\n\r\n" + body;
+                await stream.WriteAsync(Encoding.ASCII.GetBytes(response), _stop.Token);
+            }
+            catch (Exception error) when (error is IOException or SocketException or OperationCanceledException)
+            {
+                if (!_stop.IsCancellationRequested) Entered.TrySetException(error);
+            }
+        }
+        public async ValueTask DisposeAsync()
+        {
+            _stop.Cancel(); _listener.Stop(); Release.TrySetResult();
+            await _server; _stop.Dispose();
+        }
+    }
+}
