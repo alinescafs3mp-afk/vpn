@@ -152,12 +152,16 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
         var listeners = new List<TcpListener>();
         try
         {
+            // Declared before the core session so the local endpoint remains
+            // bound until that session's cleanup completes.
+            await using var readiness = new LoopbackCoreReadiness();
             var controllerPort = ReservePort(listeners);
             var socksPort = ReservePort(listeners);
             string yaml;
             try
             {
                 yaml = BuildProbeYaml(catalogueNode, controllerPort, socksPort, _fixture?.LoopbackHosts, admission.AllowInsecureProxyCertificates);
+                yaml = readiness.AddToProfile(yaml);
             }
             catch (InvalidOperationException ex)
             {
@@ -191,6 +195,7 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             start.ArgumentList.Add("-d");
             start.ArgumentList.Add(directory.FullName);
             start.Environment["HOME"] = directory.FullName;
+            var startup = Stopwatch.StartNew();
             await using var session = await ProbeWorker.StartAsync(start, socksPort, _connectTimeout, cancellationToken, directory.FullName).ConfigureAwait(false);
             LastDiagnostic = session.Diagnostic;
             if (cancellationToken.IsCancellationRequested)
@@ -202,6 +207,18 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             {
                 LastDiagnostic = session.OutputTail;
                 return Fail(ProbeClass.CoreFailure, "CORE_START_FAILED", digest, target);
+            }
+
+            // Mihomo can own its SOCKS port while normal dispatch is suspended.
+            // Prove local dispatch within the SAME startup budget before making
+            // the one authenticated candidate exchange. Never retry TLS to green.
+            var remaining = _connectTimeout - startup.Elapsed;
+            if (remaining > TimeSpan.FromMinutes(1)) remaining = TimeSpan.FromMinutes(1);
+            if (remaining <= TimeSpan.Zero || !await readiness.WaitAsync(socksPort,
+                () => session.OwnsListeningPort(socksPort), remaining, cancellationToken).ConfigureAwait(false))
+            {
+                LastDiagnostic = "CORE_NOT_READY";
+                return Fail(ProbeClass.CoreFailure, "CORE_NOT_READY", digest, target, session.WorkerId);
             }
 
             // Measure the candidate exchange, not local process creation/readiness.
@@ -626,6 +643,19 @@ public sealed class ProbeWorker : IAsyncDisposable
     public bool DirectoryRemoved { get; private set; }
     public string? Diagnostic { get; private set; }
 
+    public bool OwnsListeningPort(int port)
+    {
+        try
+        {
+            return Volatile.Read(ref _disposed) == 0 && _process is { HasExited: false }
+                && ProcessOwnsLoopbackPort(_process.Id, port);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+        {
+            return false;
+        }
+    }
+
     public string OutputTail
     {
         get
@@ -725,7 +755,8 @@ public sealed class ProbeWorker : IAsyncDisposable
                 foreach (var line in File.ReadLines("/proc/net/tcp"))
                 {
                     var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    if (fields.Length < 10 || !fields[1].Equals(needle, StringComparison.OrdinalIgnoreCase))
+                    if (fields.Length < 10 || !fields[3].Equals("0A", StringComparison.OrdinalIgnoreCase)
+                        || !fields[1].Equals(needle, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }

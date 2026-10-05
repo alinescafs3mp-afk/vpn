@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [implementation/astra-v3d-tls]
-    paths: ['tests/**', 'src/**', 'scripts/**', '.github/workflows/astra-v3d-tls.yml']
+    paths: ['tests/**', 'src/**', 'scripts/**', 'docs/checkpoints/V3D.md', '.github/workflows/astra-v3d-tls.yml']
 permissions:
   contents: read
 jobs:
@@ -13,40 +13,76 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
-      - name: Build startup readiness proof
+      - name: Verify unchanged TLS implementation and retain exact sources
+        shell: pwsh
+        run: |
+          python scripts/v3d-source-snapshot.py
+          if ($LASTEXITCODE -ne 0) { throw 'Source boundary verification failed.' }
+      - name: Build full solution
         shell: pwsh
         run: |
           New-Item -ItemType Directory artifacts/v3d-tls -Force | Out-Null
-          dotnet build AutoVpn.slnx -c Release --nologo '-p:Platform=Any CPU'
-          if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
-      - name: Prove listening is not dispatch readiness with a held loopback provider
+          dotnet --info | Set-Content artifacts/v3d-tls/dotnet-info.txt
+          dotnet build AutoVpn.slnx -c Release --nologo '-p:Platform=Any CPU' *> artifacts/v3d-tls/build.log
+          if ($LASTEXITCODE -ne 0) { Get-Content artifacts/v3d-tls/build.log; throw 'Build failed.' }
+      - name: Twelve complete suite runs with all outcomes retained
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
           $core = ./scripts/fetch-core.ps1
           $manifest = Get-Content config/core-manifest.json -Raw | ConvertFrom-Json
           $asset = if ($IsWindows) { 'mihomo-windows-amd64.exe' } else { 'mihomo-linux-amd64' }
           $hash = ($manifest.assets | Where-Object name -eq $asset).sha256
           if ((Get-FileHash -LiteralPath $core -Algorithm SHA256).Hash -ne $hash) { throw 'Core hash mismatch.' }
-          $env:R5_CORE_PATH = (Resolve-Path -LiteralPath $core).Path
-          $env:R5_CORE_HASH = $hash
-          dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~AstraV3DStartupReadinessTests' --logger 'trx;LogFileName=startup.trx' --results-directory artifacts/v3d-tls --blame-hang-timeout 60s --blame-hang-dump-type none
-          if ($LASTEXITCODE -ne 0) { throw 'Startup proof failed.' }
-          [xml]$trx = Get-Content artifacts/v3d-tls/startup.trx -Raw
-          $cases = @($trx.SelectNodes("//*[local-name()='UnitTestResult']"))
-          if ($cases.Count -ne 8 -or @($cases | Where-Object outcome -ne 'Passed').Count -ne 0) { throw 'Incomplete proof evidence.' }
-          @{sourceCommit=$env:GITHUB_SHA; cases=8; passed=8; installedService='NOT_RUN'; scope='Deterministic loopback-only startup readiness proof, not yet integrated into candidate probes'} | ConvertTo-Json | Set-Content artifacts/v3d-tls/summary.json
+          $env:AUTOVPN_MIHOMO_PATH = (Resolve-Path -LiteralPath $core).Path
+          $env:R5_CORE_PATH = $env:AUTOVPN_MIHOMO_PATH; $env:R5_CORE_HASH = $hash
+          $env:R6_CORE_PATH = $env:AUTOVPN_MIHOMO_PATH; $env:R6_CORE_HASH = $hash
+          $env:AUTOVPN_TLS_DIAGNOSTICS = '1'
+          $allowedSkips = @()
+          if ($IsWindows) {
+            $allowedSkips = @('AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess', 'AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap', 'AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess')
+          }
+          $runs = @()
+          for ($i = 1; $i -le 12; $i++) {
+            $dir = "artifacts/v3d-tls/run-$i"
+            New-Item -ItemType Directory $dir -Force | Out-Null
+            dotnet test tests/AutoVpn.UnitTests/AutoVpn.UnitTests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~AutoVpn.UnitTests' --logger 'trx;LogFileName=results.trx' --results-directory $dir --blame-hang-timeout 90s --blame-hang-dump-type none *> "$dir/test.log"
+            $code = $LASTEXITCODE
+            if (!(Test-Path "$dir/results.trx")) { throw "Missing evidence for run $i." }
+            [xml]$trx = Get-Content "$dir/results.trx" -Raw
+            $results = @($trx.SelectNodes("//*[local-name()='UnitTestResult']"))
+            $failed = @($results | Where-Object outcome -eq 'Failed')
+            $passed = @($results | Where-Object outcome -eq 'Passed')
+            $skipped = @($results | Where-Object outcome -eq 'NotExecuted' | ForEach-Object testName)
+            $unknown = @($results | Where-Object { $_.outcome -notin @('Passed','Failed','NotExecuted') })
+            $unexpectedSkips = @($skipped | Where-Object { $_ -notin $allowedSkips })
+            $valid = $code -eq 0 -and $results.Count -eq 486 -and $passed.Count -eq (486 - $allowedSkips.Count) -and $skipped.Count -eq $allowedSkips.Count -and $unexpectedSkips.Count -eq 0 -and $unknown.Count -eq 0
+            $runs += [ordered]@{iteration=$i; exitCode=$code; valid=$valid; total=$results.Count; passed=$passed.Count; failed=$failed.Count; skipped=$skipped; failures=@($failed | ForEach-Object { @{name=$_.testName; message=$_.Output.ErrorInfo.Message} })}
+            Write-Host "Run $i : passed=$($passed.Count) failed=$($failed.Count) total=$($results.Count) exit=$code valid=$valid"
+            [ordered]@{sourceCommit=$env:GITHUB_SHA; sourceTree=(& git rev-parse 'HEAD^{tree}'); coreSha256=$hash; plannedRuns=12; completedRuns=$runs.Count; scope='Complete suite with unchanged concurrency and TLS policy, plus startup proof and safety negatives'; runs=$runs} | ConvertTo-Json -Depth 10 | Set-Content artifacts/v3d-tls/summary.json -Encoding utf8NoBOM
+          }
+          $bad = @($runs | Where-Object { !$_.valid })
+          if ($bad.Count -gt 0) {
+            $bad | ConvertTo-Json -Depth 10 | Write-Host
+            throw "$($bad.Count) of 12 full-suite runs failed; no retry-to-green."
+          }
+          exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: V3D-TLS-${{ github.sha }}-${{ matrix.os }}
-          path: artifacts/v3d-tls/
+          name: V3D-source-and-evidence-${{ github.sha }}-${{ matrix.os }}
+          path: |
+            artifacts/v3d-tls/
+            artifacts/v3d-source/
           if-no-files-found: error
           retention-days: 30

@@ -20,6 +20,7 @@ public sealed class LoopbackCoreReadiness : IAsyncDisposable
     private readonly Task _server;
     private int _responses;
     private Task? _disposeTask;
+    private bool _disposed;
     private readonly object _disposeGate = new();
 
     public LoopbackCoreReadiness()
@@ -34,12 +35,12 @@ public sealed class LoopbackCoreReadiness : IAsyncDisposable
 
     /// <summary>
     /// Adds one exact TCP loopback endpoint, never a general DIRECT fallback.
-    /// Call only on a generated non-TUN probe profile. The endpoint stays bound
-    /// until the owning core has stopped, preventing local port reuse.
+    /// Call only on a generated non-TUN probe profile.
     /// </summary>
     public string AddToProfile(string yaml)
     {
         ArgumentNullException.ThrowIfNull(yaml);
+        lock (_disposeGate) ObjectDisposedException.ThrowIf(_disposed, this);
         if (MihomoProfileGenerator.EnablesTun(yaml))
             throw new InvalidOperationException("Readiness is restricted to non-TUN probe profiles.");
         var newline = yaml.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
@@ -47,10 +48,14 @@ public sealed class LoopbackCoreReadiness : IAsyncDisposable
         var lines = yaml.Split(newline, StringSplitOptions.None);
         if (lines.Count(line => line == "rules:") != 1)
             throw new InvalidOperationException("Expected one generated rules section.");
-        var offset = yaml.StartsWith(marker, StringComparison.Ordinal) ? 0 :
-            yaml.IndexOf(newline + marker, StringComparison.Ordinal) + newline.Length;
-        // The CIDR condition does not resolve hostnames. The exception can only
-        // match this instance's already-bound 127.0.0.1 TCP endpoint.
+        var offset = 0;
+        if (!yaml.StartsWith(marker, StringComparison.Ordinal))
+        {
+            offset = yaml.IndexOf(newline + marker, StringComparison.Ordinal);
+            if (offset < 0) throw new InvalidOperationException("Rules section is incomplete.");
+            offset += newline.Length;
+        }
+        // This CIDR does not resolve hostnames and can match only our bound port.
         var rule = "  - AND,((NETWORK,tcp),(DST-PORT," + Port.ToString(CultureInfo.InvariantCulture) +
             "),(IP-CIDR,127.0.0.1/32,no-resolve)),DIRECT" + newline;
         return yaml.Insert(offset + marker.Length, rule);
@@ -64,20 +69,27 @@ public sealed class LoopbackCoreReadiness : IAsyncDisposable
         if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromMinutes(1))
             throw new ArgumentOutOfRangeException(nameof(timeout));
         cancellationToken.ThrowIfCancellationRequested();
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
+        CancellationTokenSource linked;
+        lock (_disposeGate)
+        {
+            if (_disposed) return false;
+            linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
+        }
+        using var deadline = linked;
         deadline.CancelAfter(timeout);
         try
         {
-            // Retries apply to our local startup endpoint only, not a candidate
-            // TLS failure. Every positive candidate still requires its own TLS.
-            for (var attempt = 0; attempt < 64; attempt++)
+            // Only our local startup exchange is retried. Neither a candidate
+            // TLS failure nor a certificate rejection is retried by this gate.
+            for (var attempt = 0; attempt < 256; attempt++)
             {
                 deadline.Token.ThrowIfCancellationRequested();
                 if (!ownsListener()) return false;
                 if (await ExchangeAsync(socksPort, deadline.Token).ConfigureAwait(false))
                 {
+                    var owned = ownsListener();
                     deadline.Token.ThrowIfCancellationRequested();
-                    return ownsListener();
+                    return owned;
                 }
                 await Task.Delay(20, deadline.Token).ConfigureAwait(false);
             }
@@ -146,19 +158,24 @@ public sealed class LoopbackCoreReadiness : IAsyncDisposable
                 await using var stream = client.GetStream();
                 var challenge = new byte[32];
                 await stream.ReadExactlyAsync(challenge, deadline.Token).ConfigureAwait(false);
-                await stream.WriteAsync(HMACSHA256.HashData(_key, challenge), deadline.Token).ConfigureAwait(false);
+                var proof = HMACSHA256.HashData(_key, challenge);
                 Interlocked.Increment(ref _responses);
+                await stream.WriteAsync(proof, deadline.Token).ConfigureAwait(false);
             }
             catch (Exception error) when (error is IOException or SocketException or OperationCanceledException)
             {
-                // A malformed local client does not terminate the owned accept loop.
+                // Malformed local clients do not terminate the owned accept loop.
             }
         }
     }
 
     public ValueTask DisposeAsync()
     {
-        lock (_disposeGate) return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+        lock (_disposeGate)
+        {
+            _disposed = true;
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+        }
     }
 
     private async Task DisposeCoreAsync()
