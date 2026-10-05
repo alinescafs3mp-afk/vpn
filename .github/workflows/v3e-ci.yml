@@ -1,9 +1,6 @@
 name: v3e-main-resource-validation
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['src/**', 'tests/**', 'config/**', 'scripts/test-v3e.ps1', '.github/workflows/v3e-ci.yml', 'Directory.Build.props', 'global.json', 'AutoVpn.slnx']
 permissions:
   contents: read
 jobs:
@@ -17,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: 15528a390d13fae280ae9d872435957085d3de84
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-dotnet@v4

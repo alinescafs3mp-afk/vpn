@@ -1,0 +1,86 @@
+name: v3f-output-and-installed-service
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    paths: ['src/**', 'tests/**', 'config/**', 'scripts/test-v3f.ps1', 'scripts/lab/service-smoke.ps1', 'Directory.Build.props', 'global.json', 'AutoVpn.slnx']
+permissions:
+  contents: read
+jobs:
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Retain exact source and verify unchanged trust boundaries
+        shell: python
+        run: |
+          import hashlib, json, pathlib, subprocess, zipfile
+          def git(*args): return subprocess.check_output(['git',*args])
+          base='15528a390d13fae280ae9d872435957085d3de84'
+          p='src/AutoVpn.Infrastructure/Probe/NonTunCoreProbeTransport.cs'
+          def tls(data): return data.split(b'public readonly record struct TlsProbeExchange',1)[1].split(b'public sealed class ProbeWorker',1)[0]
+          assert tls(git('show',base+':'+p)) == tls(git('show','HEAD:'+p))
+          for p in ['config/core-manifest.json','global.json','src/AutoVpn.Infrastructure/Core/MihomoProfileGenerator.cs']:
+            assert git('show',base+':'+p)==git('show','HEAD:'+p)
+          root=pathlib.Path('artifacts/v3f');root.mkdir(parents=True)
+          files={}
+          with zipfile.ZipFile(root/'AutoVPN-V3F-source.zip','w',zipfile.ZIP_DEFLATED) as z:
+            for entry in git('ls-tree','-rz','HEAD').split(b'\0'):
+              if not entry: continue
+              meta,name=entry.split(b'\t',1); mode,kind,oid=meta.decode().split()
+              assert kind=='blob' and mode in ('100644','100755')
+              data=git('cat-file','blob',oid);name=name.decode()
+              z.writestr('source/'+name,data)
+              files[name]={'sha256':hashlib.sha256(data).hexdigest(),'size':len(data),'gitBlob':oid}
+          (root/'source-manifest.json').write_text(json.dumps({'commit':git('rev-parse','HEAD').decode().strip(),'tree':git('rev-parse','HEAD^{tree}').decode().strip(),'tlsUnchanged':True,'files':files},indent=2))
+      - name: Six complete managed and native suites, every failure retained
+        shell: pwsh
+        run: ./scripts/test-v3f.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-V3F-${{ inputs.ref || github.sha }}-${{ matrix.os }}
+          path: artifacts/v3f/
+          if-no-files-found: error
+          retention-days: 90
+  installed-service:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Actual SCM lifecycle and standard-user authorization on a disposable runner
+        shell: pwsh
+        run: ./scripts/lab/service-smoke.ps1 -DisposableRunner
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-V3F-service-${{ inputs.ref || github.sha }}
+          path: |
+            artifacts/v3f-service/*.json
+            artifacts/v3f-service/*.log
+          if-no-files-found: error
+          retention-days: 90

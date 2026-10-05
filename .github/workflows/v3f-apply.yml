@@ -1,0 +1,41 @@
+name: v3f-exact-source-integration
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/v3f-apply.yml']
+permissions:
+  contents: read
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.apply.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Verify exact reviewed bytes and fast-forward main without another branch
+        id: apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          python scripts/v3f-prepare.py
+          git diff --check
+          git add src/AutoVpn.Infrastructure/Probe/ tests/AutoVpn.UnitTests/AstraV3FOutputTests.cs tests/AutoVpn.ServiceLab/ scripts/test-v3f.ps1 scripts/lab/service-smoke.ps1 Directory.Build.props docs/v3f-staging/
+          git -c user.name='AutoVPN development' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'feat(v3f): retain output outcomes and exact cleanup diagnostics; add disposable installed-service lab'
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = '${{ github.sha }}'
+          git push origin HEAD:refs/heads/main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  validate:
+    needs: integrate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/v3f-ci.yml
+    with:
+      ref: ${{ needs.integrate.outputs.sha }}
