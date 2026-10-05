@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using AutoVpn.Infrastructure.Probe;
 
@@ -21,6 +22,10 @@ public sealed class AstraV3DStartupReadinessTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await using var heldProvider = new HeldProvider();
         await using var readiness = new LoopbackCoreReadiness();
+        using var certificate = Certificate();
+        await using var tls = await TlsPeer.StartAsync(certificate, "HTTP/1.1 204 No Content\r\n\r\n");
+        var target = new Uri("https://127.0.0.1:" + tls.Port.ToString(CultureInfo.InvariantCulture) + "/generate_204");
+        var trust = new X509Certificate2Collection(certificate);
         var directory = Directory.CreateTempSubdirectory("autovpn-v3d-startup-");
         try
         {
@@ -28,10 +33,14 @@ public sealed class AstraV3DStartupReadinessTests
             reserved.Start();
             var socks = ((IPEndPoint)reserved.LocalEndpoint).Port;
             reserved.Stop();
+            // The controlled provider must use DIRECT explicitly. Without that,
+            // its own startup download follows MATCH,REJECT and never reaches us.
             var yaml = "mixed-port: 0\nsocks-port: " + socks.ToString(CultureInfo.InvariantCulture) +
                 "\nallow-lan: false\nbind-address: 127.0.0.1\nmode: rule\nlog-level: warning\nipv6: false\ndns:\n  enable: false\ntun:\n  enable: false\n" +
-                "rule-providers:\n  startup:\n    type: http\n    behavior: classical\n    url: 'http://127.0.0.1:" + heldProvider.Port.ToString(CultureInfo.InvariantCulture) +
-                "/held.yaml'\n    path: './held.yaml'\n    interval: 3600\nrules:\n  - RULE-SET,startup,REJECT\n  - MATCH,REJECT\n";
+                "rule-providers:\n  startup:\n    type: http\n    behavior: classical\n    proxy: DIRECT\n    url: 'http://127.0.0.1:" + heldProvider.Port.ToString(CultureInfo.InvariantCulture) +
+                "/held.yaml'\n    path: './held.yaml'\n    interval: 3600\nrules:\n" +
+                "  - AND,((NETWORK,tcp),(DST-PORT," + tls.Port.ToString(CultureInfo.InvariantCulture) +
+                "),(IP-CIDR,127.0.0.1/32,no-resolve)),DIRECT\n  - RULE-SET,startup,REJECT\n  - MATCH,REJECT\n";
             yaml = readiness.AddToProfile(yaml);
             var config = Path.Combine(directory.FullName, "config.yaml");
             await File.WriteAllTextAsync(config, yaml, deadline.Token);
@@ -44,13 +53,23 @@ public sealed class AstraV3DStartupReadinessTests
             var pid = int.Parse(worker.WorkerId.Split(':')[0], CultureInfo.InvariantCulture);
             bool Owns() => ProbeWorker.ProcessOwnsLoopbackPort(pid, socks);
             Assert.True(Owns());
-            // This is the old readiness predicate, proven true while core dispatch
-            // is still held by a local startup provider. No public destination exists.
+            // The legacy readiness predicate is true, but a valid TLS target
+            // still fails while the local provider holds the dispatch state.
+            var early = await Socks5Client.ExchangeAsync(new IPEndPoint(IPAddress.Loopback, socks), target,
+                TimeSpan.FromSeconds(2), trust, deadline.Token);
+            Assert.False(early.Authenticated);
+            Assert.Equal("TLS_REJECTED", early.Failure);
+            Assert.Equal(0, tls.Accepts);
             Assert.False(await readiness.WaitAsync(socks, Owns, TimeSpan.FromMilliseconds(250), deadline.Token));
             Assert.Equal(0, readiness.Responses);
             heldProvider.Release.TrySetResult();
             Assert.True(await readiness.WaitAsync(socks, Owns, TimeSpan.FromSeconds(5), deadline.Token), worker.OutputTail);
-            Assert.True(readiness.Responses > 0);
+            // Same core, same certificate and same target, after dispatch ready.
+            var live = await Socks5Client.ExchangeAsync(new IPEndPoint(IPAddress.Loopback, socks), target,
+                TimeSpan.FromSeconds(2), trust, deadline.Token);
+            Assert.True(live.Authenticated, live.Failure);
+            Assert.Null(live.Failure);
+            Assert.Equal(204, live.Status);
         }
         finally
         {
@@ -98,6 +117,17 @@ public sealed class AstraV3DStartupReadinessTests
         await using var ready = new LoopbackCoreReadiness();
         using var canceled = new CancellationTokenSource(); canceled.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ready.WaitAsync(12345, () => true, TimeSpan.FromSeconds(1), canceled.Token));
+    }
+
+    private static X509Certificate2 Certificate()
+    {
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest("CN=127.0.0.1", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var san = new SubjectAlternativeNameBuilder(); san.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(san.Build());
+        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+        return X509CertificateLoader.LoadPkcs12(generated.Export(X509ContentType.Pfx, "fixture"), "fixture", X509KeyStorageFlags.Exportable);
     }
 
     private sealed class HeldProvider : IAsyncDisposable
