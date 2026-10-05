@@ -10,7 +10,7 @@ namespace AutoVpn.Infrastructure.WindowsService;
 
 /// <summary>
 /// A single retained pipe instance prevents name-squatting between requests. Every client
-/// gets a two-second frame/write budget. Only authenticated read-only status is implemented.
+/// gets a two-second frame/write/close budget. Only authenticated read-only status is implemented.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class InstalledStatusServer : IAsyncDisposable
@@ -54,7 +54,7 @@ public sealed class InstalledStatusServer : IAsyncDisposable
                 budget.CancelAfter(InstalledServiceProtocol.TimeoutMs);
                 try
                 {
-                    await ServiceStatusExchange.HandleAsync(_pipe, () =>
+                    await ServiceStatusExchange.HandleConnectionAsync(_pipe, () =>
                     {
                         var peer = PipePeer.Inspect(_pipe, _ownerSid);
                         return peer.Accepted && peer.Verified;
@@ -64,7 +64,9 @@ public sealed class InstalledStatusServer : IAsyncDisposable
                 {
                     // Do not log untrusted bytes, request fields, paths, or exception text.
                 }
-                finally { if (_pipe.IsConnected) _pipe.Disconnect(); }
+                // EOF marks the pipe broken, so IsConnected may already be false.
+                // The retained server instance still needs an explicit disconnect before reuse.
+                finally { _pipe.Disconnect(); }
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { break; }
             catch (ObjectDisposedException) when (_stop.IsCancellationRequested) { break; }

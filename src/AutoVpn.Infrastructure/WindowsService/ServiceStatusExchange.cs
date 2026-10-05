@@ -5,6 +5,28 @@ namespace AutoVpn.Infrastructure.WindowsService;
 /// <summary>One bounded, read-only exchange. Malformed client input does not terminate the listener.</summary>
 public static class ServiceStatusExchange
 {
+    /// <summary>
+    /// Retain the reply until the peer closes, using the caller's existing deadline.
+    /// PipeStream.Flush is not an acknowledgement; DisconnectNamedPipe drops unread bytes.
+    /// Do not use unbounded WaitForPipeDrain or extend the frame budget for slow clients.
+    /// </summary>
+    public static async Task<bool> HandleConnectionAsync(Stream stream, Func<bool> isAuthorized,
+        string instanceId, int processId, Func<long> uptimeSeconds, CancellationToken token)
+    {
+        if (!await HandleAsync(stream, isAuthorized, instanceId, processId, uptimeSeconds, token).ConfigureAwait(false))
+            return false;
+        try
+        {
+            // Exactly one request per connection. The client disposes its pipe after reading.
+            // Extra bytes are refused; idle peers remain bounded by the original token.
+            return await stream.ReadAsync(new byte[1], token).ConfigureAwait(false) == 0;
+        }
+        catch (Exception ex) when (ex is IOException or OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
     public static async Task<bool> HandleAsync(Stream stream, Func<bool> isAuthorized,
         string instanceId, int processId, Func<long> uptimeSeconds, CancellationToken token)
     {
