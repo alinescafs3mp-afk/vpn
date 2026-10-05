@@ -57,18 +57,13 @@ for index, item in enumerate(refs):
         changes.append(entry)
     row = dict(item, ancestorOfBase=ancestor, mergeBase=common, changes=changes)
     records.append(row)
-    print(json.dumps({'branch': name, 'sha': sha, 'ancestorOfBase': ancestor, 'mergeBase': common,
-                      'changes': [{'path': c['path'], 'disposition': c['disposition']} for c in changes]}, ensure_ascii=False))
+    review = [c for c in changes if c['disposition'].endswith('_REVIEW')]
+    print(json.dumps({'branch': name, 'sha': sha, 'ancestorOfBase': ancestor,
+                      'review': [{'path': c['path'], 'disposition': c['disposition'],
+                                  'sha': c['branch']['sha'] if c['branch'] else None} for c in review]}, ensure_ascii=False))
     if not ancestor and name != 'main':
         patch = git('diff', '--binary', '--full-index', common, sha)
         (ROOT / f'{index:02d}-branch-change.patch').write_bytes(patch)
-        # Reviewable text for small unique code changes; complete diff remains in the artifact.
-        print('DIFF_BEGIN ' + name)
-        printable = patch.decode('utf-8', errors='replace')
-        print(printable[:45000])
-        if len(printable) > 45000:
-            print('DIFF_TRUNCATED_SEE_ARTIFACT')
-        print('DIFF_END ' + name)
 
 manifest = {'schemaVersion': 1, 'baseMain': BASE, 'auditCommit': text('rev-parse', 'HEAD'), 'branches': records}
 (ROOT / 'inventory.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
