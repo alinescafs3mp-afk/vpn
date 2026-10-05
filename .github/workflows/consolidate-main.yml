@@ -1,0 +1,43 @@
+name: owner-requested-main-only-consolidation
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/consolidate-main.yml', 'scripts/consolidate-main.py']
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: one-shot-main-consolidation
+  cancel-in-progress: false
+jobs:
+  consolidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37353615748
+          name: AutoVPN-branch-backup-1bc1426da022f880998085b90bd506f3b71c386b
+          path: artifacts/branch-backup
+      - name: Preserve reviewed work, retain ancestry, then conditionally delete old branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_AUTHOR_NAME: AutoVPN maintenance
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: AutoVPN maintenance
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: python scripts/consolidate-main.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-main-consolidation-${{ github.sha }}
+          path: |
+            artifacts/consolidation-result.json
+            docs/branch-archive/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
