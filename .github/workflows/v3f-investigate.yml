@@ -1,0 +1,58 @@
+name: v3f-output-investigation
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/v3f-investigate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  investigate:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 15528a390d13fae280ae9d872435957085d3de84
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Instrument only sanitized cleanup state in the frozen V3E source
+        shell: python
+        run: |
+          import pathlib, subprocess
+          p=pathlib.Path('src/AutoVpn.Infrastructure/Probe/NonTunCoreProbeTransport.cs')
+          text=p.read_text(encoding='utf-8')
+          old='''            Diagnostic = phase + "_FAILED";
+                      // Never dispose the process handle or delete its files after an
+                      // unconfirmed stop. A caller must not publish probe success here.
+                      throw new ProbeCleanupException();'''
+          new='''            ThreadPool.GetAvailableThreads(out var available, out var io);
+                      Diagnostic = phase + "_FAILED:" + ex.GetType().Name + ":" + ex.HResult.ToString("X8")
+                          + ":OUT=" + _stdout.Status + ":ERR=" + _stderr.Status
+                          + ":OUTFAULT=" + (_stdout.Exception?.GetBaseException().GetType().Name ?? "none")
+                          + ":ERRFAULT=" + (_stderr.Exception?.GetBaseException().GetType().Name ?? "none")
+                          + ":THREADS=" + ThreadPool.ThreadCount + ":PENDING=" + ThreadPool.PendingWorkItemCount
+                          + ":AVAILABLE=" + available;
+                      throw new ProbeCleanupException(Diagnostic);'''
+          assert text.count(old)==1, 'Diagnostic insertion context drift'
+          p.write_text(text.replace(old,new),encoding='utf-8')
+          p=pathlib.Path('src/AutoVpn.Infrastructure/Probe/CorePortLease.cs')
+          text=p.read_text(encoding='utf-8')
+          old='    public ProbeCleanupException() : base("CORE_CLEANUP_REQUIRED") { }'
+          assert text.count(old)==1
+          p.write_text(text.replace(old,old+'\n    public ProbeCleanupException(string diagnostic) : base("CORE_CLEANUP_REQUIRED:" + diagnostic) { }'),encoding='utf-8')
+          root=pathlib.Path('artifacts/v3e'); root.mkdir(parents=True,exist_ok=True)
+          (root/'diagnostic-only.patch').write_bytes(subprocess.check_output(['git','diff','--binary','--full-index']))
+          print('Frozen baseline 15528a3; diagnostic-only patch retained. No runtime timeout or scheduling changes.')
+      - name: Run all six full suites and retain failures
+        shell: pwsh
+        run: ./scripts/test-v3e.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-V3F-baseline-output-diagnostics
+          path: artifacts/v3e/
+          retention-days: 90
+          if-no-files-found: error
