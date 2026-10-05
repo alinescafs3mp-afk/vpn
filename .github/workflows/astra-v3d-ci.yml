@@ -1,0 +1,40 @@
+name: astra-v3d-validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [implementation/astra-v3d]
+permissions:
+  contents: read
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Full regression and bounded TLS investigation on loopback only
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory artifacts/v3d-validation -Force | Out-Null
+          $core = ./scripts/fetch-core.ps1
+          try { ./scripts/test.ps1 -Native -CorePath $core *>&1 | Tee-Object artifacts/v3d-validation/test.log }
+          finally {
+            if (Test-Path artifacts/test-results/results.trx) {
+              Copy-Item artifacts/test-results/results.trx artifacts/v3d-validation/native.trx
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: V3D-evidence-${{ github.sha }}-${{ matrix.os }}
+          path: artifacts/v3d-validation/
+          if-no-files-found: error
+          retention-days: 30
