@@ -1,0 +1,25 @@
+name: branch-inventory
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/branch-inventory.yml', 'scripts/branch-inventory.py']
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare every branch and create recovery bundle
+        run: python scripts/branch-inventory.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoVPN-branch-backup-${{ github.sha }}
+          path: artifacts/branch-inventory/
+          if-no-files-found: error
+          retention-days: 90
