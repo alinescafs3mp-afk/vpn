@@ -58,11 +58,34 @@ are not trimmed or Unicode-normalized. A bounded ALPN snapshot prevents a caller
 from modifying the request after admission. Public JSON and ToString expose only
 the digest, with no credential snapshot or inner exception text.
 
-## Validation plan and evidence state
+## Recorded validation
 
-Initial candidate state: **VALIDATION_PENDING**. No local SDK or PowerShell is
-available on the implementation host; actual builds and native execution must be
-established by the retained GitHub Actions artifacts before acceptance.
+Code commit: `959174545e044c98796f1bcf14a03ff4a8bac42a`.
+Code tree: `cd0b047de7093e5689fad9b8890afa55a284d252`.
+Corrected-source run: `37489076324`, attempt 1.
+
+**New-entry component checks passed; the full Windows regression is not accepted.**
+No local SDK or PowerShell is available on the implementation host. Both retained
+CI solution builds completed with zero warnings and zero errors. All twelve raw
+TRX files were independently recounted, including unique case identities and exact
+skip names; all 357 source blobs in each regression artifact match the reviewed
+source snapshot by size, SHA-256 and Git blob hash. Full records, artifact hashes,
+the first failed candidate and outstanding findings are in
+`docs/evidence/NODE_RUNTIME_ENTRY_VALIDATION.json`.
+
+| Corrected source, six full runs | Passed | Failed | Platform skips |
+|---|---:|---:|---:|
+| Linux | 5106 | 0 | 90 |
+| Windows Server 2025 | 5111 | 1 | 84 |
+
+All 125 new cases were executed six times on Linux: 750 passes, no failures.
+The Windows suite executed 116 new cases six times: 696 passes, no failures,
+54 explicit skips. Its six native-entry cases run separately under a real
+standard-user primary token; the other three new skips are Linux DNS lifecycle
+fixtures. The separate Windows lab passed all six protocols again on this exact
+corrected source, with natural exit, no forced job termination and complete owned
+process, directory, profile and account removal. Installed status-service checks
+also passed. These results do not turn the failing full regression into a pass.
 
 First candidate `483d758df39915c82f0c0709bef060e6981d0aad`, run `37488283718`,
 passed all six Windows full suites and the six-protocol real standard-user lab.
@@ -71,10 +94,12 @@ Linux iteration 6 failed `RuntimeStartupDeadlineIncludesDnsPreparation`: expecte
 had the same duration and their timer callbacks could complete in either order.
 The correction maps resolver expiry of the full startup budget to the startup
 timeout code, preserving cancellation precedence, time limits and the original
-test assertion. This first run remains failed evidence; validation of the corrected
-source is pending a new commit/run, not a rerun that overwrites the first outcome.
+test assertion. This first run remains failed evidence. The same assertion also
+failed in the first V2/V3 Linux workflow runs. It passed in all six corrected-source
+Linux full suites and in the corrected V2/V3 Linux jobs; no old run was rerun or
+reclassified as successful.
 
-Expected full-suite discovery: 866 unique cases, comprising the previous 741,
+Verified full-suite discovery: 866 unique cases, comprising the previous 741,
 110 selection-validation cases and 15 owned-entry cases. The exact count, identities
 and platform skip names are checked for all six planned runs on each platform.
 No previous failed run is replaced by retrying a suite until green.
@@ -95,6 +120,32 @@ then removal of owned files, profile and account. An impersonated thread is not
 accepted as evidence of an unprivileged native process. Production runtime now
 explicitly rejects impersonation as well as elevated/service/session-zero use.
 
+## Outstanding Windows regressions
+
+1. Main run `37489076324`, Windows iteration 2: the existing controlled VLESS/gRPC
+   probe failed with `CORE_PORT_UNAVAILABLE`. Its client could not reserve a local
+   port before native client startup. Thirty-two candidates were exhausted; the
+   port role, UDP/TCP stage and specific Windows error were not retained, so the
+   cause is unresolved. This is not evidence of remote TLS failure or exhaustion
+   of the entire local port range. Five other full Windows runs passed.
+2. V3 run `37489073224`, job `112356688512`: the existing idle pipe-read test did
+   not finish within its unchanged one-second wait after cancellation. It received
+   `TimeoutException` instead of the expected `OperationCanceledException`.
+   The observation does not establish a permanent hang.
+3. V2 run `37489073029`, job `112356686311`: an existing VLESS investigation failed
+   with `OUTPUT_DRAIN_FAILED`, confirmed process exit, uncompleted stdout/stderr,
+   and resources not yet released. The retained report includes elapsed 1415 ms,
+   timeout HResult `80131505`, 13 pool threads and 8 pending work items. These counts
+   do not prove starvation or one common cause. Cleanup had not reached directory
+   removal, so this is not an observed directory-deletion failure.
+
+These failures were retained. Neither assertions nor deadlines, port-attempt
+counts, TLS policy or scheduling were weakened to obtain a green run. The earlier
+port allocator, output-reader implementation and controlled-peer fixtures are
+unchanged by this increment; that alone does not establish causal independence
+from changes to the overall test workload. Further correction requires focused
+evidence, not another identical full run hoping for a different outcome.
+
 ## Boundaries and next work
 
 The broker's existing Connect path still requests TUN and is not redirected into
@@ -108,7 +159,9 @@ The earlier intermittent VLESS cleanup failure from run 37468579830 remains
 historical unresolved evidence. Preserved cleanup diagnostics can identify a
 future recurrence; a green later suite is not its causal explanation.
 
-Next: use the validated node/runtime contract when reconciling the explicit
-selected-node service handoff, retaining the installed protection and recovery
-gates before enabling SYSTEM or TUN. Do not replay the previously declined V3H
-publication through a different tool or workflow.
+Next: investigate bounded Windows pipe cancellation and output-drain completion,
+and retain specific local port reservation diagnostics without changing the attempt
+or time budgets. Once that gate is reliable, use the validated node/runtime contract
+when reconciling the selected-node service handoff, retaining installed protection
+and recovery gates before enabling SYSTEM or TUN. Do not replay the previously
+declined V3H publication through a different tool or workflow.

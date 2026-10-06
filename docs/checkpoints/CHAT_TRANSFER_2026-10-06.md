@@ -162,16 +162,40 @@ evidence for that final experiment were recoverable. It is absent from published
 main and is not the saved V3H package. Treat it as unfinished work, not preserved
 implementation or accepted six-protocol runtime coverage.
 
-## Ordered continuation
+## Second continuation increment: owned node runtime entry
 
-1. Inspect the completed diagnostics regression and retain every result. A new
-   native failure must be diagnosed by its actual cleanup report, without raising
-   deadlines, retrying TLS to green or weakening a negative assertion.
-2. Complete the pending runtime-entry work from a verified current source. Recover
-   the prior transient patch if it becomes available; otherwise reimplement the
-   defined node-to-runtime contract and validate Unicode/UTF-16 serialization,
-   endpoint binding and real non-TUN core ownership. Do not claim the lost code
-   was already merged or run the V3H placeholder-port draft.
+The missing transient experiment was not recovered. Its defined scope was
+implemented independently from verified current main in `483d758df39915c82f0c0709bef060e6981d0aad`,
+then corrected in `959174545e044c98796f1bcf14a03ff4a8bac42a` without integrating V3H.
+Details: `docs/checkpoints/NODE_RUNTIME_ENTRY.md` and
+`docs/evidence/NODE_RUNTIME_ENTRY_VALIDATION.json`.
+
+The new entry validates an immutable six-protocol selection and UTF-16 before
+canonicalization, then owns DNS, local ports, trusted YAML, credentials and native
+startup through the existing supervisor. Corrected-source Linux runs passed all
+866 cases six times except the 15 expected skips per run. The 125 new cases had
+no failures: 750 executions on Linux, 696 on Windows plus 54 explicit Windows
+skips. A separate real standard-user Windows Server process passed native startup,
+controller authentication, string preservation and complete cleanup for all six
+protocols. Installed status-service acceptance passed separately.
+
+The full Windows gate remains **FAILED / NOT ACCEPTED**. Main run `37489076324`
+has one existing VLESS/gRPC probe port-reservation failure; the V2/V3 Windows runs
+also exposed output-drain and cancellation-deadline failures. The new diagnostics
+confirm process exit before the output-drain timeout in the observed VLESS case;
+they do not prove its root cause or a shared cause with the other failures.
+All outcomes, including the first candidate's corrected DNS reason-code race,
+were retained. Further identical reruns are not a substitute for investigation.
+
+## Ordered continuation after the second increment
+
+1. Investigate the recorded Windows pipe-cancellation and output-drain failures
+   with bounded controlled evidence. Keep current deadlines, negative assertions
+   and every failed outcome; do not retry remote TLS to obtain a pass.
+2. Add precise local port-reservation diagnostics for the recorded Windows
+   `CORE_PORT_UNAVAILABLE`, without assuming its missing cause or increasing
+   attempts. The new node-runtime entry is implemented; do not redo the lost
+   experiment or execute the V3H placeholder-port draft.
 3. Reconcile and accept the preserved selected-node handoff separately, with real
    Windows service/WPF evidence and independent service-side validation.
 4. Connect accepted handoff to service-owned core lifecycle and cancellation.
