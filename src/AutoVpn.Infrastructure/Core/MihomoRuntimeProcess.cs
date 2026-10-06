@@ -117,7 +117,10 @@ public sealed class MihomoRuntimeProcess : IOwnedNodeCoreProcess
             return new(false, "PRIVILEGED_RUNTIME_NOT_VALIDATED");
         var endpoint = await _endpoints.ResolveAsync(selection.Node, _startupTimeout, token).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
-        if (!endpoint.Succeeded) return new(false, endpoint.ReasonCode);
+        // The resolver receives the entire startup budget. Expiry of that budget is
+        // therefore a startup timeout even if its timer callback runs before the owner's.
+        if (!endpoint.Succeeded) return new(false, endpoint.ReasonCode == "ENDPOINT_DNS_TIMEOUT"
+            ? "CORE_START_TIMEOUT" : endpoint.ReasonCode);
         try
         {
             using var controller = CorePortLease.Reserve();

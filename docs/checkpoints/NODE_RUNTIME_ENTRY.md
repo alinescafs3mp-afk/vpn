@@ -64,6 +64,16 @@ Initial candidate state: **VALIDATION_PENDING**. No local SDK or PowerShell is
 available on the implementation host; actual builds and native execution must be
 established by the retained GitHub Actions artifacts before acceptance.
 
+First candidate `483d758df39915c82f0c0709bef060e6981d0aad`, run `37488283718`,
+passed all six Windows full suites and the six-protocol real standard-user lab.
+Linux iteration 6 failed `RuntimeStartupDeadlineIncludesDnsPreparation`: expected
+`CORE_START_TIMEOUT`, observed `ENDPOINT_DNS_TIMEOUT`. The resolver and owner both
+had the same duration and their timer callbacks could complete in either order.
+The correction maps resolver expiry of the full startup budget to the startup
+timeout code, preserving cancellation precedence, time limits and the original
+test assertion. This first run remains failed evidence; validation of the corrected
+source is pending a new commit/run, not a rerun that overwrites the first outcome.
+
 Expected full-suite discovery: 866 unique cases, comprising the previous 741,
 110 selection-validation cases and 15 owned-entry cases. The exact count, identities
 and platform skip names are checked for all six planned runs on each platform.
