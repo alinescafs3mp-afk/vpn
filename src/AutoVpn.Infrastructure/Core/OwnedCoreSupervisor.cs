@@ -13,6 +13,12 @@ public interface IOwnedCoreProcess
     Task StopAsync(CancellationToken cancellationToken);
 }
 
+/// <summary>A validated node, with runtime-owned preparation and private local endpoints.</summary>
+public interface IOwnedNodeCoreProcess : IOwnedCoreProcess
+{
+    Task<CoreStartResult> StartNodeAsync(RuntimeNodeSelection selection, CancellationToken cancellationToken);
+}
+
 public interface ICoreLiveness
 {
     bool IsRunning(long generation, string operationId);
@@ -62,16 +68,37 @@ public sealed class OwnedCoreSupervisor : ICoreController, ICoreLiveness, IAsync
                 entry.OperationId == operationId && !entry.StopRequested && entry.Process.IsRunning;
     }
 
-    public async Task<CoreStartResult> StartAsync(string yaml, long generation, string operationId,
+    public Task<CoreStartResult> StartAsync(string yaml, long generation, string operationId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(yaml);
+        if (Encoding.UTF8.GetByteCount(yaml) > 512 * 1024)
+            return Task.FromResult(new CoreStartResult(false, "CORE_PROFILE_TOO_LARGE"));
+        var digest = "profile:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(yaml)));
+        return AdmitAsync(digest, (process, token) => process.StartAsync(yaml, token),
+            generation, operationId, cancellationToken);
+    }
+
+    public Task<CoreStartResult> StartNodeAsync(RuntimeNodeSelection selection, long generation, string operationId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        // Fingerprint the immutable request, before DNS/ports/random secrets. Duplicate waiters
+        // join one preparation operation; resolved addresses never replace catalogue identity.
+        return AdmitAsync("node-v1:" + selection.Digest, (process, token) => process is IOwnedNodeCoreProcess typed
+                ? typed.StartNodeAsync(selection, token)
+                : Task.FromResult(new CoreStartResult(false, "CORE_NODE_RUNTIME_UNSUPPORTED")),
+            generation, operationId, cancellationToken);
+    }
+
+    private async Task<CoreStartResult> AdmitAsync(string digest,
+        Func<IOwnedCoreProcess, CancellationToken, Task<CoreStartResult>> start,
+        long generation, string operationId, CancellationToken cancellationToken)
+    {
         if (generation <= 0 || string.IsNullOrWhiteSpace(operationId) || operationId.Length > 128 ||
             operationId.Any(ch => !char.IsAsciiLetterOrDigit(ch) && ch is not '-' and not '_'))
             return new(false, "CORE_OWNER_INVALID");
-        if (Encoding.UTF8.GetByteCount(yaml) > 512 * 1024) return new(false, "CORE_PROFILE_TOO_LARGE");
         cancellationToken.ThrowIfCancellationRequested();
-        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(yaml)));
         Task<CoreStartResult> work;
         lock (_gate)
         {
@@ -102,7 +129,7 @@ public sealed class OwnedCoreSupervisor : ICoreController, ICoreLiveness, IAsync
                     CancellationTokenSource.CreateLinkedTokenSource(cancellationToken));
                 _entry = entry;
                 // Publish ownership and the task before the backend can start or call back.
-                entry.StartTask = Task.Run(() => StartOwnedAsync(entry, yaml), CancellationToken.None);
+                entry.StartTask = Task.Run(() => StartOwnedAsync(entry, start), CancellationToken.None);
                 work = entry.StartTask;
             }
         }
@@ -142,13 +169,14 @@ public sealed class OwnedCoreSupervisor : ICoreController, ICoreLiveness, IAsync
         return work is null ? Task.CompletedTask : work.WaitAsync(cancellationToken);
     }
 
-    private async Task<CoreStartResult> StartOwnedAsync(Entry entry, string yaml)
+    private async Task<CoreStartResult> StartOwnedAsync(Entry entry,
+        Func<IOwnedCoreProcess, CancellationToken, Task<CoreStartResult>> start)
     {
         CoreStartResult result;
         try
         {
             entry.Cancellation.Token.ThrowIfCancellationRequested();
-            result = await entry.Process.StartAsync(yaml, entry.Cancellation.Token).ConfigureAwait(false);
+            result = await start(entry.Process, entry.Cancellation.Token).ConfigureAwait(false);
             if (entry.Cancellation.IsCancellationRequested) result = new(false, ReasonCodes.Canceled);
             else if (result.Started && !entry.Process.IsRunning) result = new(false, "CORE_EXITED_DURING_START");
         }

@@ -9,7 +9,7 @@ on:
         default: ''
   push:
     branches: [main]
-    paths: ['src/**', 'tests/**', 'config/**', 'scripts/test-v3f.ps1', 'scripts/lab/service-smoke.ps1', 'Directory.Build.props', 'global.json', 'AutoVpn.slnx']
+    paths: ['src/**', 'tests/**', 'config/**', 'scripts/test-v3f.ps1', 'scripts/lab/service-smoke.ps1', 'scripts/lab/node-runtime-smoke.ps1', '.github/workflows/v3f-ci.yml', 'Directory.Build.props', 'global.json', 'AutoVpn.slnx']
 permissions:
   contents: read
 jobs:
@@ -59,6 +59,29 @@ jobs:
         with:
           name: AutoVPN-V3F-${{ inputs.ref || github.sha }}-${{ matrix.os }}
           path: artifacts/v3f/
+          if-no-files-found: error
+          retention-days: 90
+  node-runtime-standard-user:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Six native non-TUN starts under an actual standard-user process token
+        shell: pwsh
+        run: ./scripts/lab/node-runtime-smoke.ps1 -DisposableRunner
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AutoVPN-V3F-node-runtime-${{ inputs.ref || github.sha }}-windows-standard-user
+          path: |
+            artifacts/v3f-node-runtime/*.json
+            artifacts/v3f-node-runtime/*.log
           if-no-files-found: error
           retention-days: 90
   installed-service:

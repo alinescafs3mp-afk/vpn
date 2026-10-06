@@ -20,11 +20,12 @@ namespace AutoVpn.Infrastructure.Core;
 /// TUN and elevated execution stay refused until the installed protection/recovery
 /// path exists. No environment variable or IPC flag can bypass this boundary.
 /// </summary>
-public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
+public sealed class MihomoRuntimeProcess : IOwnedNodeCoreProcess
 {
     private readonly string? _binaryPath;
     private readonly string? _expectedHash;
     private readonly TimeSpan _startupTimeout;
+    private readonly ProxyEndpointResolver _endpoints;
     private readonly object _lifecycleGate = new();
     private CancellationTokenSource? _startCancellation;
     private Task<CoreStartResult>? _startTask;
@@ -36,14 +37,20 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
     private DirectoryInfo? _directory;
     private Task? _stdout;
     private Task? _stderr;
+    private RuntimeProfileContract? _profile;
     private bool _started;
     private int _stopped;
 
     public MihomoRuntimeProcess(string? binaryPath, string? expectedSha256, TimeSpan? startupTimeout = null)
+        : this(binaryPath, expectedSha256, startupTimeout, ProxyEndpointResolver.System) { }
+
+    internal MihomoRuntimeProcess(string? binaryPath, string? expectedSha256, TimeSpan? startupTimeout,
+        ProxyEndpointResolver endpoints)
     {
         _binaryPath = binaryPath;
         _expectedHash = expectedSha256;
         _startupTimeout = startupTimeout ?? TimeSpan.FromSeconds(15);
+        _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
         if (_startupTimeout <= TimeSpan.Zero || _startupTimeout > TimeSpan.FromSeconds(30))
             throw new ArgumentOutOfRangeException(nameof(startupTimeout));
     }
@@ -62,6 +69,18 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
     public Task<CoreStartResult> StartAsync(string yaml, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(yaml);
+        return AdmitStartAsync(token => StartCoreAsync(yaml, null, null, token), cancellationToken);
+    }
+
+    public Task<CoreStartResult> StartNodeAsync(RuntimeNodeSelection selection, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        return AdmitStartAsync(token => PrepareNodeAsync(selection, token), cancellationToken);
+    }
+
+    private Task<CoreStartResult> AdmitStartAsync(Func<CancellationToken, Task<CoreStartResult>> start,
+        CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_lifecycleGate)
         {
@@ -71,12 +90,48 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
             var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _startCancellation = cancellation;
             // Publish the task under the same gate as Stop. Backend work never runs under this gate.
-            _startTask = Task.Run(() => StartCoreAsync(yaml, cancellation.Token), CancellationToken.None);
+            _startTask = Task.Run(() => StartWithDeadlineAsync(start, cancellation.Token), CancellationToken.None);
             return _startTask;
         }
     }
 
-    private async Task<CoreStartResult> StartCoreAsync(string yaml, CancellationToken cancellationToken)
+    private async Task<CoreStartResult> StartWithDeadlineAsync(Func<CancellationToken, Task<CoreStartResult>> start,
+        CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_startupTimeout);
+        try
+        {
+            var result = await start(deadline.Token).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return deadline.IsCancellationRequested ? new(false, "CORE_START_TIMEOUT") : result;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        { return new(false, "CORE_START_TIMEOUT"); }
+    }
+
+    private async Task<CoreStartResult> PrepareNodeAsync(RuntimeNodeSelection selection, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (OperatingSystem.IsWindows() && IsPrivilegedWindows())
+            return new(false, "PRIVILEGED_RUNTIME_NOT_VALIDATED");
+        var endpoint = await _endpoints.ResolveAsync(selection.Node, _startupTimeout, token).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        if (!endpoint.Succeeded) return new(false, endpoint.ReasonCode);
+        try
+        {
+            using var controller = CorePortLease.Reserve();
+            using var socks = CorePortLease.Reserve();
+            token.ThrowIfCancellationRequested();
+            var yaml = RuntimeNodeProfile.Build(selection, endpoint.ExecutionNode!, controller.Port, socks.Port,
+                Convert.ToHexString(RandomNumberGenerator.GetBytes(32)));
+            return await StartCoreAsync(yaml, controller, socks, token).ConfigureAwait(false);
+        }
+        catch (CorePortReservationException) { return new(false, "CORE_PORT_UNAVAILABLE"); }
+    }
+
+    private async Task<CoreStartResult> StartCoreAsync(string yaml, CorePortLease? controller,
+        CorePortLease? socks, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         RuntimeProfileContract profile;
@@ -86,6 +141,7 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
             return new(false, ex.Message == "WINDOWS_TUN_NOT_VALIDATED"
                 ? UnavailableNetworkGuard.PlatformReason() : "CORE_PROFILE_INVALID");
         }
+        _profile = profile;
         if (OperatingSystem.IsWindows() && IsPrivilegedWindows())
             return new(false, "PRIVILEGED_RUNTIME_NOT_VALIDATED");
         if (string.IsNullOrWhiteSpace(_binaryPath) || !File.Exists(_binaryPath)) return new(false, "CORE_MISSING");
@@ -98,7 +154,7 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
         _directory = CreatePrivateDirectory();
         var config = Path.Combine(_directory.FullName, "config.yaml");
         await using (var file = new FileStream(config, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
-        await using (var writer = new StreamWriter(file))
+        await using (var writer = new StreamWriter(file, new UTF8Encoding(false, true)))
         {
             await writer.WriteAsync(yaml.AsMemory(), cancellationToken).ConfigureAwait(false);
         }
@@ -113,32 +169,35 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
         start.Environment["HOME"] = _directory.FullName;
         _process = new Process { StartInfo = start };
         cancellationToken.ThrowIfCancellationRequested();
+        // Hold both transport namespaces through all preparation. The final handoff is not
+        // atomic: readiness still requires this exact child's ownership of both TCP ports.
+        controller?.Dispose();
+        socks?.Dispose();
         _started = _process.Start();
         if (!_started) return new(false, "CORE_START_FAILED");
         // Exactly one reader per fresh owned handle; no retained native text or imported credentials.
         _stdout = ReadOutputAsync(_process.StandardOutput);
         _stderr = ReadOutputAsync(_process.StandardError);
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(_startupTimeout);
-        try
+        while (IsRunning)
         {
-            while (IsRunning)
-            {
-                deadline.Token.ThrowIfCancellationRequested();
-                if (_stdout.IsFaulted || _stderr.IsFaulted) return new(false, "CORE_OUTPUT_READ_FAILED");
-                if (ProbeWorker.ProcessOwnsLoopbackPort(_process.Id, profile.SocksPort) &&
-                    ProbeWorker.ProcessOwnsLoopbackPort(_process.Id, profile.ControllerPort) &&
-                    await ControllerReadyAsync(profile, deadline.Token).ConfigureAwait(false) &&
-                    IsRunning && ProbeWorker.ProcessOwnsLoopbackPort(_process.Id, profile.ControllerPort) &&
-                    ProbeWorker.ProcessOwnsLoopbackPort(_process.Id, profile.SocksPort))
-                    return new(true, null);
-                await Task.Delay(50, deadline.Token).ConfigureAwait(false);
-            }
-            return new(false, "CORE_EXITED_DURING_START");
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_stdout.IsFaulted || _stderr.IsFaulted) return new(false, "CORE_OUTPUT_READ_FAILED");
+            if (ProbeWorker.ProcessOwnsLoopbackPort(_process.Id, profile.SocksPort) &&
+                ProbeWorker.ProcessOwnsLoopbackPort(_process.Id, profile.ControllerPort) &&
+                await ControllerReadyAsync(profile, cancellationToken).ConfigureAwait(false) &&
+                IsRunning && ProbeWorker.ProcessOwnsLoopbackPort(_process.Id, profile.ControllerPort) &&
+                ProbeWorker.ProcessOwnsLoopbackPort(_process.Id, profile.SocksPort))
+                return new(true, null);
+            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        { return new(false, "CORE_START_TIMEOUT"); }
+        return new(false, "CORE_EXITED_DURING_START");
     }
+
+    // Internal evidence surface for the native fixture. Never contains controller/proxy secrets
+    // and never permits a caller to select a PID, path, listener, or cleanup target.
+    internal RuntimeOwnedResources? OwnedResources => _started && _process is not null &&
+        _profile is not null && _directory is not null && Volatile.Read(ref _stopped) == 0
+        ? new(_process.Id, _profile.ControllerPort, _profile.SocksPort, _directory.FullName) : null;
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
@@ -200,6 +259,7 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
         if (_binary is not null) await _binary.DisposeAsync().ConfigureAwait(false);
         _process?.Dispose();
         _startCancellation?.Dispose();
+        _profile = null;
         Volatile.Write(ref _stopped, 1);
     }
 
@@ -258,6 +318,10 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
     [SupportedOSPlatform("windows")]
     private static bool IsPrivilegedWindows()
     {
+        // Process.Start uses the primary process token. A temporary thread identity is
+        // therefore not evidence that the native child will be unprivileged.
+        using var impersonation = WindowsIdentity.GetCurrent(ifImpersonating: true);
+        if (impersonation is not null) return true;
         using var identity = WindowsIdentity.GetCurrent();
         using var current = Process.GetCurrentProcess();
         var principal = new WindowsPrincipal(identity);

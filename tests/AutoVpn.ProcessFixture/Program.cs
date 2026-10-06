@@ -1,8 +1,9 @@
-// Finite synthetic owned child. No network or file input. Markers use only its test-owned working directory.
+// Finite synthetic owned child. Native node mode uses an explicitly provisioned pinned core.
 using System.Diagnostics;
 using AutoVpn.Infrastructure.Core;
 using AutoVpn.Infrastructure.Probe;
 if (args.Length != 1) return 2;
+if (args[0] == "node-runtime") return await RuntimeNodeSmoke.RunAsync();
 if (args[0] is "pool-legacy" or "pool-available" or "pool-runtime") return PoolControl(args[0]);
 if (args[0] == "sleep") { await Task.Delay(TimeSpan.FromSeconds(30)); return 0; }
 if (args[0] == "exit") return 0;
