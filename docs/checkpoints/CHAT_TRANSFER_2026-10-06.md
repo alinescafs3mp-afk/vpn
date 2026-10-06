@@ -236,9 +236,67 @@ Full evidence is `docs/evidence/WINDOWS_PIPE_COMPLETION_VALIDATION.json`.
 Previous failures remain recorded; no historical native port error was available,
 so its old root cause remains unknown despite no recurrence in these runs.
 
-Current next step: close the pre-existing exceptional drain-timeout lifetime of
+At that checkpoint, the next step was to close the exceptional drain-timeout lifetime of
 the validator and controlled-server helper, which can still dispose original
 readers after a failed join. This needs bounded forced-failure tests; normal-path
 success does not accept it. Then continue selected-node service handoff and owned
 runtime lifecycle, with recovery before privileged networking. Product/SYSTEM/TUN
 and Windows 11 gates remain unaccepted as described above.
+
+## Fourth continuation increment: exceptional validator/server ownership
+
+Implemented from `7c26fb139d03be3a012c42d1c07f5fcff897c952` in
+`9fcb46530849b568f90e8eefd21e46c3141e03db`; the test-only Linux correction is
+`6f819b12f04b056bd40244f68f2f3a4df5891e3a`, tree
+`4b75afaa6b713a553e34985342ab2d951e9f6378`. Assembly remains 0.1.7, V3H excluded.
+Details: `docs/checkpoints/VALIDATOR_CLEANUP_OWNERSHIP.md`; complete evidence:
+`docs/evidence/VALIDATOR_CLEANUP_OWNERSHIP_VALIDATION.json`.
+
+The validator and controlled TLS server retain the same process/readers/binary
+lease/private input on failed exit or output joins. Cleanup is explicit, bounded
+and retryable; late EOF does not run later cleanup stages or upgrade the original
+result. Terminal output faults/cancellation settle ownership without becoming EOF.
+Native exception metadata is bounded and excludes raw output, messages and paths.
+Controlled-server and its outer diagnostic wrapper preserve original exception
+objects together with cleanup capability. The existing real validator callsites
+make at most one explicit retry while preserving the initial failed result.
+
+Fifteen cases were added: ten managed ownership controls and five actual synthetic
+validator process cases. Every prior 892 case remains, giving 907 with 18 exact
+Linux skips and 14 Windows skips. Existing TLS/readiness/wrong-credential tests,
+SDK/core pins, wait budgets, port attempts and runner parallelism are unchanged.
+
+All 24 full TRX and four source archives (367 blobs each) were independently
+verified; both builds have zero warnings/errors. Initial main run `37505925500`
+passed Linux 5334/0/108 and Windows 5358/0/84 across six iterations. Its V2 Linux
+normal run still failed on ETXTBSY after cancellation; that outcome remains. The
+corrected Linux test verifies the same advisory lock with an initial negative
+exclusive read and a successful exclusive read after release. It adds no sleeps,
+retry loop, skipped assertion or production change.
+
+**Current Windows acceptance remains FAILED / OPEN.** Corrected main run
+`37506558777`: Linux 5334 passed / 0 failed / 108 skipped; Windows 5357 passed /
+1 failed / 84 skipped. Windows iteration 5 of the new cancellation case passes
+exit/EOF/cleanup/input assertions, then fails exclusive write to the copied
+apphost. The holder is unknown. Only 53/54 validator JSON records exist because
+that case fails before reporting. Both revisions retain all 42 old control JSONs;
+the original has all 54 new records. All six Windows retained-input/explicit-retry
+cases passed on both revisions with unchanged initial failure snapshots.
+
+Corrected V3 Windows normal additionally fails during fixture directory deletion
+in DisposeAsync. Its verified raw TRX has no output JSON, so successful body
+completion is not established; disposal may have replaced a preceding failure.
+That V3 Windows native/lifecycle/WPF/package work was skipped. V2/R1 suites and
+WPF pass; V3 Linux suites and lifecycle pass. Both main Windows labs pass on both
+heads: actual standard-user primary-token runtime for six protocols, separately
+the installed status-service with impersonated real-account pipe authorization.
+Win2022 was not triggered by the test/docs correction; its prior service pass is
+retained under `9fcb465`. Every run is attempt 1; none was rerun until green.
+
+Next bounded step: preserve body and fixture-disposal errors together; emit the
+cleanup snapshot before the existing binary assertion; observe the same owned
+handle and collect bounded read-only evidence about the actual Windows holder.
+Keep assertions/deadlines and unknown causes honest. Do not infer antivirus or
+kernel timing without positive evidence, bypass the failure with sleeps, or move
+to privileged networking before the remaining lifetime acceptance is addressed.
+Then continue selected-node handoff as a separate reviewed implementation.

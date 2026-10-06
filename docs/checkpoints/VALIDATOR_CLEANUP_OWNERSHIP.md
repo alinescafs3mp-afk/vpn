@@ -2,8 +2,13 @@
 
 Continuation from `7c26fb139d03be3a012c42d1c07f5fcff897c952` on 2026-10-06.
 Assembly version remains 0.1.7. This slice is independent of the unpublished V3H
-candidate. Exact-source CI results will be recorded after publication; the local
-implementation host has no .NET SDK. Static review is not a successful build.
+candidate. Implementation is published in `9fcb46530849b568f90e8eefd21e46c3141e03db`;
+the Linux test correction is `6f819b12f04b056bd40244f68f2f3a4df5891e3a`, tree
+`4b75afaa6b713a553e34985342ab2d951e9f6378`.
+**Implementation is present; Windows cancellation file-lifetime acceptance remains
+FAILED / OPEN.** Both revisions' complete CI outcomes are retained in
+`docs/evidence/VALIDATOR_CLEANUP_OWNERSHIP_VALIDATION.json`. The implementation
+host has no .NET SDK; the recorded builds and native tests ran in GitHub Actions.
 
 ## Problem and boundary
 
@@ -119,6 +124,76 @@ Linux writability as unmeasured.
 
 Reference implementation: [.NET 10.0.12 Unix file sharing](https://github.com/dotnet/runtime/blob/v10.0.12/src/libraries/System.Private.CoreLib/src/Microsoft/Win32/SafeHandles/SafeFileHandle.Unix.cs).
 Historical outcomes remain in the final evidence alongside the corrected source.
+
+## Exact-source validation and current Windows failures
+
+All four regression ZIPs were independently verified against API size/SHA-256,
+ZIP CRC and the exact inner source manifest. Each contains the reviewed 367 blobs
+with matching size, SHA-256 and Git blob identity. All 24 full-suite TRX contain
+907 unique `(testId, testName)` pairs and preserve every previous 892 identity.
+Builds report zero warnings and errors. Every workflow ran in attempt 1; none was
+rerun to replace an outcome.
+
+| Source / main run | Platform | Six complete iterations: passed / failed / skipped |
+|---|---|---:|
+| `9fcb465` / `37505925500` | Linux | 5334 / 0 / 108 |
+| `9fcb465` / `37505925500` | Windows Server 2025 | 5358 / 0 / 84 |
+| `6f819b1` / `37506558777` | Linux | 5334 / 0 / 108 |
+| `6f819b1` / `37506558777` | Windows Server 2025 | **5357 / 1 / 84** |
+
+The first main regression passed, but its separate V2 normal Linux failure above
+still means the initial revision was not entirely green. The corrected main
+Windows failure occurs in iteration 5, job `112416595405`, in
+`CancellationAfterActualChildReadyJoinsExitReadersAndInputCleanup`. Its stack
+reaches `AssertBinaryReleased`: after the source-ordered exit, EOF, cleanup report
+and absent-input assertions, the existing Windows `Write/None` probe throws an
+`IOException` because compatible access is unavailable. The holder is **unknown**;
+the report alone cannot distinguish an own handle, another process, or image
+lifetime. This failure is retained, not attributed to antivirus or scheduling.
+
+The failed case stops before `Evidence()`. Corrected raw TRX therefore contains
+**53 of 54** expected validator JSON records; the missing record is not invented.
+The initial revision contains all 54. All 42 previous cancellation-control JSONs
+are present and valid on each revision. All six forced Windows locked-input tests
+pass on both revisions: actual child exit, IO `0x80070020`, binary write/delete
+denial before explicit retry, release after retry, and unchanged initial failure.
+The corrected fifteen new cases total 89 passed / 1 failed on Windows and
+84 passed / 6 expected platform skips on Linux across six runs each.
+
+A separate corrected V3 Windows normal run (`37506558738`, job `112416594915`)
+records 864 passed / 1 failed / 18 skipped out of 883. Raw artifact `11432416205`
+was independently verified by API digest/size and CRC. The same cancellation case
+throws `UnauthorizedAccessException` in fixture directory deletion during
+`DisposeAsync`. Its stdout/stderr are empty. An earlier body failure may have been
+replaced by await-using disposal; a successful body or write probe is not proven.
+Its V3 Windows native, lifecycle, WPF and package stages did not run.
+
+The corrected V2 normal/native suites pass on both OSes; Windows TLS passes five
+six-case repetitions and WPF renders eight states with reopen/settings checks.
+V3 Linux normal/native and five twenty-case lifecycle iterations pass. R1 passes
+both OS suites, Windows WPF and the development-package job; ordinary CI passes.
+The previous Windows Server 2022 status-service lab passed on `9fcb465`; it was
+not triggered by the test/document-only correction and is not claimed as rerun.
+
+Both revisions' main Windows labs pass independently. The six-protocol runtime
+lab uses a real standard-user primary process token, confirms natural process/job
+exit and complete owned cleanup. The installed status-service lab verifies SCM
+and pipe authorization with real account tokens under impersonation; that is a
+different scope from the runtime lab's primary-token proof. Neither enables SYSTEM
+core execution, TUN or protected public connectivity.
+
+## Next bounded investigation
+
+First preserve body and fixture-disposal exceptions together in the new validator
+test harness. Record the immutable cleanup snapshot before the existing binary
+assertion, then record that one operation's sanitized error category and native
+code. Separately observe release of the same owned handle and investigate other
+holders with bounded read-only Windows diagnostics. If the holder is not identified,
+keep it unknown. Preserve the existing assertions, output/exit budgets and failure
+history; do not add sleeps or retry the operation/workflow until it happens to pass.
+
+Selected-node service handoff follows this investigation; do not enable privileged
+networking to work around a failing resource-lifetime gate.
 
 ## Product acceptance boundary
 
