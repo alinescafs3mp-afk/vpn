@@ -7,6 +7,8 @@ using AutoVpn.Infrastructure.Probe;
 if (args.Length == 5 && args[0] == "-t" && args[1] == "-f" && args[3] == "-d")
     return await ValidatorFixtureAsync(args[2], args[4]);
 if (args.Length != 1) return 2;
+if (args[0] is "windows-file-use" or "windows-file-use-timeout")
+    return await WindowsFileUseControl.RunAsync(args[0] == "windows-file-use-timeout");
 if (args[0] == "node-runtime") return await RuntimeNodeSmoke.RunAsync();
 if (args[0] is "pool-cancel-stream" or "pool-cancel-drain" or "pool-cancel-native" or "pool-cancel-delay-control") return PipeCancellationControl.Run(args[0]);
 if (args[0] is "pool-legacy" or "pool-available" or "pool-runtime" or "pool-validator") return PoolControl(args[0]);

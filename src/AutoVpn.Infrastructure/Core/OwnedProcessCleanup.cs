@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Serialization;
+using Microsoft.Win32.SafeHandles;
 
 namespace AutoVpn.Infrastructure.Core;
 
@@ -17,12 +18,18 @@ public enum OwnedOutputState { NotStarted, Pending, Eof, Canceled, Failed }
 
 public sealed record OwnedOutputReport(OwnedOutputState State, string ExceptionKind, int HResult);
 
+/// <summary>Values from the same owned wrappers, not proof that no other file user exists.</summary>
+public sealed record OwnedResourceReleaseReport(bool ProcessPresent, bool BinaryPresent,
+    bool ProcessDisposeReturned, bool BinaryDisposeReturned, bool? BinarySafeHandleClosed,
+    bool? BinarySafeHandleInvalid);
+
 /// <summary>Immutable, bounded metadata. Never includes child output or native exception text.</summary>
 public sealed record OwnedProcessCleanupReport(string Phase, bool ProcessExitConfirmed,
     bool ReadersJoined, bool DirectoryRemoved, bool ResourcesReleased, bool OutputHealthy,
     OwnedOutputReport Stdout, OwnedOutputReport Stderr, string ExceptionKind, int HResult,
     long ElapsedMilliseconds)
 {
+    public OwnedResourceReleaseReport? ReleaseObservation { get; init; }
     public bool Complete => ProcessExitConfirmed && ReadersJoined && DirectoryRemoved && ResourcesReleased;
     public string Summary => $"{Phase};EXIT={ProcessExitConfirmed};JOINED={ReadersJoined};" +
         $"DIR={DirectoryRemoved};RELEASED={ResourcesReleased};OUTPUT_OK={OutputHealthy};" +
@@ -45,6 +52,7 @@ internal interface IOwnedProcessCleanupResources
     bool Started { get; }
     Task? Stdout { get; }
     Task? Stderr { get; }
+    OwnedResourceReleaseReport? ReleaseObservation => null;
     Task StopAndWaitAsync();
     void DeleteDirectory();
     void Release();
@@ -150,7 +158,8 @@ internal sealed class OwnedProcessCleanup : IOwnedProcessCleanup
             ? stdout.State == OwnedOutputState.Eof && stderr.State == OwnedOutputState.Eof
             : stdout.State == OwnedOutputState.NotStarted && stderr.State == OwnedOutputState.NotStarted;
         return new(phase, _exitConfirmed, _readersJoined, _directoryRemoved, _resourcesReleased,
-            healthy, stdout, stderr, Kind(error), error?.HResult ?? 0, milliseconds);
+            healthy, stdout, stderr, Kind(error), error?.HResult ?? 0, milliseconds)
+        { ReleaseObservation = _resources.ReleaseObservation };
     }
 
     private static OwnedOutputReport Output(Task? task)
@@ -193,12 +202,30 @@ internal sealed class OwnedProcessCleanup : IOwnedProcessCleanup
 internal sealed class NativeProcessCleanupResources : IOwnedProcessCleanupResources
 {
     internal Process? Process;
-    internal FileStream? Binary;
+    private FileStream? _binary;
+    private SafeFileHandle? _binaryHandle;
+    private bool _processDisposeReturned;
+    private bool _binaryDisposeReturned;
+    internal FileStream? Binary
+    {
+        get => _binary;
+        set
+        {
+            // Capture before hashing/reading. The getter may flush or seek, so
+            // never call it during I/O or after disposal. This is the same managed
+            // object: no DuplicateHandle, DangerousAddRef, or native lifetime extension.
+            _binary = value;
+            _binaryHandle = value?.SafeFileHandle;
+        }
+    }
     internal DirectoryInfo? Directory;
     public bool Started { get; internal set; }
     public Task? Stdout { get; internal set; }
     public Task? Stderr { get; internal set; }
     private Task? _exit;
+
+    public OwnedResourceReleaseReport ReleaseObservation => new(Process is not null, _binary is not null,
+        _processDisposeReturned, _binaryDisposeReturned, _binaryHandle?.IsClosed, _binaryHandle?.IsInvalid);
 
     public Task StopAndWaitAsync()
     {
@@ -232,7 +259,15 @@ internal sealed class NativeProcessCleanupResources : IOwnedProcessCleanupResour
 
     public void Release()
     {
-        Process?.Dispose();
-        Binary?.Dispose();
+        if (Process is not null)
+        {
+            Process.Dispose();
+            _processDisposeReturned = true;
+        }
+        if (_binary is not null)
+        {
+            _binary.Dispose();
+            _binaryDisposeReturned = true;
+        }
     }
 }

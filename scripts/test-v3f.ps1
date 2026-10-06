@@ -15,7 +15,8 @@ $env:R5_CORE_PATH = $env:AUTOVPN_MIHOMO_PATH; $env:R5_CORE_HASH = $hash
 $env:R6_CORE_PATH = $env:AUTOVPN_MIHOMO_PATH; $env:R6_CORE_HASH = $hash
 $env:AUTOVPN_TLS_DIAGNOSTICS = '1'
 $allowed = if ($IsWindows) {
-    @('AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess',
+    @('AutoVpn.UnitTests.WindowsFileUseDiagnosticsTests.NonWindowsPlatformRefusesWithoutStartingHelper',
+      'AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess',
       'AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap',
       'AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess',
       'AutoVpn.UnitTests.RuntimePreparationTests.NativeRuntimeStopsItsActiveCoreAndSealsAdmission',
@@ -30,7 +31,10 @@ $allowed = if ($IsWindows) {
       'AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeHysteria2NodeOwnsPortsAndStops',
       'AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTuicNodeOwnsPortsAndStops')
 } else {
-    @('AutoVpn.UnitTests.AstraV3DServiceProcessTests.RetainedLiveProcessHandleIsNotSignaled',
+    @('AutoVpn.UnitTests.WindowsFileUseDiagnosticsTests.KnownHeldFileIsClassifiedByExactTestHostIdentity',
+      'AutoVpn.UnitTests.WindowsFileUseDiagnosticsTests.NoHolderSnapshotRemainsExplicitlyIncomplete',
+      'AutoVpn.UnitTests.WindowsFileUseDiagnosticsTests.TimedOutQueryKillsAndJoinsOnlyItsOwnedHelper',
+      'AutoVpn.UnitTests.AstraV3DServiceProcessTests.RetainedLiveProcessHandleIsNotSignaled',
       'AutoVpn.UnitTests.AstraV3DServiceProcessTests.Exited259IsNotMistakenForStillActive',
       'AutoVpn.UnitTests.AstraV3DServiceProcessTests.InvalidAndClosedHandlesFailClosed',
       'AutoVpn.UnitTests.AstraV3EResourceTests.LockedCleanupIsReportedAndCanBeRetriedAfterRelease',
@@ -63,10 +67,10 @@ for ($i = 1; $i -le 6; $i++) {
     $skipped = @($cases | Where-Object outcome -eq 'NotExecuted' | ForEach-Object testName)
     $identities = @($cases | ForEach-Object testId | Sort-Object -Unique)
     $unknown = @($cases | Where-Object { $_.outcome -notin @('Passed','Failed','NotExecuted') })
-    $valid = $code -eq 0 -and $cases.Count -eq 907 -and $identities.Count -eq 907 -and $passed.Count -eq (907 - $allowed.Count) -and $failed.Count -eq 0 -and $unknown.Count -eq 0 -and $skipped.Count -eq $allowed.Count -and @($skipped | Where-Object { $_ -notin $allowed }).Count -eq 0
+    $valid = $code -eq 0 -and $cases.Count -eq 920 -and $identities.Count -eq 920 -and $passed.Count -eq (920 - $allowed.Count) -and $failed.Count -eq 0 -and $unknown.Count -eq 0 -and $skipped.Count -eq $allowed.Count -and @($skipped | Where-Object { $_ -notin $allowed }).Count -eq 0
     $runs += [ordered]@{iteration=$i; exitCode=$code; valid=$valid; total=$cases.Count; passed=$passed.Count; failed=$failed.Count; skipped=$skipped; failures=@($failed | ForEach-Object { @{name=$_.testName; message=$_.Output.ErrorInfo.Message; stack=$_.Output.ErrorInfo.StackTrace} })}
     Write-Host "Iteration $i : passed=$($passed.Count) failed=$($failed.Count) total=$($cases.Count) exit=$code valid=$valid"
-    [ordered]@{sourceCommit=(& git rev-parse HEAD); sourceTree=(& git rev-parse 'HEAD^{tree}'); coreSha256=$hash; plannedRuns=6; completedRuns=$runs.Count; runs=$runs; note='Full suite: 892 previous cases plus 10 owned-cleanup state controls and five public-validator process cases. One added Linux skip requires Windows file-sharing semantics after actual child exit; all previous cases and skip identities remain. Late exit/EOF requires explicit cleanup retry, terminal output failure never becomes validation success, and retry never changes the first result. Existing isolated pipe cancellation controls, one-second assertions, 20/5/3-second production wait budgets, TLS policy, wrong-credential checks, runner/product pool settings and 32 port attempts are unchanged. Unpublished V3H is not included.'} | ConvertTo-Json -Depth 12 | Set-Content "$root/summary.json" -Encoding utf8NoBOM
+    [ordered]@{sourceCommit=(& git rev-parse HEAD); sourceTree=(& git rev-parse 'HEAD^{tree}'); coreSha256=$hash; plannedRuns=6; completedRuns=$runs.Count; runs=$runs; note='Full suite: all 907 previous cases plus six fixture-failure controls, three immutable same-handle observation controls and four bounded file-use diagnostic controls. Three new Windows-only cases and one non-Windows refusal case add explicit platform skips; all previous cases and skip identities remain. Original body and disposal failures are both preserved, pre-probe snapshots precede single unchanged file operations, and the two-second test-only RM helper retains at most 4096 bytes and 32 owner categories. Late exit/EOF requires explicit cleanup retry, terminal output failure never becomes validation success, and retry never changes the first result. Existing isolated pipe cancellation controls, one-second assertions, 20/5/3-second production wait budgets, TLS policy, wrong-credential checks, runner/product pool settings and 32 port attempts are unchanged. Unpublished V3H is not included.'} | ConvertTo-Json -Depth 12 | Set-Content "$root/summary.json" -Encoding utf8NoBOM
 }
 $bad = @($runs | Where-Object { !$_.valid })
 if ($bad.Count -gt 0) { $bad | ConvertTo-Json -Depth 12 | Write-Host; throw "$($bad.Count) of six iterations failed; all outcomes retained." }

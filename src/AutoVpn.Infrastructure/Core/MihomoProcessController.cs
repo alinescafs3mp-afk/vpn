@@ -34,9 +34,10 @@ public static class MihomoProcessController
         {
             // Retain the exact non-delete-sharing handle even after child exit
             // when a reader or directory cleanup still needs an explicit retry.
-            resources.Binary = new FileStream(binaryPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var binary = new FileStream(binaryPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            resources.Binary = binary;
             phase = "BINARY_HASH";
-            var actual = Convert.ToHexString(await SHA256.HashDataAsync(resources.Binary, cancellationToken).ConfigureAwait(false));
+            var actual = Convert.ToHexString(await SHA256.HashDataAsync(binary, cancellationToken).ConfigureAwait(false));
             if (!string.Equals(actual, expectedSha256, StringComparison.OrdinalIgnoreCase))
                 validation = new(false, "CORE_HASH", "Pinned core hash does not match.");
             else
