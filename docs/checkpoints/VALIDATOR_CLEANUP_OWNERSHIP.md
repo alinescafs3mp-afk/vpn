@@ -202,3 +202,19 @@ production SYSTEM core execution, selected-node service handoff, TUN, WFP, syste
 DNS/IPv6 changes, restoration, an installer, or Windows 11 acceptance. The existing
 Windows service remains status-only. Historical failed runs and their unknown
 causes remain in their original evidence files.
+
+
+## Follow-up with preserved pre-probe evidence
+
+The next diagnostic increment is recorded in
+`docs/checkpoints/WINDOWS_FILE_LIFETIME_DIAGNOSTICS.md` and
+`docs/evidence/WINDOWS_FILE_LIFETIME_DIAGNOSTICS_VALIDATION.json`. Its code
+`97f8423ad5314037270024ace083a22061273cd6` preserves both body/disposal failures,
+emits snapshots before the existing single file operation and queries exact-file
+Windows users with bounded owned-helper cleanup. All 13 new controls pass.
+
+The original Windows cancellation sharing failure reproduced in main run
+`37539642819`, iteration 2, with both Dispose calls returned and the same binary
+SafeFileHandle reporting IsClosed=true before the operation. The later empty RM
+snapshot does not identify a holder; fixture directory deletion then succeeds.
+The historical evidence above remains unchanged and the lifetime gate stays open.

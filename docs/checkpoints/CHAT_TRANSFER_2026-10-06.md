@@ -274,7 +274,7 @@ corrected Linux test verifies the same advisory lock with an initial negative
 exclusive read and a successful exclusive read after release. It adds no sleeps,
 retry loop, skipped assertion or production change.
 
-**Current Windows acceptance remains FAILED / OPEN.** Corrected main run
+**At the fourth-increment checkpoint, Windows acceptance remained FAILED / OPEN.** Corrected main run
 `37506558777`: Linux 5334 passed / 0 failed / 108 skipped; Windows 5357 passed /
 1 failed / 84 skipped. Windows iteration 5 of the new cancellation case passes
 exit/EOF/cleanup/input assertions, then fails exclusive write to the copied
@@ -300,3 +300,54 @@ Keep assertions/deadlines and unknown causes honest. Do not infer antivirus or
 kernel timing without positive evidence, bypass the failure with sleeps, or move
 to privileged networking before the remaining lifetime acceptance is addressed.
 Then continue selected-node handoff as a separate reviewed implementation.
+
+
+## Fifth continuation increment: Windows file-lifetime evidence
+
+Published from `9f3652fe4a5495525b4244c3504685ccea5b3150` as code commit
+`97f8423ad5314037270024ace083a22061273cd6`, tree
+`98504872d2c42df30b1a27af3eb2c72529107b03`. Assembly remains 0.1.7; V3H excluded.
+Details: `docs/checkpoints/WINDOWS_FILE_LIFETIME_DIAGNOSTICS.md`. Complete normalized
+evidence: `docs/evidence/WINDOWS_FILE_LIFETIME_DIAGNOSTICS_VALIDATION.json`.
+
+Body and fixture-disposal exceptions are now preserved together. The same owned
+binary SafeFileHandle is captured before hash I/O; immutable reports separately
+record presence, returned Dispose calls, IsClosed and IsInvalid. Validator snapshots
+are emitted before the unchanged single file probe. On failure, a two-second
+helper queries one exact copied file through bounded Restart Manager calls;
+maximum two list calls, 32 reported owners in three categories, 4096 retained bytes, actual EOF and owned
+exit/output cleanup. Cached PID plus creation FILETIME survives fixture Process
+wrapper disposal without retaining another native handle. No foreign process is
+acted on. Existing assertions, deadlines, pool settings and port attempts remain.
+
+All 907 prior identities remain in the 920-case suite. Thirteen new cases pass:
+132 passed / 0 failed / 24 explicit platform skips across all twelve iterations.
+Main run `37539642819`: Linux 5394/0/126; Windows 5429/1/90. All 375 blobs in
+both main source archives match; raw TRX and control records were verified.
+
+**Windows file-lifetime acceptance is still FAILED / OPEN.** In iteration 2 the
+existing cancellation case again fails Write/None with IO `0x80070020`. Its saved
+pre-probe report confirms exit/EOF/input removal/Complete, both Dispose calls
+returned, and the same binary SafeFileHandle reports IsClosed=true/IsInvalid=false.
+The later RM query returns no owners with Incomplete=true; helper cleanup succeeds.
+Fixture root deletion then succeeds, leaving the original body failure intact.
+The holder is unknown; neither native closure beyond the managed observations nor
+kernel/antivirus attribution is established. All six records from that failed case
+survive, alongside 53 actual success reports, 271 lifetime records, 24 helper
+controls and all 42 prior pipe records. Missing success records are not fabricated.
+
+All six other automatic workflows pass in attempt 1. V2/V3/R1 normal/native suites,
+Windows TLS repetitions, both-OS lifecycle repetitions and three WPF smokes pass.
+The two status-service labs (Server 2025/2022) and the six-protocol standard-user
+primary-token lab pass within their existing boundaries. Four source archives
+contain exact 375-blob code. Large development binary archives were not locally
+downloaded; their API metadata and complete package-job verification logs are kept.
+
+Next bounded step: controlled investigation of the remaining file-access interval,
+including the fixture's independent retained process handle versus its release.
+This is an unproven hypothesis. Preserve the existing failed write outcome and
+budgets, and do not rerun identical workflows, delay or retry writes until green.
+Then continue selected-node service handoff as a separate reviewed increment.
+Production SYSTEM core/TUN/network protection/recovery/installer/Windows11 remain
+unaccepted. This fifth increment supersedes the fourth increment's next-step list
+without erasing its failed evidence.
