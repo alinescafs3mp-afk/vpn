@@ -372,7 +372,9 @@ public sealed class PackageBTests
             var binary = Path.Combine(directory.FullName, "not-mihomo");
             await File.WriteAllTextAsync(binary, "this is not a core");
             var hash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(binary))).ToLowerInvariant();
-            var transport = new NonTunCoreProbeTransport(binary, hash, TimeSpan.FromMilliseconds(300));
+            var transport = new NonTunCoreProbeTransport(binary, hash, TimeSpan.FromMilliseconds(300),
+                new ProbeEndpointFixture { LoopbackHosts = new Dictionary<string, string>
+                { [FixtureNode().Semantics.Host] = "127.0.0.1" } });
             Assert.True(transport.CanRun);
             var observation = await transport.ProbeAsync(FixtureNode().Semantics, new Uri("https://127.0.0.1/generate_204"), CancellationToken.None);
             Assert.False(observation.Success);

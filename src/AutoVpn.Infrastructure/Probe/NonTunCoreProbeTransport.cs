@@ -37,9 +37,15 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
     private readonly string? _expectedSha256;
     private readonly TimeSpan _connectTimeout;
     private readonly ProbeEndpointFixture? _fixture;
+    private readonly ProxyEndpointResolver _endpoints;
 
     public NonTunCoreProbeTransport(string? binaryPath, string? expectedSha256, TimeSpan? connectTimeout = null, ProbeEndpointFixture? fixture = null)
+        : this(binaryPath, expectedSha256, connectTimeout, fixture, ProxyEndpointResolver.System) { }
+
+    internal NonTunCoreProbeTransport(string? binaryPath, string? expectedSha256, TimeSpan? connectTimeout,
+        ProbeEndpointFixture? fixture, ProxyEndpointResolver endpoints)
     {
+        _endpoints = endpoints;
         _binaryPath = binaryPath;
         _expectedSha256 = expectedSha256;
         _connectTimeout = connectTimeout ?? TimeSpan.FromSeconds(ProductLimits.ProbeRequestTimeoutSeconds);
@@ -139,11 +145,27 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             return Fail(ProbeClass.CoreFailure, "CORE_HASH", digest, target);
         }
 
+        // DNS admission consumes the existing startup budget, not an extra retry budget.
+        var startup = Stopwatch.StartNew();
+        var executionNode = node;
+        if (_fixture?.LoopbackHosts?.ContainsKey(node.Host) != true)
+        {
+            var endpoint = await _endpoints.ResolveAsync(node, _connectTimeout, cancellationToken).ConfigureAwait(false);
+            if (!endpoint.Succeeded)
+            {
+                var kind = endpoint.ReasonCode == ReasonCodes.Canceled ? ProbeClass.Canceled :
+                    endpoint.ReasonCode is ReasonCodes.NonPublicEndpoint or "ENDPOINT_NAME_INVALID" or
+                        "ENDPOINT_BINDING_UNSUPPORTED" ? ProbeClass.Unsupported : ProbeClass.Environment;
+                return Fail(kind, endpoint.ReasonCode!, digest, target);
+            }
+            executionNode = endpoint.ExecutionNode!;
+        }
+        // This execution copy never replaces the original identity or stored catalogue.
         var catalogueNode = new CatalogueNode
         {
             NodeId = "probe",
             Digest = digest,
-            Semantics = node,
+            Semantics = executionNode,
             Label = node.Host,
             FirstSeenUtc = DateTimeOffset.UnixEpoch,
             LastSeenUtc = DateTimeOffset.UnixEpoch,
@@ -196,9 +218,12 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             start.ArgumentList.Add("-d");
             start.ArgumentList.Add(directory.FullName);
             start.Environment["HOME"] = directory.FullName;
-            var startup = Stopwatch.StartNew();
+            var startupRemaining = _connectTimeout - startup.Elapsed;
+            if (startupRemaining <= TimeSpan.Zero)
+                return Fail(ProbeClass.CoreFailure, "CORE_NOT_READY", digest, target);
+            cancellationToken.ThrowIfCancellationRequested();
             cleanupOwnedByWorker = true;
-            await using var session = await ProbeWorker.StartAsync(start, socksPort, _connectTimeout, cancellationToken, directory.FullName).ConfigureAwait(false);
+            await using var session = await ProbeWorker.StartAsync(start, socksPort, startupRemaining, cancellationToken, directory.FullName).ConfigureAwait(false);
             LastDiagnostic = session.Diagnostic;
             if (cancellationToken.IsCancellationRequested)
             {
