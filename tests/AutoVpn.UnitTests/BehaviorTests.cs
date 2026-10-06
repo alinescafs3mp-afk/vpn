@@ -12,6 +12,7 @@ using AutoVpn.Infrastructure.Persistence;
 using AutoVpn.Infrastructure.Probe;
 using AutoVpn.Infrastructure.Refresh;
 using Microsoft.Data.Sqlite;
+using Xunit.Sdk;
 
 namespace AutoVpn.UnitTests;
 
@@ -504,7 +505,7 @@ public class BehaviorTests
             SelectedNodeId = "abc123",
         });
         var result = await MihomoProcessController.ValidateAsync(path!, TestCorePins.ExpectedHash, yaml, CancellationToken.None);
-        Assert.True(result.Ok, result.RedactedOutput);
+        await NativeValidationAssertions.SuccessAsync(result);
     }
 
     [Fact]
@@ -1009,5 +1010,44 @@ public sealed class RequiresMihomoFactAttribute : FactAttribute
         {
             Skip = "AUTOVPN_MIHOMO_PATH is unset. Native mihomo -t is NOT_RUN, not a pass.";
         }
+    }
+}
+
+// Real validator call sites make one explicit cleanup retry if necessary. The
+// original failed validation remains a failure even when that retry releases
+// every resource. Retained exceptions carry the same capability on timeout.
+internal static class NativeValidationAssertions
+{
+    internal static async Task SuccessAsync(CoreValidationResult result)
+    {
+        var initial = new XunitException("NATIVE_VALIDATION_FAILED;REASON=" + result.ReasonCode +
+            ";VALIDATION=" + result.ValidationReasonCode + ";" + result.RedactedOutput);
+        if (result.PendingCleanup is { } pending)
+        {
+            // Controller invariant: a returned capability always accompanies
+            // the immutable report from its first incomplete cleanup attempt.
+            var originalCleanup = new OwnedProcessCleanupException(pending, result.CleanupReport!);
+            OwnedProcessCleanupReport retried;
+            try
+            {
+                // The owner's individual exit/output bounds are unchanged.
+                // This ceiling bounds only the caller's additional retry wait.
+                retried = await pending.RetryAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(11));
+            }
+            catch (Exception error)
+            {
+                throw new AggregateException("VALIDATOR_CLEANUP_RETRY_WAIT_FAILED",
+                    initial, originalCleanup, error);
+            }
+            if (!retried.Complete)
+                throw new AggregateException("VALIDATOR_CLEANUP_RETRY_INCOMPLETE",
+                    initial, originalCleanup, new OwnedProcessCleanupException(pending, retried));
+            throw new AggregateException("INITIAL_VALIDATOR_FAILURE_PRESERVED_AFTER_CLEANUP_RETRY:" + retried.Summary,
+                initial, originalCleanup);
+        }
+        Assert.True(result.Ok, initial.Message);
+        var report = Assert.IsType<OwnedProcessCleanupReport>(result.CleanupReport);
+        Assert.True(report.Complete, report.Summary);
+        Assert.True(report.OutputHealthy, report.Summary);
     }
 }

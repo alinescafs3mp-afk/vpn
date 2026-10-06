@@ -92,7 +92,7 @@ public sealed class IndependentRound5WireTests
             LoopbackHosts=new Dictionary<string,string> { ["candidate.example"]="127.0.0.1" },Nodes=[NodeWireFactory.FromCatalogue(record)],SelectedNodeId=record.NodeId });
         Assert.False(MihomoProfileGenerator.EnablesTun(yaml));
         var result=await MihomoProcessController.ValidateAsync(binary!,hash!,yaml,CancellationToken.None);
-        Assert.True(result.Ok,result.ReasonCode + ":" + result.RedactedOutput);
+        await NativeValidationAssertions.SuccessAsync(result);
     }
 
     private static X509Certificate2 Certificate()

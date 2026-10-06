@@ -46,6 +46,7 @@ $allowed = if ($IsWindows) {
       'AutoVpn.UnitTests.AstraV3GAvailablePipeTests.AvailableQuietPipesLeaveTheBoundedPoolUsable',
       'AutoVpn.UnitTests.AstraV3GAvailablePipeTests.ValidatorQuietPipesLeaveTheBoundedPoolUsable',
       'AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked',
+      'AutoVpn.UnitTests.CoreValidationOwnershipTests.ExitedValidatorRetainsBinaryLockUntilLockedInputCleanupIsRetried',
       'AutoVpn.UnitTests.RuntimePreparationTests.WindowsRuntimeOutputKeepsTheBoundedPoolResponsive')
 }
 $runs = @()
@@ -62,10 +63,10 @@ for ($i = 1; $i -le 6; $i++) {
     $skipped = @($cases | Where-Object outcome -eq 'NotExecuted' | ForEach-Object testName)
     $identities = @($cases | ForEach-Object testId | Sort-Object -Unique)
     $unknown = @($cases | Where-Object { $_.outcome -notin @('Passed','Failed','NotExecuted') })
-    $valid = $code -eq 0 -and $cases.Count -eq 892 -and $identities.Count -eq 892 -and $passed.Count -eq (892 - $allowed.Count) -and $failed.Count -eq 0 -and $unknown.Count -eq 0 -and $skipped.Count -eq $allowed.Count -and @($skipped | Where-Object { $_ -notin $allowed }).Count -eq 0
+    $valid = $code -eq 0 -and $cases.Count -eq 907 -and $identities.Count -eq 907 -and $passed.Count -eq (907 - $allowed.Count) -and $failed.Count -eq 0 -and $unknown.Count -eq 0 -and $skipped.Count -eq $allowed.Count -and @($skipped | Where-Object { $_ -notin $allowed }).Count -eq 0
     $runs += [ordered]@{iteration=$i; exitCode=$code; valid=$valid; total=$cases.Count; passed=$passed.Count; failed=$failed.Count; skipped=$skipped; failures=@($failed | ForEach-Object { @{name=$_.testName; message=$_.Output.ErrorInfo.Message; stack=$_.Output.ErrorInfo.StackTrace} })}
     Write-Host "Iteration $i : passed=$($passed.Count) failed=$($failed.Count) total=$($cases.Count) exit=$code valid=$valid"
-    [ordered]@{sourceCommit=(& git rev-parse HEAD); sourceTree=(& git rev-parse 'HEAD^{tree}'); coreSha256=$hash; plannedRuns=6; completedRuns=$runs.Count; runs=$runs; note='Full suite: 866 previous cases plus 20 port-diagnostic, four isolated pipe-cancellation, one Windows validator-drain and one cleanup reentrancy case. Two new Linux platform skips cover actual Windows handles; all previous cases and skip identities remain. The frozen Task.Delay control must remain pending while both workers are occupied; production stream/drain cancellation must complete within the original one-second budget before release. No remote TLS retry, certificate-policy change, pool-size change in the runner/product, or port-budget increase. Unpublished V3H is not included.'} | ConvertTo-Json -Depth 12 | Set-Content "$root/summary.json" -Encoding utf8NoBOM
+    [ordered]@{sourceCommit=(& git rev-parse HEAD); sourceTree=(& git rev-parse 'HEAD^{tree}'); coreSha256=$hash; plannedRuns=6; completedRuns=$runs.Count; runs=$runs; note='Full suite: 892 previous cases plus 10 owned-cleanup state controls and five public-validator process cases. One added Linux skip requires Windows file-sharing semantics after actual child exit; all previous cases and skip identities remain. Late exit/EOF requires explicit cleanup retry, terminal output failure never becomes validation success, and retry never changes the first result. Existing isolated pipe cancellation controls, one-second assertions, 20/5/3-second production wait budgets, TLS policy, wrong-credential checks, runner/product pool settings and 32 port attempts are unchanged. Unpublished V3H is not included.'} | ConvertTo-Json -Depth 12 | Set-Content "$root/summary.json" -Encoding utf8NoBOM
 }
 $bad = @($runs | Where-Object { !$_.valid })
 if ($bad.Count -gt 0) { $bad | ConvertTo-Json -Depth 12 | Write-Host; throw "$($bad.Count) of six iterations failed; all outcomes retained." }

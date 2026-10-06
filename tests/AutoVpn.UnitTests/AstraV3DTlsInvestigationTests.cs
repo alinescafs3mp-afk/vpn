@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Tracing;
 using System.Globalization;
 using Xunit;
-using Xunit.Sdk;
 
 namespace AutoVpn.UnitTests;
 
@@ -27,8 +26,10 @@ public sealed class AstraV3DTlsInvestigationTests
         }
         catch (Exception error)
         {
-            throw new XunitException("Controlled variant=" + variant + "\n" + error +
-                "\nTLS events from this test process (not a production capture):\n" + trace.Snapshot());
+            // Preserve the exception object, including nested ownership
+            // capabilities, instead of replacing it with formatted text.
+            throw new AggregateException("Controlled variant=" + variant +
+                "\nTLS events from this test process (not a production capture):\n" + trace.Snapshot(), error);
         }
     }
 }

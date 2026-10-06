@@ -1,7 +1,11 @@
 // Finite synthetic owned child. Native node mode uses an explicitly provisioned pinned core.
 using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
 using AutoVpn.Infrastructure.Core;
 using AutoVpn.Infrastructure.Probe;
+if (args.Length == 5 && args[0] == "-t" && args[1] == "-f" && args[3] == "-d")
+    return await ValidatorFixtureAsync(args[2], args[4]);
 if (args.Length != 1) return 2;
 if (args[0] == "node-runtime") return await RuntimeNodeSmoke.RunAsync();
 if (args[0] is "pool-cancel-stream" or "pool-cancel-drain" or "pool-cancel-native" or "pool-cancel-delay-control") return PipeCancellationControl.Run(args[0]);
@@ -23,6 +27,62 @@ while (clock.Elapsed < TimeSpan.FromSeconds(30))
     if (++rounds == 128) File.WriteAllText("output-ready.txt", "Both output streams produced at least 512 KiB.");
 }
 return 0;
+
+// A finite, credential-free validator-shaped child. It never opens a network listener.
+static async Task<int> ValidatorFixtureAsync(string config, string directory)
+{
+    try
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(Path.GetFullPath(directory), Path.GetFullPath(Environment.CurrentDirectory), comparison) ||
+            !string.Equals(Path.GetFullPath(config), Path.Combine(Path.GetFullPath(directory), "config.yaml"), comparison) ||
+            new FileInfo(config).Length > 4096) return 120;
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var json = JsonDocument.Parse(await File.ReadAllTextAsync(config, budget.Token));
+        var root = json.RootElement;
+        var mode = root.GetProperty("mode").GetString();
+        if (root.GetProperty("fixture").GetString() != "owned-validator-v1" ||
+            mode is not ("finite-output" or "invalid-utf8") ||
+            root.GetProperty("tun").GetProperty("enable").GetBoolean()) return 121;
+        var exitCode = root.GetProperty("exitCode").GetInt32();
+        var marker = root.GetProperty("marker").GetString();
+        var control = root.GetProperty("controlDirectory").GetString();
+        if (exitCode is not (0 or 23) || marker is null || marker.Length > 256 ||
+            string.IsNullOrEmpty(control) || !Directory.Exists(control)) return 122;
+        var ready = JsonSerializer.Serialize(new
+        { processId = Environment.ProcessId, configPath = Path.GetFullPath(config), directoryPath = Path.GetFullPath(directory) });
+        await File.WriteAllTextAsync(Path.Combine(control, "ready.tmp"), ready, budget.Token);
+        File.Move(Path.Combine(control, "ready.tmp"), Path.Combine(control, "ready.json"));
+        var release = Path.Combine(control, "release.txt");
+        var clock = Stopwatch.StartNew();
+        while (!File.Exists(release))
+        {
+            if (clock.Elapsed >= TimeSpan.FromSeconds(10)) return 123;
+            await Task.Delay(10, budget.Token);
+        }
+        Console.OutputEncoding = new UTF8Encoding(false, true);
+        if (mode == "invalid-utf8")
+        {
+            using var raw = Console.OpenStandardOutput();
+            await raw.WriteAsync(new byte[] { 0xff }, budget.Token);
+            await raw.FlushAsync(budget.Token);
+            await Console.Error.WriteAsync("bounded validator stderr\n".AsMemory(), budget.Token);
+            await Console.Error.FlushAsync(budget.Token);
+            return 0;
+        }
+        var stdout = "OUT:" + marker + "🙂\\literal\n" + new string('x', 8192);
+        var stderr = "ERR:" + marker + "🙂\\literal\n" + new string('y', 8192);
+        for (var i = 0; i < 6; i++)
+        {
+            await Console.Out.WriteAsync(stdout.AsMemory(), budget.Token);
+            await Console.Out.FlushAsync(budget.Token);
+            await Console.Error.WriteAsync(stderr.AsMemory(), budget.Token);
+            await Console.Error.FlushAsync(budget.Token);
+        }
+        return exitCode;
+    }
+    catch (Exception) { return 124; } // No paths, control content, or native exception text.
+}
 
 // Runs in an isolated disposable child, never changes the test runner or product pool.
 static int PoolControl(string mode)
