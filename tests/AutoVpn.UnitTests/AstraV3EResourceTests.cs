@@ -132,7 +132,13 @@ public sealed class AstraV3EResourceTests
             Assert.True(worker.Ready);
             using var child = Process.GetProcessById(int.Parse(worker.WorkerId.Split(':')[0], CultureInfo.InvariantCulture));
             _ = child.Handle;
-            await Assert.ThrowsAnyAsync<IOException>(() => worker.DisposeAsync().AsTask());
+            var nativeFailure = Assert.Throws<IOException>(() => File.Delete(held.Name));
+            var error = await Assert.ThrowsAsync<ProbeCleanupException>(() => worker.DisposeAsync().AsTask());
+            var report = Assert.IsType<ProbeCleanupReport>(error.Report);
+            Assert.Equal("DIRECTORY_CLEANUP_FAILED", report.Phase);
+            Assert.Equal("IO", report.ExceptionKind);
+            Assert.Equal(nativeFailure.HResult, report.HResult);
+            Assert.DoesNotContain(directory.FullName, error.Message, StringComparison.Ordinal);
             Assert.True(child.HasExited);
             Assert.False(worker.DirectoryRemoved);
             held.Dispose();

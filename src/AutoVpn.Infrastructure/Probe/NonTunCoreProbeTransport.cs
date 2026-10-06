@@ -284,10 +284,14 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             LastDiagnostic = "CORE_PORT_UNAVAILABLE";
             return Fail(ProbeClass.CoreFailure, LastDiagnostic, digest, target);
         }
-        catch (ProbeCleanupException)
+        catch (ProbeCleanupException ex)
         {
-            LastDiagnostic = "CORE_CLEANUP_REQUIRED";
-            return Fail(ProbeClass.CoreFailure, LastDiagnostic, digest, target);
+            // Preserve the bounded report, not native exception text or child output.
+            // The public outcome remains a cleanup failure even after a good exchange.
+            LastDiagnostic = ex.Report is { } report
+                ? "CORE_CLEANUP_REQUIRED:" + report.Summary
+                : "CORE_CLEANUP_REQUIRED";
+            return Fail(ProbeClass.CoreFailure, "CORE_CLEANUP_REQUIRED", digest, target);
         }
         finally
         {
@@ -947,8 +951,9 @@ public sealed class ProbeWorker : IAsyncDisposable
                 _resourcesReleased = true;
             }
             phase = "DIRECTORY_CLEANUP";
-            DirectoryRemoved = await DeleteDirectoryAsync(_directory).ConfigureAwait(false);
-            if (!DirectoryRemoved) throw new ProbeCleanupException();
+            DirectoryRemoved = false;
+            await DeleteDirectoryAsync(_directory).ConfigureAwait(false);
+            DirectoryRemoved = true;
             // Failed readers have completed, so their owned handles/files can be released.
             // The probe still fails: a read fault must not silently become a healthy observation.
             phase = "OUTPUT_RESULT";
@@ -978,18 +983,18 @@ public sealed class ProbeWorker : IAsyncDisposable
             ThreadPool.ThreadCount, ThreadPool.PendingWorkItemCount);
     }
 
-    private static async Task<bool> DeleteDirectoryAsync(string? directory)
+    private static async Task DeleteDirectoryAsync(string? directory)
     {
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return true;
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return;
         var elapsed = Stopwatch.StartNew();
         while (true)
         {
             try
             {
                 Directory.Delete(directory, recursive: true);
-                return true;
+                return;
             }
-            catch (DirectoryNotFoundException) { return true; }
+            catch (DirectoryNotFoundException) { return; }
             catch (IOException ex) when (OperatingSystem.IsWindows() &&
                 ((ex.HResult & 0xffff) is 32 or 33) && elapsed.Elapsed < TimeSpan.FromSeconds(1))
             {
@@ -997,7 +1002,8 @@ public sealed class ProbeWorker : IAsyncDisposable
                 // owned-process exit. No handshake or test is retried.
                 await Task.Delay(25).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+            // Let the cleanup boundary retain the real error kind and HResult.
+            // Returning false here used to replace that cause with a generic IO error.
         }
     }
 }
