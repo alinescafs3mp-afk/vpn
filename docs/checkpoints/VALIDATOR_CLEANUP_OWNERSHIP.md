@@ -94,6 +94,32 @@ Existing TLS profiles, readiness, wrong-credential assertions, certificate polic
 remain unchanged. The full suite must keep every prior case and exact OS skips.
 No workflow rerun is used to replace an observed result.
 
+## First CI finding and scoped test correction
+
+The first code commit is `9fcb46530849b568f90e8eefd21e46c3141e03db`, tree
+`0e39f0fa464b793dfeec9b7dd554d8a10a853c6c`. V2 run `37505925526`, Ubuntu job
+`112414447230`, normal iteration recorded 851 passed / 1 failed / 31 skipped
+out of 883. The new cancellation case had already confirmed actual process exit,
+healthy EOF, complete cleanup, and removed input before its final write-open of
+the copied apphost failed with `IOException: Text file busy` (ETXTBSY).
+The native suite in that same attempt subsequently passed 889 / 0 / 18 of 907;
+that later success does not replace the failed normal result.
+
+Linux write access to an executable additionally depends on kernel image lifetime.
+The precise source of that lifetime in this recorded process is not established.
+The corrected Linux test instead verifies the validator's own advisory FileStream
+lock: `Read/None` must fail while the validator is ready and still holds `Read/Read`,
+then the same exclusive read must succeed after cleanup. The negative control is
+on the same file and filesystem, so unsupported/disabled advisory locking cannot
+silently satisfy the test. There are no write retries, sleeps, enlarged deadlines,
+new skips, or product changes. Windows still requires exclusive write after cleanup
+and both write/delete denial after actual child exit during the forced cleanup
+failure. JSON distinguishes `EXCLUSIVE_READ` from `EXCLUSIVE_WRITE` and records
+Linux writability as unmeasured.
+
+Reference implementation: [.NET 10.0.12 Unix file sharing](https://github.com/dotnet/runtime/blob/v10.0.12/src/libraries/System.Private.CoreLib/src/Microsoft/Win32/SafeHandles/SafeFileHandle.Unix.cs).
+Historical outcomes remain in the final evidence alongside the corrected source.
+
 ## Product acceptance boundary
 
 This work closes helper resource ownership. It does not authorize or enable

@@ -38,9 +38,9 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
         Assert.Contains("stdout characters " + characters.ToString(CultureInfo.InvariantCulture), result.RedactedOutput, StringComparison.Ordinal);
         Assert.Contains("stderr characters " + characters.ToString(CultureInfo.InvariantCulture), result.RedactedOutput, StringComparison.Ordinal);
         fixture.AssertSanitized(result);
-        using (File.Open(fixture.BinaryPath, FileMode.Open, FileAccess.Write, FileShare.None)) { }
+        fixture.AssertBinaryReleased();
         Evidence("finite-exit-" + exitCode.ToString(CultureInfo.InvariantCulture), result, child.HasExited,
-            binaryWritable: true);
+            binaryExclusiveOpen: true);
     }
 
     [Fact]
@@ -65,9 +65,9 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
         Assert.Equal(OwnedOutputState.Eof, report.Stdout.State);
         Assert.Equal(OwnedOutputState.Eof, report.Stderr.State);
         Assert.False(Directory.Exists(fixture.ValidatorDirectory));
-        using (File.Open(fixture.BinaryPath, FileMode.Open, FileAccess.Write, FileShare.None)) { }
+        fixture.AssertBinaryReleased();
         fixture.AssertSanitized(result);
-        Evidence("canceled-after-ready", result, child.HasExited, binaryWritable: true);
+        Evidence("canceled-after-ready", result, child.HasExited, binaryExclusiveOpen: true);
     }
 
     [WindowsHandleFact]
@@ -117,11 +117,11 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
             Assert.Same(report, result.CleanupReport);
             Assert.Equal("DIRECTORY_CLEANUP_FAILED", result.CleanupReport!.Phase);
             fixture.AssertSanitized(result);
-            using (File.Open(fixture.BinaryPath, FileMode.Open, FileAccess.Write, FileShare.None)) { }
+            fixture.AssertBinaryReleased();
             File.Delete(fixture.BinaryPath);
             Assert.False(File.Exists(fixture.BinaryPath));
             Evidence("windows-retained-delete-lock", result, child.HasExited,
-                binaryWritable: true, binaryWriteDeniedBeforeRetry: true, binaryDeleteDeniedBeforeRetry: true,
+                binaryExclusiveOpen: true, binaryWriteDeniedBeforeRetry: true, binaryDeleteDeniedBeforeRetry: true,
                 binaryDeletedAfterRetry: true, retryComplete: retry.Complete,
                 immutableOriginal: !result.Ok && ReferenceEquals(report, result.CleanupReport));
         }
@@ -151,18 +151,22 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
         Assert.Equal("DECODING", report.Stdout.ExceptionKind);
         Assert.Equal(OwnedOutputState.Eof, report.Stderr.State);
         Assert.False(Directory.Exists(fixture.ValidatorDirectory));
-        using (File.Open(fixture.BinaryPath, FileMode.Open, FileAccess.Write, FileShare.None)) { }
+        fixture.AssertBinaryReleased();
         fixture.AssertSanitized(result);
-        Evidence("invalid-utf8-settled-fault", result, child.HasExited, binaryWritable: true);
+        Evidence("invalid-utf8-settled-fault", result, child.HasExited, binaryExclusiveOpen: true);
     }
 
-    private void Evidence(string scenario, CoreValidationResult result, bool processExited, bool binaryWritable,
+    private void Evidence(string scenario, CoreValidationResult result, bool processExited, bool binaryExclusiveOpen,
         bool? binaryWriteDeniedBeforeRetry = null, bool? binaryDeleteDeniedBeforeRetry = null,
         bool? binaryDeletedAfterRetry = null, bool? retryComplete = null, bool? immutableOriginal = null) =>
         trace.WriteLine(JsonSerializer.Serialize(new
         {
             scenario, ok = result.Ok, reason = result.ReasonCode, validationReason = result.ValidationReasonCode,
-            cleanup = result.CleanupReport, processExited, binaryWritable, binaryWriteDeniedBeforeRetry,
+            cleanup = result.CleanupReport, processExited, binaryExclusiveOpen,
+            binaryReleaseProbe = OperatingSystem.IsWindows() ? "EXCLUSIVE_WRITE" : "EXCLUSIVE_READ",
+            binaryWritable = OperatingSystem.IsWindows() ? (bool?)binaryExclusiveOpen : null,
+            binaryReadDeniedBeforeCleanup = OperatingSystem.IsWindows() ? (bool?)null : true,
+            binaryWriteDeniedBeforeRetry,
             binaryDeleteDeniedBeforeRetry, binaryDeletedAfterRetry, retryComplete, immutableOriginal,
         }));
 
@@ -233,6 +237,23 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
             _ = Child.Handle;
             Assert.False(Child.HasExited);
             Assert.Equal(Path.Combine(ValidatorDirectory!, "config.yaml"), ConfigPath);
+            if (!OperatingSystem.IsWindows())
+            {
+                // Confirm this filesystem enforces the validator's advisory
+                // FileStream lock before relying on the matching release probe.
+                Assert.Throws<IOException>(() =>
+                { using var reader = File.Open(BinaryPath, FileMode.Open, FileAccess.Read, FileShare.None); });
+            }
+        }
+
+        internal void AssertBinaryReleased()
+        {
+            // Linux write-open also depends on the kernel executable-image
+            // lifetime (ETXTBSY), which is separate from our FileStream lock.
+            // The read/None probe matches the verified negative above without
+            // retrying or assuming immediate writable-image reclamation.
+            var access = OperatingSystem.IsWindows() ? FileAccess.Write : FileAccess.Read;
+            using var exclusive = File.Open(BinaryPath, FileMode.Open, access, FileShare.None);
         }
 
         internal void Release() => File.WriteAllText(Path.Combine(_control, "release.txt"), "release synthetic validator");
