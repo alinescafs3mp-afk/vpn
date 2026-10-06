@@ -210,7 +210,8 @@ protected connection distinct in every report.
 
 ## Third continuation increment: Windows pipe completion and port diagnostics
 
-The next bounded implementation is prepared from `8b12e709777c352c384cbb8ea76b266d7e70c00d`.
+The next bounded implementation was published as `c8c43a7ffff95a235b248c6dc38b15e235b7ef78`
+from `8b12e709777c352c384cbb8ea76b266d7e70c00d`.
 See `docs/checkpoints/WINDOWS_PIPE_COMPLETION.md`. It addresses the demonstrable
 worker-queue dependency in idle cancellation, removes remaining normal-path
 blocking process readers, publishes cleanup ownership before callbacks, and
@@ -219,6 +220,25 @@ records bounded port role/phase/native errors. The existing deadlines and
 frozen previous delay mechanism, without changing the runner or product pool.
 
 The suite now expects 892 cases (26 added), with 17 exact Linux skips and the
-same 14 Windows skips. Exact-source CI is PENDING; the three preceding Windows
-findings are not declared resolved merely because code has changed. Preserve
-the previous failed results and record the new source, full TRX and control JSON.
+same 14 Windows skips. All seven workflows passed, attempt 1 without reruns.
+Main run `37497048946`: Linux 5250 passed / 0 failed / 102 skipped; Windows
+Server 2025 5268 passed / 0 failed / 84 skipped across six full iterations each.
+Both source archives' 362 blobs, all twelve TRX and forty-two control JSON reports
+were independently verified. Actual Windows stdout/stderr canceled in 5–7 ms
+in the six isolated occupied-pool controls, before releasing either worker or
+terminating the child. The frozen previous delay mechanism remained pending at
+its one-second observation and then canceled after workers were released.
+
+The six-protocol standard-user Windows primary-token lab and installed
+status-service lab also passed. V2/V3 normal/native suites, five Windows TLS
+matrix repetitions, five lifecycle repetitions per OS and both WPF smokes passed.
+Full evidence is `docs/evidence/WINDOWS_PIPE_COMPLETION_VALIDATION.json`.
+Previous failures remain recorded; no historical native port error was available,
+so its old root cause remains unknown despite no recurrence in these runs.
+
+Current next step: close the pre-existing exceptional drain-timeout lifetime of
+the validator and controlled-server helper, which can still dispose original
+readers after a failed join. This needs bounded forced-failure tests; normal-path
+success does not accept it. Then continue selected-node service handoff and owned
+runtime lifecycle, with recovery before privileged networking. Product/SYSTEM/TUN
+and Windows 11 gates remain unaccepted as described above.

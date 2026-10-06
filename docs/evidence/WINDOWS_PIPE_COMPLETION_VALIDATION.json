@@ -1,0 +1,3215 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-06T16:43:58.302023+00:00",
+  "status": "PASSED_FOR_RECORDED_CI_SCOPE",
+  "sourceCommit": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+  "sourceTree": "d3c9a2237a61b0a0c939877f0df62c8843bc156a",
+  "parentCommit": "8b12e709777c352c384cbb8ea76b266d7e70c00d",
+  "assemblyVersion": "0.1.7",
+  "sdk": "10.0.112",
+  "coreVersion": "1.19.32",
+  "validation": {
+    "localBuild": "NOT_RUN_NO_SDK",
+    "mainRunId": 37497048946,
+    "workflowAttempts": 1,
+    "workflowReruns": 0,
+    "sourceBlobsIndependentlyVerifiedPerRegressionArtifact": 362,
+    "rawTrxIndependentlyRecounted": 12,
+    "uniqueCasesPerTrx": 892,
+    "controlJsonReportsIndependentlyChecked": 42,
+    "previousCasesRetained": 866,
+    "newCases": 26,
+    "runnerOrProductPoolConfigurationChanged": false,
+    "tlsAndPinnedProfileBoundaryUnchanged": true,
+    "portAttemptBudget": 32,
+    "deadlinesIncreased": false
+  },
+  "regression": [
+    {
+      "platform": "Windows",
+      "artifact": {
+        "id": 11428940136,
+        "name": "AutoVPN-V3F-c8c43a7ffff95a235b248c6dc38b15e235b7ef78-windows-latest",
+        "size_in_bytes": 2315817,
+        "url": "https://api.github.com/repos/alinescafs3mp-afk/vpn/actions/artifacts/11428940136",
+        "archive_download_url": "https://api.github.com/repos/alinescafs3mp-afk/vpn/actions/artifacts/11428940136/zip",
+        "expired": false,
+        "created_at": "2026-10-06T16:39:19Z",
+        "expires_at": "2027-01-04T16:36:37Z",
+        "updated_at": "2026-10-06T16:39:19Z",
+        "digest": "sha256:e313c2040840ab04f8533150b4f415369d79c8d6bc9d3d3ee19e508b9c0ac461",
+        "workflow_run": {
+          "id": 37497048946,
+          "repository_id": 1402213459,
+          "head_repository_id": 1402213459,
+          "head_branch": "main",
+          "head_sha": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78"
+        }
+      },
+      "sourceBlobsVerified": 362,
+      "sourceCommit": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "sourceTree": "d3c9a2237a61b0a0c939877f0df62c8843bc156a",
+      "coreSha256": "beb9878924d7bd38c67176b441ab5e668cc378bfe751c8dc8fef3eb5aaf566d5",
+      "buildWarnings": 0,
+      "buildErrors": 0,
+      "totals": {
+        "passed": 5268,
+        "failed": 0,
+        "skipped": 84
+      },
+      "newCaseTotals": {
+        "passed": 156,
+        "failed": 0,
+        "skipped": 0
+      },
+      "runs": [
+        {
+          "iteration": 1,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 878,
+          "failed": 0,
+          "skipped": 14,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess",
+            "AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap",
+            "AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.LateDnsCompletionKeepsCanceledStartupAndAdmissionSealed",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeHysteria2NodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeShadowsocksNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTrojanNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTuicNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVlessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVmessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStartupDeadlineIncludesDnsPreparation",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStopCancelsDnsAndJoinsPreparationWithoutAllocatingPortsOrFiles",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeRuntimeStopsItsActiveCoreAndSealsAdmission",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeStartupStopRaceIsJoinedWithoutAResurrectedCore"
+          ],
+          "newCases": {
+            "passed": 26,
+            "failed": 0,
+            "skipped": 0
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-native",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 2,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 5,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": true,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": true,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1014,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 10,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 4,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "7924e14cdb42a40560e6575db65ac597832b6c5d7e555262904385a69dcbb94e"
+        },
+        {
+          "iteration": 2,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 878,
+          "failed": 0,
+          "skipped": 14,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess",
+            "AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap",
+            "AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.LateDnsCompletionKeepsCanceledStartupAndAdmissionSealed",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeHysteria2NodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeShadowsocksNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTrojanNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTuicNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVlessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVmessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStartupDeadlineIncludesDnsPreparation",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStopCancelsDnsAndJoinsPreparationWithoutAllocatingPortsOrFiles",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeRuntimeStopsItsActiveCoreAndSealsAdmission",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeStartupStopRaceIsJoinedWithoutAResurrectedCore"
+          ],
+          "newCases": {
+            "passed": 26,
+            "failed": 0,
+            "skipped": 0
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1007,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 5,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-native",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 2,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 6,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": true,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": true,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 6,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "7aeedbbc2e2f9d96ba8526ded16bea54eca405a85c60cdffc8f2da6828953036"
+        },
+        {
+          "iteration": 3,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 878,
+          "failed": 0,
+          "skipped": 14,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess",
+            "AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap",
+            "AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.LateDnsCompletionKeepsCanceledStartupAndAdmissionSealed",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeHysteria2NodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeShadowsocksNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTrojanNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTuicNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVlessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVmessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStartupDeadlineIncludesDnsPreparation",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStopCancelsDnsAndJoinsPreparationWithoutAllocatingPortsOrFiles",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeRuntimeStopsItsActiveCoreAndSealsAdmission",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeStartupStopRaceIsJoinedWithoutAResurrectedCore"
+          ],
+          "newCases": {
+            "passed": 26,
+            "failed": 0,
+            "skipped": 0
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1016,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 12,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-native",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 2,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 7,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": true,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": true,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 5,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "3ec625b3afa2f0a21dbc2f9d5917741f24c48a83af7d2a491b12c1f87f8691bb"
+        },
+        {
+          "iteration": 4,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 878,
+          "failed": 0,
+          "skipped": 14,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess",
+            "AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap",
+            "AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.LateDnsCompletionKeepsCanceledStartupAndAdmissionSealed",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeHysteria2NodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeShadowsocksNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTrojanNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTuicNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVlessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVmessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStartupDeadlineIncludesDnsPreparation",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStopCancelsDnsAndJoinsPreparationWithoutAllocatingPortsOrFiles",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeRuntimeStopsItsActiveCoreAndSealsAdmission",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeStartupStopRaceIsJoinedWithoutAResurrectedCore"
+          ],
+          "newCases": {
+            "passed": 26,
+            "failed": 0,
+            "skipped": 0
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-native",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 2,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 6,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": true,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": true,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1001,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 5,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 7,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "71ad8367c31b8e210cf368dd118c03b12bd81e0c3c96f4ede231f0bc71983bd6"
+        },
+        {
+          "iteration": 5,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 878,
+          "failed": 0,
+          "skipped": 14,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess",
+            "AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap",
+            "AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.LateDnsCompletionKeepsCanceledStartupAndAdmissionSealed",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeHysteria2NodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeShadowsocksNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTrojanNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTuicNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVlessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVmessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStartupDeadlineIncludesDnsPreparation",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStopCancelsDnsAndJoinsPreparationWithoutAllocatingPortsOrFiles",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeRuntimeStopsItsActiveCoreAndSealsAdmission",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeStartupStopRaceIsJoinedWithoutAResurrectedCore"
+          ],
+          "newCases": {
+            "passed": 26,
+            "failed": 0,
+            "skipped": 0
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 10,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1004,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-native",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 2,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 5,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": true,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": true,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 5,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "b773976953a4a7dfbc5fc2d3f8bad4c520646e14856ae6870bf956be20487ea6"
+        },
+        {
+          "iteration": 6,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 878,
+          "failed": 0,
+          "skipped": 14,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess",
+            "AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap",
+            "AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.LateDnsCompletionKeepsCanceledStartupAndAdmissionSealed",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeHysteria2NodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeShadowsocksNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTrojanNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeTuicNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVlessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.NativeVmessNodeOwnsPortsAndStops",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStartupDeadlineIncludesDnsPreparation",
+            "AutoVpn.UnitTests.RuntimeNodeEntryTests.RuntimeStopCancelsDnsAndJoinsPreparationWithoutAllocatingPortsOrFiles",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeRuntimeStopsItsActiveCoreAndSealsAdmission",
+            "AutoVpn.UnitTests.RuntimePreparationTests.NativeStartupStopRaceIsJoinedWithoutAResurrectedCore"
+          ],
+          "newCases": {
+            "passed": 26,
+            "failed": 0,
+            "skipped": 0
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 5,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-native",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 2,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 6,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": true,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": true,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1014,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 5,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "1f62ff6d50a812a9d3f4394039361323e434bae18ac907deb8f68337a9964271"
+        }
+      ]
+    },
+    {
+      "platform": "Linux",
+      "artifact": {
+        "id": 11428430747,
+        "name": "AutoVPN-V3F-c8c43a7ffff95a235b248c6dc38b15e235b7ef78-ubuntu-latest",
+        "size_in_bytes": 2313709,
+        "url": "https://api.github.com/repos/alinescafs3mp-afk/vpn/actions/artifacts/11428430747",
+        "archive_download_url": "https://api.github.com/repos/alinescafs3mp-afk/vpn/actions/artifacts/11428430747/zip",
+        "expired": false,
+        "created_at": "2026-10-06T16:38:45Z",
+        "expires_at": "2027-01-04T16:36:37Z",
+        "updated_at": "2026-10-06T16:38:45Z",
+        "digest": "sha256:39e3d164c432274749a73a6bc2a14f56546d8b93e0876fa6c71bda26c170a0a2",
+        "workflow_run": {
+          "id": 37497048946,
+          "repository_id": 1402213459,
+          "head_repository_id": 1402213459,
+          "head_branch": "main",
+          "head_sha": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78"
+        }
+      },
+      "sourceBlobsVerified": 362,
+      "sourceCommit": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "sourceTree": "d3c9a2237a61b0a0c939877f0df62c8843bc156a",
+      "coreSha256": "3122d100e8177501776109f1a6253a694611627cf4d7c7ec82705855cf8626a8",
+      "buildWarnings": 0,
+      "buildErrors": 0,
+      "totals": {
+        "passed": 5250,
+        "failed": 0,
+        "skipped": 102
+      },
+      "newCaseTotals": {
+        "passed": 144,
+        "failed": 0,
+        "skipped": 12
+      },
+      "runs": [
+        {
+          "iteration": 1,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 875,
+          "failed": 0,
+          "skipped": 17,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.Exited259IsNotMistakenForStillActive",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.InvalidAndClosedHandlesFailClosed",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.RetainedLiveProcessHandleIsNotSignaled",
+            "AutoVpn.UnitTests.AstraV3EResourceTests.LockedCleanupIsReportedAndCanBeRetriedAfterRelease",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.LegacyDisconnectDiscardsTheUnreadReply",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.NativeReplySurvivesAndRetainedInstanceIsReusable",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExistingOwnerGrantIsIdempotent",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExplicitDenialIsPreservedBeforeOwnerAllow",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.InheritedRulesAndAnotherUserAreNotReplaced",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.NullDaclFailsClosed",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.OnlyOwnerQueryAndSynchronizeAreAdded",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.WellKnownAndMalformedOwnersCannotReceiveAGrant",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.AvailableQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.LegacyQuietPipesOccupyTheBoundedPool",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.ValidatorQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+            "AutoVpn.UnitTests.RuntimePreparationTests.WindowsRuntimeOutputKeepsTheBoundedPoolResponsive"
+          ],
+          "newCases": {
+            "passed": 24,
+            "failed": 0,
+            "skipped": 2
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1000,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 13,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 12,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "0944ebc245ee81d89374e96f147ed2aca2429be4a11a4535a96882afc66f7b61"
+        },
+        {
+          "iteration": 2,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 875,
+          "failed": 0,
+          "skipped": 17,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.Exited259IsNotMistakenForStillActive",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.InvalidAndClosedHandlesFailClosed",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.RetainedLiveProcessHandleIsNotSignaled",
+            "AutoVpn.UnitTests.AstraV3EResourceTests.LockedCleanupIsReportedAndCanBeRetriedAfterRelease",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.LegacyDisconnectDiscardsTheUnreadReply",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.NativeReplySurvivesAndRetainedInstanceIsReusable",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExistingOwnerGrantIsIdempotent",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExplicitDenialIsPreservedBeforeOwnerAllow",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.InheritedRulesAndAnotherUserAreNotReplaced",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.NullDaclFailsClosed",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.OnlyOwnerQueryAndSynchronizeAreAdded",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.WellKnownAndMalformedOwnersCannotReceiveAGrant",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.AvailableQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.LegacyQuietPipesOccupyTheBoundedPool",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.ValidatorQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+            "AutoVpn.UnitTests.RuntimePreparationTests.WindowsRuntimeOutputKeepsTheBoundedPoolResponsive"
+          ],
+          "newCases": {
+            "passed": 24,
+            "failed": 0,
+            "skipped": 2
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 39,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 12,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1000,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "021c668b215deb8a097a48aab24138a46a6102bf0593c8e4c28d333bfe8936cb"
+        },
+        {
+          "iteration": 3,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 875,
+          "failed": 0,
+          "skipped": 17,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.Exited259IsNotMistakenForStillActive",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.InvalidAndClosedHandlesFailClosed",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.RetainedLiveProcessHandleIsNotSignaled",
+            "AutoVpn.UnitTests.AstraV3EResourceTests.LockedCleanupIsReportedAndCanBeRetriedAfterRelease",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.LegacyDisconnectDiscardsTheUnreadReply",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.NativeReplySurvivesAndRetainedInstanceIsReusable",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExistingOwnerGrantIsIdempotent",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExplicitDenialIsPreservedBeforeOwnerAllow",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.InheritedRulesAndAnotherUserAreNotReplaced",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.NullDaclFailsClosed",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.OnlyOwnerQueryAndSynchronizeAreAdded",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.WellKnownAndMalformedOwnersCannotReceiveAGrant",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.AvailableQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.LegacyQuietPipesOccupyTheBoundedPool",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.ValidatorQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+            "AutoVpn.UnitTests.RuntimePreparationTests.WindowsRuntimeOutputKeepsTheBoundedPoolResponsive"
+          ],
+          "newCases": {
+            "passed": 24,
+            "failed": 0,
+            "skipped": 2
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 12,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1001,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 25,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "25501c83b8e4eb3a17047e67f6772e74fec65d8224443768159696defaad09d5"
+        },
+        {
+          "iteration": 4,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 875,
+          "failed": 0,
+          "skipped": 17,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.Exited259IsNotMistakenForStillActive",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.InvalidAndClosedHandlesFailClosed",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.RetainedLiveProcessHandleIsNotSignaled",
+            "AutoVpn.UnitTests.AstraV3EResourceTests.LockedCleanupIsReportedAndCanBeRetriedAfterRelease",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.LegacyDisconnectDiscardsTheUnreadReply",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.NativeReplySurvivesAndRetainedInstanceIsReusable",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExistingOwnerGrantIsIdempotent",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExplicitDenialIsPreservedBeforeOwnerAllow",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.InheritedRulesAndAnotherUserAreNotReplaced",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.NullDaclFailsClosed",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.OnlyOwnerQueryAndSynchronizeAreAdded",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.WellKnownAndMalformedOwnersCannotReceiveAGrant",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.AvailableQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.LegacyQuietPipesOccupyTheBoundedPool",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.ValidatorQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+            "AutoVpn.UnitTests.RuntimePreparationTests.WindowsRuntimeOutputKeepsTheBoundedPoolResponsive"
+          ],
+          "newCases": {
+            "passed": 24,
+            "failed": 0,
+            "skipped": 2
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1000,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 27,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 13,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "da34edad9bb6b835799e345569f286a2c4612988665f79a110ffd19f6ea324ba"
+        },
+        {
+          "iteration": 5,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 875,
+          "failed": 0,
+          "skipped": 17,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.Exited259IsNotMistakenForStillActive",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.InvalidAndClosedHandlesFailClosed",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.RetainedLiveProcessHandleIsNotSignaled",
+            "AutoVpn.UnitTests.AstraV3EResourceTests.LockedCleanupIsReportedAndCanBeRetriedAfterRelease",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.LegacyDisconnectDiscardsTheUnreadReply",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.NativeReplySurvivesAndRetainedInstanceIsReusable",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExistingOwnerGrantIsIdempotent",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExplicitDenialIsPreservedBeforeOwnerAllow",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.InheritedRulesAndAnotherUserAreNotReplaced",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.NullDaclFailsClosed",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.OnlyOwnerQueryAndSynchronizeAreAdded",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.WellKnownAndMalformedOwnersCannotReceiveAGrant",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.AvailableQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.LegacyQuietPipesOccupyTheBoundedPool",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.ValidatorQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+            "AutoVpn.UnitTests.RuntimePreparationTests.WindowsRuntimeOutputKeepsTheBoundedPoolResponsive"
+          ],
+          "newCases": {
+            "passed": 24,
+            "failed": 0,
+            "skipped": 2
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 12,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1000,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 18,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "d830b42275a6bdee73ba8a4dd08848e1a18eac5d473093bcde7b97d65326b74a"
+        },
+        {
+          "iteration": 6,
+          "total": 892,
+          "uniqueIds": 892,
+          "passed": 875,
+          "failed": 0,
+          "skipped": 17,
+          "expectedSkipNames": [
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.Exited259IsNotMistakenForStillActive",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.InvalidAndClosedHandlesFailClosed",
+            "AutoVpn.UnitTests.AstraV3DServiceProcessTests.RetainedLiveProcessHandleIsNotSignaled",
+            "AutoVpn.UnitTests.AstraV3EResourceTests.LockedCleanupIsReportedAndCanBeRetriedAfterRelease",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.LegacyDisconnectDiscardsTheUnreadReply",
+            "AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.NativeReplySurvivesAndRetainedInstanceIsReusable",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExistingOwnerGrantIsIdempotent",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.ExplicitDenialIsPreservedBeforeOwnerAllow",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.InheritedRulesAndAnotherUserAreNotReplaced",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.NullDaclFailsClosed",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.OnlyOwnerQueryAndSynchronizeAreAdded",
+            "AutoVpn.UnitTests.AstraV3FServiceAccessTests.WellKnownAndMalformedOwnersCannotReceiveAGrant",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.AvailableQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.LegacyQuietPipesOccupyTheBoundedPool",
+            "AutoVpn.UnitTests.AstraV3GAvailablePipeTests.ValidatorQuietPipesLeaveTheBoundedPoolUsable",
+            "AutoVpn.UnitTests.OwnedPipeCancellationTests.OwnedStdoutAndStderrCancelWhileAllWorkersRemainBlocked",
+            "AutoVpn.UnitTests.RuntimePreparationTests.WindowsRuntimeOutputKeepsTheBoundedPoolResponsive"
+          ],
+          "newCases": {
+            "passed": 24,
+            "failed": 0,
+            "skipped": 2
+          },
+          "failures": [],
+          "controls": [
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleStreamCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-stream",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 11,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.LegacyDelayCancellationNeedsAnAvailableWorker",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-delay-control",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": false,
+                "cancellationMilliseconds": 1000,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": false,
+                "nextReadAllowed": null,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            },
+            {
+              "name": "AutoVpn.UnitTests.OwnedPipeCancellationTests.IdleDrainCancellationCompletesWhileAllWorkersRemainBlocked",
+              "outcome": "Passed",
+              "report": {
+                "mode": "pool-cancel-drain",
+                "passed": true,
+                "poolLimited": true,
+                "workersOccupiedBeforeRead": true,
+                "readCount": 1,
+                "pendingBeforeCancel": true,
+                "completedBeforeWorkerRelease": true,
+                "cancellationMilliseconds": 13,
+                "workersBlockedAtObservation": true,
+                "canceledBeforeWorkerRelease": true,
+                "nextReadAllowed": true,
+                "childAliveBeforeWorkerRelease": null,
+                "workersJoined": true,
+                "readsJoined": true,
+                "canceledAfterJoin": true,
+                "childExited": null,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            }
+          ],
+          "trxSha256": "d6b99668d72c405f04db95c44a6f95d7b4ee76e255283d9065095300eccd2aa2"
+        }
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "platform": "Windows",
+      "mode": "pool-cancel-native",
+      "observations": 6,
+      "milliseconds": [
+        5,
+        6,
+        7,
+        6,
+        5,
+        6
+      ],
+      "minimum": 5,
+      "maximum": 7,
+      "median": 6.0,
+      "meaning": "completed as canceled while both worker threads were still occupied"
+    },
+    {
+      "platform": "Windows",
+      "mode": "pool-cancel-delay-control",
+      "observations": 6,
+      "milliseconds": [
+        1014,
+        1007,
+        1016,
+        1001,
+        1004,
+        1014
+      ],
+      "minimum": 1001,
+      "maximum": 1016,
+      "median": 1010.5,
+      "meaning": "still pending at approximately one-second observation; completed as canceled only after releasing workers"
+    },
+    {
+      "platform": "Windows",
+      "mode": "pool-cancel-drain",
+      "observations": 6,
+      "milliseconds": [
+        10,
+        6,
+        12,
+        7,
+        10,
+        5
+      ],
+      "minimum": 5,
+      "maximum": 12,
+      "median": 8.5,
+      "meaning": "completed as canceled while both worker threads were still occupied"
+    },
+    {
+      "platform": "Windows",
+      "mode": "pool-cancel-stream",
+      "observations": 6,
+      "milliseconds": [
+        4,
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "minimum": 4,
+      "maximum": 5,
+      "median": 5.0,
+      "meaning": "completed as canceled while both worker threads were still occupied"
+    },
+    {
+      "platform": "Linux",
+      "mode": "pool-cancel-delay-control",
+      "observations": 6,
+      "milliseconds": [
+        1000,
+        1000,
+        1001,
+        1000,
+        1000,
+        1000
+      ],
+      "minimum": 1000,
+      "maximum": 1001,
+      "median": 1000.0,
+      "meaning": "still pending at approximately one-second observation; completed as canceled only after releasing workers"
+    },
+    {
+      "platform": "Linux",
+      "mode": "pool-cancel-stream",
+      "observations": 6,
+      "milliseconds": [
+        13,
+        12,
+        25,
+        13,
+        12,
+        11
+      ],
+      "minimum": 11,
+      "maximum": 25,
+      "median": 12.5,
+      "meaning": "completed as canceled while both worker threads were still occupied"
+    },
+    {
+      "platform": "Linux",
+      "mode": "pool-cancel-drain",
+      "observations": 6,
+      "milliseconds": [
+        12,
+        39,
+        12,
+        27,
+        18,
+        13
+      ],
+      "minimum": 12,
+      "maximum": 39,
+      "median": 15.5,
+      "meaning": "completed as canceled while both worker threads were still occupied"
+    }
+  ],
+  "windowsStandardUserRuntime": {
+    "jobId": 112384156290,
+    "artifactId": 11427544033,
+    "verification": "Raw summary.json and fixture.json agree; all six protocol cases and every cleanup flag checked. Only the owned lab Job Object is claimed to need no forced termination.",
+    "rawSummary": {
+      "schemaVersion": 1,
+      "sourceCommit": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "sourceTree": "d3c9a2237a61b0a0c939877f0df62c8843bc156a",
+      "coreSha256": "beb9878924d7bd38c67176b441ab5e668cc378bfe751c8dc8fef3eb5aaf566d5",
+      "runnerImage": "win25-vs2026",
+      "runnerImageVersion": "20260925.250.1",
+      "passed": true,
+      "scope": "GitHub-hosted Windows Server, actual standard-user primary token, six synthetic non-TUN runtime starts and cleanup; no remote connectivity, installation or Windows 11 acceptance",
+      "primaryIdentityVerified": true,
+      "childSessionId": 2,
+      "childExitCode": 0,
+      "naturalProcessExit": true,
+      "naturalJobEmpty": true,
+      "forcedJobTermination": false,
+      "noOwnedProcessesRemaining": true,
+      "noOwnedDirectoryRemaining": true,
+      "noOwnedAccountRemaining": true,
+      "noOwnedProfileRemaining": true,
+      "checks": [
+        {
+          "result": {
+            "passed": true,
+            "standardUser": true,
+            "sessionId": 2,
+            "failure": null,
+            "cases": [
+              {
+                "protocol": "Vless",
+                "passed": true,
+                "ownedPorts": true,
+                "authenticatedVersion": true,
+                "stringsPreserved": true,
+                "processExited": true,
+                "directoryRemoved": true,
+                "portsReleased": true,
+                "admissionSealed": true,
+                "failure": null,
+                "cleanupFailure": null
+              },
+              {
+                "protocol": "Vmess",
+                "passed": true,
+                "ownedPorts": true,
+                "authenticatedVersion": true,
+                "stringsPreserved": true,
+                "processExited": true,
+                "directoryRemoved": true,
+                "portsReleased": true,
+                "admissionSealed": true,
+                "failure": null,
+                "cleanupFailure": null
+              },
+              {
+                "protocol": "Trojan",
+                "passed": true,
+                "ownedPorts": true,
+                "authenticatedVersion": true,
+                "stringsPreserved": true,
+                "processExited": true,
+                "directoryRemoved": true,
+                "portsReleased": true,
+                "admissionSealed": true,
+                "failure": null,
+                "cleanupFailure": null
+              },
+              {
+                "protocol": "Shadowsocks",
+                "passed": true,
+                "ownedPorts": true,
+                "authenticatedVersion": true,
+                "stringsPreserved": true,
+                "processExited": true,
+                "directoryRemoved": true,
+                "portsReleased": true,
+                "admissionSealed": true,
+                "failure": null,
+                "cleanupFailure": null
+              },
+              {
+                "protocol": "Hysteria2",
+                "passed": true,
+                "ownedPorts": true,
+                "authenticatedVersion": true,
+                "stringsPreserved": true,
+                "processExited": true,
+                "directoryRemoved": true,
+                "portsReleased": true,
+                "admissionSealed": true,
+                "failure": null,
+                "cleanupFailure": null
+              },
+              {
+                "protocol": "Tuic",
+                "passed": true,
+                "ownedPorts": true,
+                "authenticatedVersion": true,
+                "stringsPreserved": true,
+                "processExited": true,
+                "directoryRemoved": true,
+                "portsReleased": true,
+                "admissionSealed": true,
+                "failure": null,
+                "cleanupFailure": null
+              }
+            ]
+          },
+          "name": "SIX_NATIVE_PROTOCOL_STARTS_AND_STOPS"
+        }
+      ],
+      "cleanupErrors": []
+    }
+  },
+  "windowsInstalledStatusService": {
+    "jobId": 112384156184,
+    "artifactId": 11428590539,
+    "verification": "Raw summary and six client.log results agree. Standard-user IPC authorization uses impersonation; actual separate primary-token child evidence is in the node-runtime job.",
+    "rawSummary": {
+      "schemaVersion": 1,
+      "sourceCommit": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "passed": true,
+      "scope": "Disposable Windows SCM control-plane only; no TUN, WFP, proxy, routes or user catalogue",
+      "checks": [
+        {
+          "result": {
+            "standardUser": true,
+            "state": "Ready",
+            "instanceId": "b7a0bec2c3fb4b52804dd7db60067179",
+            "processId": 8712,
+            "canConnect": false,
+            "coreRunning": false,
+            "readOnlyProcessAccess": true
+          },
+          "name": "AUTHORIZED_STANDARD_USER"
+        },
+        {
+          "result": {
+            "standardUser": true,
+            "state": "AccessDenied",
+            "instanceId": null,
+            "processId": null,
+            "canConnect": false,
+            "coreRunning": false,
+            "readOnlyProcessAccess": false
+          },
+          "name": "UNAUTHORIZED_STANDARD_USER"
+        },
+        {
+          "result": {
+            "standardUser": true,
+            "cases": 8,
+            "operationRejected": true,
+            "duplicateRejected": true,
+            "oversizedRejected": true,
+            "idleClosed": true,
+            "listenerSurvived": true,
+            "instanceId": "b7a0bec2c3fb4b52804dd7db60067179"
+          },
+          "name": "MALFORMED_IDLE_AND_UNSUPPORTED_REQUESTS"
+        },
+        {
+          "result": {
+            "standardUser": true,
+            "state": "Stopped",
+            "instanceId": null,
+            "processId": null,
+            "canConnect": false,
+            "coreRunning": false,
+            "readOnlyProcessAccess": false
+          },
+          "name": "SCM_STOP"
+        },
+        {
+          "name": "SCM_RESTART",
+          "newInstance": true,
+          "result": {
+            "standardUser": true,
+            "state": "Ready",
+            "instanceId": "f0e29d4aa8ab41c39039f8d32bdadd25",
+            "processId": 3708,
+            "canConnect": false,
+            "coreRunning": false,
+            "readOnlyProcessAccess": true
+          }
+        },
+        {
+          "result": {
+            "standardUser": true,
+            "state": "NotInstalled",
+            "instanceId": null,
+            "processId": null,
+            "canConnect": false,
+            "coreRunning": false,
+            "readOnlyProcessAccess": false
+          },
+          "name": "SCM_REMOVE"
+        }
+      ],
+      "cleanupErrors": [],
+      "noInstalledServiceRemaining": true,
+      "noOwnedInstallationRemaining": true
+    }
+  },
+  "artifactArchiveVerification": [
+    {
+      "id": 11428940136,
+      "name": "AutoVPN-V3F-c8c43a7ffff95a235b248c6dc38b15e235b7ef78-windows-latest",
+      "bytes": 2315817,
+      "sha256": "e313c2040840ab04f8533150b4f415369d79c8d6bc9d3d3ee19e508b9c0ac461",
+      "downloadedAndIndependentlyHashed": true,
+      "zipCrcVerified": true
+    },
+    {
+      "id": 11428590539,
+      "name": "AutoVPN-V3F-service-c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "bytes": 1951,
+      "sha256": "715869238761cb0bbdf5e4ceabac80736f7023f5f86ac1ba307cd587b1bd84ff",
+      "downloadedAndIndependentlyHashed": true,
+      "zipCrcVerified": true
+    },
+    {
+      "id": 11428430747,
+      "name": "AutoVPN-V3F-c8c43a7ffff95a235b248c6dc38b15e235b7ef78-ubuntu-latest",
+      "bytes": 2313709,
+      "sha256": "39e3d164c432274749a73a6bc2a14f56546d8b93e0876fa6c71bda26c170a0a2",
+      "downloadedAndIndependentlyHashed": true,
+      "zipCrcVerified": true
+    },
+    {
+      "id": 11427544033,
+      "name": "AutoVPN-V3F-node-runtime-c8c43a7ffff95a235b248c6dc38b15e235b7ef78-windows-standard-user",
+      "bytes": 1894,
+      "sha256": "da1b41b4ae4e9c50d1430868f019b357bcb85fdc64ca8110826e24c9b8f5d73b",
+      "downloadedAndIndependentlyHashed": true,
+      "zipCrcVerified": true
+    }
+  ],
+  "allWorkflows": [
+    {
+      "id": 37497049004,
+      "name": "checkpoint-source",
+      "status": "completed",
+      "conclusion": "success",
+      "run_attempt": 1,
+      "head_sha": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497049004",
+      "created_at": "2026-10-06T16:36:37Z",
+      "updated_at": "2026-10-06T16:36:50Z"
+    },
+    {
+      "id": 37497049070,
+      "name": "ci",
+      "status": "completed",
+      "conclusion": "success",
+      "run_attempt": 1,
+      "head_sha": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497049070",
+      "created_at": "2026-10-06T16:36:37Z",
+      "updated_at": "2026-10-06T16:37:32Z"
+    },
+    {
+      "id": 37497048969,
+      "name": "v3f-service-windows-2022",
+      "status": "completed",
+      "conclusion": "success",
+      "run_attempt": 1,
+      "head_sha": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048969",
+      "created_at": "2026-10-06T16:36:37Z",
+      "updated_at": "2026-10-06T16:37:43Z"
+    },
+    {
+      "id": 37497048970,
+      "name": "astra-v2-validation",
+      "status": "completed",
+      "conclusion": "success",
+      "run_attempt": 1,
+      "head_sha": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048970",
+      "created_at": "2026-10-06T16:36:37Z",
+      "updated_at": "2026-10-06T16:39:17Z"
+    },
+    {
+      "id": 37497048946,
+      "name": "v3f-output-and-installed-service",
+      "status": "completed",
+      "conclusion": "success",
+      "run_attempt": 1,
+      "head_sha": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048946",
+      "created_at": "2026-10-06T16:36:37Z",
+      "updated_at": "2026-10-06T16:39:24Z"
+    },
+    {
+      "id": 37497049072,
+      "name": "astra-v3-source-validation",
+      "status": "completed",
+      "conclusion": "success",
+      "run_attempt": 1,
+      "head_sha": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497049072",
+      "created_at": "2026-10-06T16:36:37Z",
+      "updated_at": "2026-10-06T16:39:24Z"
+    },
+    {
+      "id": 37497048892,
+      "name": "astra-r1-validation",
+      "status": "completed",
+      "conclusion": "success",
+      "run_attempt": 1,
+      "head_sha": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+      "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048892",
+      "created_at": "2026-10-06T16:36:37Z",
+      "updated_at": "2026-10-06T16:40:07Z"
+    }
+  ],
+  "mainJobs": [
+    {
+      "id": 112384155922,
+      "name": "regression (windows-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 37497048946,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Run actions/setup-dotnet@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Retain exact source and verify unchanged trust boundaries",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Six complete managed and native suites, every failure retained",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Post Run actions/setup-dotnet@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13
+        }
+      ]
+    },
+    {
+      "id": 112384156184,
+      "name": "installed-service",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 37497048946,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Run actions/setup-dotnet@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Actual SCM lifecycle and standard-user authorization on a disposable runner",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Post Run actions/setup-dotnet@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11
+        }
+      ]
+    },
+    {
+      "id": 112384156190,
+      "name": "regression (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 37497048946,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Run actions/setup-dotnet@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Retain exact source and verify unchanged trust boundaries",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Six complete managed and native suites, every failure retained",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Post Run actions/setup-dotnet@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13
+        }
+      ]
+    },
+    {
+      "id": 112384156290,
+      "name": "node-runtime-standard-user",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 37497048946,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Run actions/setup-dotnet@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Six native non-TUN starts under an actual standard-user process token",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Post Run actions/setup-dotnet@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11
+        }
+      ]
+    }
+  ],
+  "secondaryWorkflows": {
+    "sourceCommit": "c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+    "scope": "Independent read-only inspection of secondary V2/V3 jobs and complete job logs; counts below are runner log summaries, not an independent raw TRX recount.",
+    "runs": [
+      {
+        "id": 37497048970,
+        "jobs": [
+          {
+            "id": 112384156120,
+            "name": "source",
+            "status": "completed",
+            "conclusion": "success",
+            "run_id": 37497048970,
+            "logs_url": null,
+            "steps": [
+              {
+                "name": "Set up job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 1
+              },
+              {
+                "name": "Run actions/checkout@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 2
+              },
+              {
+                "name": "Run mkdir -p artifacts",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 3
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 4
+              },
+              {
+                "name": "Post Run actions/checkout@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 8
+              },
+              {
+                "name": "Complete job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 9
+              }
+            ]
+          },
+          {
+            "id": 112384156426,
+            "name": "validate (ubuntu-latest)",
+            "status": "completed",
+            "conclusion": "success",
+            "run_id": 37497048970,
+            "logs_url": null,
+            "steps": [
+              {
+                "name": "Set up job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 1
+              },
+              {
+                "name": "Run actions/checkout@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 2
+              },
+              {
+                "name": "Run actions/setup-dotnet@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 3
+              },
+              {
+                "name": "Normal full regression",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 4
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 5
+              },
+              {
+                "name": "Official core and full native regression",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 6
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 7
+              },
+              {
+                "name": "Five unchanged Windows TLS matrix repeats",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 8
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 9
+              },
+              {
+                "name": "WPF navigation and settings reopen",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 10
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 11
+              },
+              {
+                "name": "Post Run actions/setup-dotnet@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 21
+              },
+              {
+                "name": "Post Run actions/checkout@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 22
+              },
+              {
+                "name": "Complete job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 23
+              }
+            ]
+          },
+          {
+            "id": 112384156713,
+            "name": "validate (windows-latest)",
+            "status": "completed",
+            "conclusion": "success",
+            "run_id": 37497048970,
+            "logs_url": null,
+            "steps": [
+              {
+                "name": "Set up job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 1
+              },
+              {
+                "name": "Run actions/checkout@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 2
+              },
+              {
+                "name": "Run actions/setup-dotnet@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 3
+              },
+              {
+                "name": "Normal full regression",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 4
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 5
+              },
+              {
+                "name": "Official core and full native regression",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 6
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 7
+              },
+              {
+                "name": "Five unchanged Windows TLS matrix repeats",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 8
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 9
+              },
+              {
+                "name": "WPF navigation and settings reopen",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 10
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 11
+              },
+              {
+                "name": "Post Run actions/setup-dotnet@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 21
+              },
+              {
+                "name": "Post Run actions/checkout@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 22
+              },
+              {
+                "name": "Complete job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 23
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 37497049072,
+        "jobs": [
+          {
+            "id": 112384156088,
+            "name": "validate (ubuntu-latest)",
+            "status": "completed",
+            "conclusion": "success",
+            "run_id": 37497049072,
+            "logs_url": null,
+            "steps": [
+              {
+                "name": "Set up job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 1
+              },
+              {
+                "name": "Run actions/checkout@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 2
+              },
+              {
+                "name": "Run actions/setup-dotnet@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 3
+              },
+              {
+                "name": "Retained managed and native regression",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 4
+              },
+              {
+                "name": "Repeat owned lifecycle interleavings five times",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 5
+              },
+              {
+                "name": "WPF navigation and same-user DPAPI catalogue, not networking",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 6
+              },
+              {
+                "name": "Build Windows development package",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 7
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 8
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 9
+              },
+              {
+                "name": "Post Run actions/setup-dotnet@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 17
+              },
+              {
+                "name": "Post Run actions/checkout@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 18
+              },
+              {
+                "name": "Complete job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 19
+              }
+            ]
+          },
+          {
+            "id": 112384156687,
+            "name": "validate (windows-latest)",
+            "status": "completed",
+            "conclusion": "success",
+            "run_id": 37497049072,
+            "logs_url": null,
+            "steps": [
+              {
+                "name": "Set up job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 1
+              },
+              {
+                "name": "Run actions/checkout@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 2
+              },
+              {
+                "name": "Run actions/setup-dotnet@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 3
+              },
+              {
+                "name": "Retained managed and native regression",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 4
+              },
+              {
+                "name": "Repeat owned lifecycle interleavings five times",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 5
+              },
+              {
+                "name": "WPF navigation and same-user DPAPI catalogue, not networking",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 6
+              },
+              {
+                "name": "Build Windows development package",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 7
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 8
+              },
+              {
+                "name": "Run actions/upload-artifact@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 9
+              },
+              {
+                "name": "Post Run actions/setup-dotnet@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 17
+              },
+              {
+                "name": "Post Run actions/checkout@v4",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 18
+              },
+              {
+                "name": "Complete job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 19
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "jobs": [
+      {
+        "id": 112384156426,
+        "platform": "Linux",
+        "counts": [
+          {
+            "stage": "normal",
+            "failed": 0,
+            "passed": 838,
+            "skipped": 30,
+            "total": 868
+          },
+          {
+            "stage": "native",
+            "failed": 0,
+            "passed": 875,
+            "skipped": 17,
+            "total": 892
+          }
+        ],
+        "buildSummaryCount": 2,
+        "buildWarnings": [
+          0,
+          0
+        ],
+        "buildErrors": [
+          0,
+          0
+        ],
+        "failureDiagnostics": [],
+        "evidenceLines": [
+          {
+            "line": 156,
+            "text": "2026-10-06T16:37:19.2487571Z Build succeeded."
+          },
+          {
+            "line": 157,
+            "text": "2026-10-06T16:37:19.2488772Z     0 Warning(s)"
+          },
+          {
+            "line": 158,
+            "text": "2026-10-06T16:37:19.2493047Z     0 Error(s)"
+          },
+          {
+            "line": 226,
+            "text": "2026-10-06T16:37:28.8792807Z Passed!  - Failed:     0, Passed:   838, Skipped:    30, Total:   868, Duration: 6 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 275,
+            "text": "2026-10-06T16:37:34.5226742Z Build succeeded."
+          },
+          {
+            "line": 276,
+            "text": "2026-10-06T16:37:34.5227670Z     0 Warning(s)"
+          },
+          {
+            "line": 277,
+            "text": "2026-10-06T16:37:34.5258032Z     0 Error(s)"
+          },
+          {
+            "line": 320,
+            "text": "2026-10-06T16:37:50.6600000Z Passed!  - Failed:     0, Passed:   875, Skipped:    17, Total:   892, Duration: 13 s - AutoVpn.UnitTests.dll (net10.0)"
+          }
+        ]
+      },
+      {
+        "id": 112384156713,
+        "platform": "Windows",
+        "counts": [
+          {
+            "stage": "normal",
+            "failed": 0,
+            "passed": 850,
+            "skipped": 18,
+            "total": 868
+          },
+          {
+            "stage": "native",
+            "failed": 0,
+            "passed": 878,
+            "skipped": 14,
+            "total": 892
+          },
+          {
+            "stage": "tls-repeat-1",
+            "failed": 0,
+            "passed": 6,
+            "skipped": 0,
+            "total": 6
+          },
+          {
+            "stage": "tls-repeat-2",
+            "failed": 0,
+            "passed": 6,
+            "skipped": 0,
+            "total": 6
+          },
+          {
+            "stage": "tls-repeat-3",
+            "failed": 0,
+            "passed": 6,
+            "skipped": 0,
+            "total": 6
+          },
+          {
+            "stage": "tls-repeat-4",
+            "failed": 0,
+            "passed": 6,
+            "skipped": 0,
+            "total": 6
+          },
+          {
+            "stage": "tls-repeat-5",
+            "failed": 0,
+            "passed": 6,
+            "skipped": 0,
+            "total": 6
+          }
+        ],
+        "buildSummaryCount": 2,
+        "buildWarnings": [
+          0,
+          0
+        ],
+        "buildErrors": [
+          0,
+          0
+        ],
+        "failureDiagnostics": [],
+        "evidenceLines": [
+          {
+            "line": 143,
+            "text": "2026-10-06T16:37:30.9918755Z Build succeeded."
+          },
+          {
+            "line": 144,
+            "text": "2026-10-06T16:37:30.9933171Z     0 Warning(s)"
+          },
+          {
+            "line": 145,
+            "text": "2026-10-06T16:37:30.9936293Z     0 Error(s)"
+          },
+          {
+            "line": 189,
+            "text": "2026-10-06T16:37:52.1259705Z Passed!  - Failed:     0, Passed:   850, Skipped:    18, Total:   868, Duration: 14 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 238,
+            "text": "2026-10-06T16:38:01.0073314Z Build succeeded."
+          },
+          {
+            "line": 239,
+            "text": "2026-10-06T16:38:01.0074086Z     0 Warning(s)"
+          },
+          {
+            "line": 240,
+            "text": "2026-10-06T16:38:01.0074609Z     0 Error(s)"
+          },
+          {
+            "line": 277,
+            "text": "2026-10-06T16:38:16.5009222Z Passed!  - Failed:     0, Passed:   878, Skipped:    14, Total:   892, Duration: 12 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 326,
+            "text": "2026-10-06T16:38:24.5820539Z Passed!  - Failed:     0, Passed:     6, Skipped:     0, Total:     6, Duration: 3 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 332,
+            "text": "2026-10-06T16:38:30.8226198Z Passed!  - Failed:     0, Passed:     6, Skipped:     0, Total:     6, Duration: 3 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 338,
+            "text": "2026-10-06T16:38:37.0857971Z Passed!  - Failed:     0, Passed:     6, Skipped:     0, Total:     6, Duration: 3 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 344,
+            "text": "2026-10-06T16:38:43.3034970Z Passed!  - Failed:     0, Passed:     6, Skipped:     0, Total:     6, Duration: 3 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 350,
+            "text": "2026-10-06T16:38:49.6461756Z Passed!  - Failed:     0, Passed:     6, Skipped:     0, Total:     6, Duration: 3 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 388,
+            "text": "2026-10-06T16:39:11.0492423Z ROUND6_WPF: 8 actual renders; normal reopen=True; persisted settings=True; no consent or TUN."
+          }
+        ]
+      },
+      {
+        "id": 112384156088,
+        "platform": "Linux",
+        "counts": [
+          {
+            "stage": "normal",
+            "failed": 0,
+            "passed": 838,
+            "skipped": 30,
+            "total": 868
+          },
+          {
+            "stage": "native",
+            "failed": 0,
+            "passed": 875,
+            "skipped": 17,
+            "total": 892
+          },
+          {
+            "stage": "lifecycle-repeat-1",
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "total": 20
+          },
+          {
+            "stage": "lifecycle-repeat-2",
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "total": 20
+          },
+          {
+            "stage": "lifecycle-repeat-3",
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "total": 20
+          },
+          {
+            "stage": "lifecycle-repeat-4",
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "total": 20
+          },
+          {
+            "stage": "lifecycle-repeat-5",
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "total": 20
+          }
+        ],
+        "buildSummaryCount": 2,
+        "buildWarnings": [
+          0,
+          0
+        ],
+        "buildErrors": [
+          0,
+          0
+        ],
+        "failureDiagnostics": [],
+        "evidenceLines": [
+          {
+            "line": 158,
+            "text": "2026-10-06T16:37:24.9506784Z Build succeeded."
+          },
+          {
+            "line": 159,
+            "text": "2026-10-06T16:37:24.9529948Z     0 Warning(s)"
+          },
+          {
+            "line": 160,
+            "text": "2026-10-06T16:37:24.9530858Z     0 Error(s)"
+          },
+          {
+            "line": 228,
+            "text": "2026-10-06T16:37:34.3093160Z Passed!  - Failed:     0, Passed:   838, Skipped:    30, Total:   868, Duration: 6 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 242,
+            "text": "2026-10-06T16:37:37.1784974Z Build succeeded."
+          },
+          {
+            "line": 243,
+            "text": "2026-10-06T16:37:37.1785406Z     0 Warning(s)"
+          },
+          {
+            "line": 244,
+            "text": "2026-10-06T16:37:37.1785760Z     0 Error(s)"
+          },
+          {
+            "line": 286,
+            "text": "2026-10-06T16:37:52.4281653Z Passed!  - Failed:     0, Passed:   875, Skipped:    17, Total:   892, Duration: 12 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 304,
+            "text": "2026-10-06T16:37:54.7665756Z Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 198 ms - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 312,
+            "text": "2026-10-06T16:37:56.6361034Z Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 195 ms - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 320,
+            "text": "2026-10-06T16:37:58.4751037Z Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 200 ms - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 328,
+            "text": "2026-10-06T16:38:00.2684485Z Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 195 ms - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 336,
+            "text": "2026-10-06T16:38:02.0974561Z Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 195 ms - AutoVpn.UnitTests.dll (net10.0)"
+          }
+        ]
+      },
+      {
+        "id": 112384156687,
+        "platform": "Windows",
+        "counts": [
+          {
+            "stage": "normal",
+            "failed": 0,
+            "passed": 850,
+            "skipped": 18,
+            "total": 868
+          },
+          {
+            "stage": "native",
+            "failed": 0,
+            "passed": 878,
+            "skipped": 14,
+            "total": 892
+          },
+          {
+            "stage": "lifecycle-repeat-1",
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "total": 20
+          },
+          {
+            "stage": "lifecycle-repeat-2",
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "total": 20
+          },
+          {
+            "stage": "lifecycle-repeat-3",
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "total": 20
+          },
+          {
+            "stage": "lifecycle-repeat-4",
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "total": 20
+          },
+          {
+            "stage": "lifecycle-repeat-5",
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "total": 20
+          },
+          {
+            "stage": "package-normal",
+            "failed": 0,
+            "passed": 850,
+            "skipped": 18,
+            "total": 868
+          }
+        ],
+        "buildSummaryCount": 3,
+        "buildWarnings": [
+          0,
+          0,
+          0
+        ],
+        "buildErrors": [
+          0,
+          0,
+          0
+        ],
+        "failureDiagnostics": [],
+        "evidenceLines": [
+          {
+            "line": 144,
+            "text": "2026-10-06T16:37:29.6141547Z Build succeeded."
+          },
+          {
+            "line": 145,
+            "text": "2026-10-06T16:37:29.6275076Z     0 Warning(s)"
+          },
+          {
+            "line": 146,
+            "text": "2026-10-06T16:37:29.6291856Z     0 Error(s)"
+          },
+          {
+            "line": 190,
+            "text": "2026-10-06T16:37:40.5425748Z Passed!  - Failed:     0, Passed:   850, Skipped:    18, Total:   868, Duration: 7 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 204,
+            "text": "2026-10-06T16:37:45.1233469Z Build succeeded."
+          },
+          {
+            "line": 205,
+            "text": "2026-10-06T16:37:45.1237888Z     0 Warning(s)"
+          },
+          {
+            "line": 206,
+            "text": "2026-10-06T16:37:45.1238852Z     0 Error(s)"
+          },
+          {
+            "line": 242,
+            "text": "2026-10-06T16:37:59.9502132Z Passed!  - Failed:     0, Passed:   878, Skipped:    14, Total:   892, Duration: 12 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 260,
+            "text": "2026-10-06T16:38:02.3339933Z Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 212 ms - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 268,
+            "text": "2026-10-06T16:38:04.3377775Z Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 216 ms - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 276,
+            "text": "2026-10-06T16:38:06.3172404Z Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 218 ms - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 284,
+            "text": "2026-10-06T16:38:08.2872810Z Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 216 ms - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 292,
+            "text": "2026-10-06T16:38:10.2524648Z Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 209 ms - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 300,
+            "text": "2026-10-06T16:38:19.4607378Z ROUND6_WPF: 8 actual renders; normal reopen=True; persisted settings=True; no consent or TUN."
+          },
+          {
+            "line": 320,
+            "text": "2026-10-06T16:38:24.1148485Z Build succeeded."
+          },
+          {
+            "line": 321,
+            "text": "2026-10-06T16:38:24.1150987Z     0 Warning(s)"
+          },
+          {
+            "line": 322,
+            "text": "2026-10-06T16:38:24.1154197Z     0 Error(s)"
+          },
+          {
+            "line": 366,
+            "text": "2026-10-06T16:38:33.7289366Z Passed!  - Failed:     0, Passed:   850, Skipped:    18, Total:   868, Duration: 7 s - AutoVpn.UnitTests.dll (net10.0)"
+          },
+          {
+            "line": 408,
+            "text": "2026-10-06T16:38:57.3441395Z Package file identities verified. This does NOT establish Windows networking or release readiness."
+          },
+          {
+            "line": 409,
+            "text": "2026-10-06T16:39:09.1502889Z Built DEVELOPMENT only: D:\\a\\vpn\\vpn\\artifacts\\AutoVPN-V3-win-x64-DEVELOPMENT.zip"
+          }
+        ]
+      }
+    ],
+    "artifacts": [
+      {
+        "runId": 37497048970,
+        "id": 11428800218,
+        "name": "V2-native-windows-latest",
+        "bytes": 215986,
+        "sha256": "402c4557079355a421dc09765b53a10dadbb72b9fb54d61b023521a6fec51fa3",
+        "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048970/artifacts/11428800218"
+      },
+      {
+        "runId": 37497048970,
+        "id": 11428480521,
+        "name": "V2-source",
+        "bytes": 994602,
+        "sha256": "0ae55d7e1e12492fcf773c4c9c6101ebdb29fd906a71167cdcc81d2cafb693ae",
+        "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048970/artifacts/11428480521"
+      },
+      {
+        "runId": 37497048970,
+        "id": 11428301157,
+        "name": "V2-native-ubuntu-latest",
+        "bytes": 216455,
+        "sha256": "d33db7fcf936fd55a9ad13a9eef38b6d4bfe11a29b417530b315141ae6958890",
+        "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048970/artifacts/11428301157"
+      },
+      {
+        "runId": 37497048970,
+        "id": 11427882930,
+        "name": "V2-WPF",
+        "bytes": 208993,
+        "sha256": "ee6fe30c50379d4346f62af4899918a03c6ff8473356bd4e10ef46a49084fe0f",
+        "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048970/artifacts/11427882930"
+      },
+      {
+        "runId": 37497048970,
+        "id": 11427833051,
+        "name": "V2-normal-windows-latest",
+        "bytes": 210632,
+        "sha256": "f9650b1d3842f539b3c861c3cf459c34b2d1d3aa7e98b52cf5e8530621e0b8fc",
+        "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048970/artifacts/11427833051"
+      },
+      {
+        "runId": 37497048970,
+        "id": 11427588537,
+        "name": "V2-normal-ubuntu-latest",
+        "bytes": 211157,
+        "sha256": "98a4d39c9369e980e9ff21990dde40e67ea47882e49e98aed3c7acb268734f53",
+        "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048970/artifacts/11427588537"
+      },
+      {
+        "runId": 37497048970,
+        "id": 11427444564,
+        "name": "V2-TLS-repeat-Windows",
+        "bytes": 10611,
+        "sha256": "16d7e1adf1b1c7c89537b06889e1f4f372f32f1fc393884529edb389863c1c83",
+        "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497048970/artifacts/11427444564"
+      },
+      {
+        "runId": 37497049072,
+        "id": 11428860151,
+        "name": "V3-c8c43a7ffff95a235b248c6dc38b15e235b7ef78-ubuntu-latest",
+        "bytes": 660808,
+        "sha256": "e3c245080238eae681ea4d9c01ed96217de34ca400516a38af3788c33a49fd5d",
+        "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497049072/artifacts/11428860151"
+      },
+      {
+        "runId": 37497049072,
+        "id": 11428007305,
+        "name": "AutoVPN-V3B-development-c8c43a7ffff95a235b248c6dc38b15e235b7ef78",
+        "bytes": 216505485,
+        "sha256": "3bde674399e9456a675dfb3976b00dcfca47b007be983894835325bad89e77a1",
+        "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497049072/artifacts/11428007305"
+      },
+      {
+        "runId": 37497049072,
+        "id": 11427933088,
+        "name": "V3-c8c43a7ffff95a235b248c6dc38b15e235b7ef78-windows-latest",
+        "bytes": 1296314,
+        "sha256": "8db4cf68fccb158d0db36a087e06fa072da2383c08fee78db6433844a4ebc47f",
+        "url": "https://github.com/alinescafs3mp-afk/vpn/actions/runs/37497049072/artifacts/11427933088"
+      }
+    ],
+    "distinctFailures": [],
+    "note": "All inspected jobs are completed success. No reruns, repository mutations, timers, or background monitors were started. Prior failed attempts remain historical failed evidence."
+  },
+  "secondaryEvidenceMethod": "Complete logs independently read by reviewer and root; console summaries verified. Secondary raw TRX and package bytes were not independently recounted/downloaded. Artifact digests in secondaryWorkflows are GitHub API metadata, not local archive verification.",
+  "previousEvidence": "docs/evidence/NODE_RUNTIME_ENTRY_VALIDATION.json",
+  "previousFindings": [
+    {
+      "finding": "idle read cancellation missed one-second assertion",
+      "currentResult": "Specific Task.Delay worker-queue dependency reproduced by the frozen negative control; production stream/drain cancellation passed under the same occupied-pool condition. Original test also retained and passed.",
+      "historicalCauseLimit": "This is controlled mechanism evidence, not a claim that every old scheduling incident has one proven cause."
+    },
+    {
+      "finding": "VLESS output drain failed after confirmed process exit",
+      "currentResult": "No recurrence in six full Windows iterations or secondary V2/V3 jobs. Owned cancellation and cleanup admission controls passed.",
+      "historicalCauseLimit": "The former counter snapshot did not establish a unique root cause."
+    },
+    {
+      "finding": "VLESS/gRPC CORE_PORT_UNAVAILABLE",
+      "currentResult": "No recurrence in this recorded CI. Role/phase/native-error diagnostics are implemented and tested, with the original candidate policy and 32 attempts.",
+      "historicalRootCause": "UNKNOWN_NO_RECORDED_NATIVE_ERROR_IN_OLD_RUN"
+    }
+  ],
+  "openGates": {
+    "validatorAndControlledFixtureDrainTimeoutLifetime": "OPEN: pre-existing exceptional paths can dispose original readers after a timed-out drain; need separate forced-failure ownership tests and implementation.",
+    "selectedNodeServiceHandoff": "NOT_ACCEPTED",
+    "productionSystemOrAdminRuntime": "REFUSED",
+    "tunWfpDnsIpv6Protection": "NOT_ACCEPTED",
+    "ownedNetworkRecovery": "NOT_ACCEPTED",
+    "normalInstaller": "NOT_ACCEPTED",
+    "windows11ProductAcceptance": "NOT_RUN",
+    "publicNodeConnectivityPerformance": "NOT_MEASURED",
+    "unpublishedV3HIntegration": "NOT_INCLUDED"
+  },
+  "nextSteps": [
+    "Close the documented validator/controlled-fixture exceptional drain lifetime with bounded forced-failure coverage.",
+    "Reconcile selected-node service handoff and then service-owned runtime lifecycle.",
+    "Implement owned network journaling and recovery before privileged Windows TUN/WFP/DNS/IPv6 acceptance."
+  ]
+}

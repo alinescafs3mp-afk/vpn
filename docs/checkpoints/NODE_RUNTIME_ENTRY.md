@@ -4,6 +4,11 @@ This increment continues the published V3G / assembly 0.1.7 implementation.
 It does not integrate the unpublished V3H candidate. The migration checkpoint
 `CHAT_TRANSFER_2026-10-06.md` retains owner instructions and earlier evidence.
 
+Follow-up: `c8c43a7ffff95a235b248c6dc38b15e235b7ef78` adds owned pipe cancellation
+and bounded port diagnostics. Its full Linux/Windows CI passed; see
+`WINDOWS_PIPE_COMPLETION.md` and `docs/evidence/WINDOWS_PIPE_COMPLETION_VALIDATION.json`.
+The failed earlier runs below are historical evidence and remain preserved.
+
 ## Scope and API
 
 The application can now create `RuntimeNodeSelection.Create(NodeSemantics)` and
