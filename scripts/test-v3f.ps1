@@ -17,7 +17,9 @@ $env:AUTOVPN_TLS_DIAGNOSTICS = '1'
 $allowed = if ($IsWindows) {
     @('AutoVpn.UnitTests.AstraV3ProfileTests.NativeRuntimeOwnsLocalPortsThenStopsItsExactProcess',
       'AutoVpn.UnitTests.IndependentRound3Tests.A16_OutputDrainMustContinueAfterItsRetentionCap',
-      'AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess')
+      'AutoVpn.UnitTests.Round2SliceATests.Rt03WorkerCancelCleansCredentialsAndDoesNotKillTheNextProcess',
+      'AutoVpn.UnitTests.RuntimePreparationTests.NativeRuntimeStopsItsActiveCoreAndSealsAdmission',
+      'AutoVpn.UnitTests.RuntimePreparationTests.NativeStartupStopRaceIsJoinedWithoutAResurrectedCore')
 } else {
     @('AutoVpn.UnitTests.AstraV3DServiceProcessTests.RetainedLiveProcessHandleIsNotSignaled',
       'AutoVpn.UnitTests.AstraV3DServiceProcessTests.Exited259IsNotMistakenForStillActive',
@@ -32,7 +34,8 @@ $allowed = if ($IsWindows) {
       'AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.LegacyDisconnectDiscardsTheUnreadReply',
       'AutoVpn.UnitTests.AstraV3FReplyLifetimeTests.NativeReplySurvivesAndRetainedInstanceIsReusable',
       'AutoVpn.UnitTests.AstraV3GAvailablePipeTests.LegacyQuietPipesOccupyTheBoundedPool',
-      'AutoVpn.UnitTests.AstraV3GAvailablePipeTests.AvailableQuietPipesLeaveTheBoundedPoolUsable')
+      'AutoVpn.UnitTests.AstraV3GAvailablePipeTests.AvailableQuietPipesLeaveTheBoundedPoolUsable',
+      'AutoVpn.UnitTests.RuntimePreparationTests.WindowsRuntimeOutputKeepsTheBoundedPoolResponsive')
 }
 $runs = @()
 for ($i = 1; $i -le 6; $i++) {
@@ -48,10 +51,10 @@ for ($i = 1; $i -le 6; $i++) {
     $skipped = @($cases | Where-Object outcome -eq 'NotExecuted' | ForEach-Object testName)
     $identities = @($cases | ForEach-Object testId | Sort-Object -Unique)
     $unknown = @($cases | Where-Object { $_.outcome -notin @('Passed','Failed','NotExecuted') })
-    $valid = $code -eq 0 -and $cases.Count -eq 599 -and $identities.Count -eq 599 -and $passed.Count -eq (599 - $allowed.Count) -and $failed.Count -eq 0 -and $unknown.Count -eq 0 -and $skipped.Count -eq $allowed.Count -and @($skipped | Where-Object { $_ -notin $allowed }).Count -eq 0
+    $valid = $code -eq 0 -and $cases.Count -eq 619 -and $identities.Count -eq 619 -and $passed.Count -eq (619 - $allowed.Count) -and $failed.Count -eq 0 -and $unknown.Count -eq 0 -and $skipped.Count -eq $allowed.Count -and @($skipped | Where-Object { $_ -notin $allowed }).Count -eq 0
     $runs += [ordered]@{iteration=$i; exitCode=$code; valid=$valid; total=$cases.Count; passed=$passed.Count; failed=$failed.Count; skipped=$skipped; failures=@($failed | ForEach-Object { @{name=$_.testName; message=$_.Output.ErrorInfo.Message; stack=$_.Output.ErrorInfo.StackTrace} })}
     Write-Host "Iteration $i : passed=$($passed.Count) failed=$($failed.Count) total=$($cases.Count) exit=$code valid=$valid"
-    [ordered]@{sourceCommit=(& git rev-parse HEAD); sourceTree=(& git rev-parse 'HEAD^{tree}'); coreSha256=$hash; plannedRuns=6; completedRuns=$runs.Count; runs=$runs; note='Full suite: 536 upstream cases, 50 migrated V3F cases, 13 new V3G cases. Previous V3E failures remain recorded. No remote TLS retry, timeout or certificate-policy change.'} | ConvertTo-Json -Depth 12 | Set-Content "$root/summary.json" -Encoding utf8NoBOM
+    [ordered]@{sourceCommit=(& git rev-parse HEAD); sourceTree=(& git rev-parse 'HEAD^{tree}'); coreSha256=$hash; plannedRuns=6; completedRuns=$runs.Count; runs=$runs; note='Full suite: 599 published V3G cases plus 20 runtime-preparation cases. Unpublished V3H is not included. No remote TLS retry, timeout or certificate-policy change.'} | ConvertTo-Json -Depth 12 | Set-Content "$root/summary.json" -Encoding utf8NoBOM
 }
 $bad = @($runs | Where-Object { !$_.valid })
 if ($bad.Count -gt 0) { $bad | ConvertTo-Json -Depth 12 | Write-Host; throw "$($bad.Count) of six iterations failed; all outcomes retained." }

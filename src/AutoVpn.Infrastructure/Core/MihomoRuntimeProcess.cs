@@ -7,6 +7,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using AutoVpn.Domain;
 using AutoVpn.Infrastructure.Broker;
@@ -24,6 +25,12 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
     private readonly string? _binaryPath;
     private readonly string? _expectedHash;
     private readonly TimeSpan _startupTimeout;
+    private readonly object _lifecycleGate = new();
+    private CancellationTokenSource? _startCancellation;
+    private Task<CoreStartResult>? _startTask;
+    private Task? _stopTask;
+    private bool _stopRequested;
+    private bool _attempted;
     private Process? _process;
     private FileStream? _binary;
     private DirectoryInfo? _directory;
@@ -31,7 +38,6 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
     private Task? _stderr;
     private bool _started;
     private int _stopped;
-    private int _attempted;
 
     public MihomoRuntimeProcess(string? binaryPath, string? expectedSha256, TimeSpan? startupTimeout = null)
     {
@@ -53,9 +59,25 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
         }
     }
 
-    public async Task<CoreStartResult> StartAsync(string yaml, CancellationToken cancellationToken)
+    public Task<CoreStartResult> StartAsync(string yaml, CancellationToken cancellationToken)
     {
-        if (Interlocked.Exchange(ref _attempted, 1) != 0) throw new InvalidOperationException("CORE_ALREADY_ATTEMPTED");
+        ArgumentNullException.ThrowIfNull(yaml);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_lifecycleGate)
+        {
+            if (_stopRequested) return Task.FromResult(new CoreStartResult(false, "CORE_CLOSING"));
+            if (_attempted) throw new InvalidOperationException("CORE_ALREADY_ATTEMPTED");
+            _attempted = true;
+            var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _startCancellation = cancellation;
+            // Publish the task under the same gate as Stop. Backend work never runs under this gate.
+            _startTask = Task.Run(() => StartCoreAsync(yaml, cancellation.Token), CancellationToken.None);
+            return _startTask;
+        }
+    }
+
+    private async Task<CoreStartResult> StartCoreAsync(string yaml, CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
         RuntimeProfileContract profile;
         try { profile = RuntimeProfileContract.Parse(yaml); }
@@ -93,9 +115,9 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
         cancellationToken.ThrowIfCancellationRequested();
         _started = _process.Start();
         if (!_started) return new(false, "CORE_START_FAILED");
-        // Drain both pipes immediately, retaining no raw text or imported credentials.
-        _stdout = DrainAsync(_process.StandardOutput);
-        _stderr = DrainAsync(_process.StandardError);
+        // Exactly one reader per fresh owned handle; no retained native text or imported credentials.
+        _stdout = ReadOutputAsync(_process.StandardOutput);
+        _stderr = ReadOutputAsync(_process.StandardError);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(_startupTimeout);
         try
@@ -103,6 +125,7 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
             while (IsRunning)
             {
                 deadline.Token.ThrowIfCancellationRequested();
+                if (_stdout.IsFaulted || _stderr.IsFaulted) return new(false, "CORE_OUTPUT_READ_FAILED");
                 if (ProbeWorker.ProcessOwnsLoopbackPort(_process.Id, profile.SocksPort) &&
                     ProbeWorker.ProcessOwnsLoopbackPort(_process.Id, profile.ControllerPort) &&
                     await ControllerReadyAsync(profile, deadline.Token).ConfigureAwait(false) &&
@@ -117,11 +140,38 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
         { return new(false, "CORE_START_TIMEOUT"); }
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        lock (_lifecycleGate)
+        {
+            // Admission is sealed even before Start or when this particular waiter is canceled.
+            _stopRequested = true;
+            if (_stopTask is null || _stopTask.IsFaulted || _stopTask.IsCanceled)
+                _stopTask = Task.Run(StopCoreAsync, CancellationToken.None);
+            // Only the wait is cancelable. Ownership and the actual cleanup task are retained.
+            return _stopTask.WaitAsync(cancellationToken);
+        }
+    }
+
+    private async Task StopCoreAsync()
     {
         if (Volatile.Read(ref _stopped) != 0) return;
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(8));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        if (_startCancellation is not null)
+        {
+            try { await _startCancellation.CancelAsync().WaitAsync(deadline.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            { throw new IOException("CORE_START_CLEANUP_UNCERTAIN"); }
+            catch (Exception) { /* A throwing startup cancellation callback does not waive cleanup. */ }
+        }
+        if (_startTask is not null)
+        {
+            try { await _startTask.WaitAsync(deadline.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            { throw new IOException("CORE_START_CLEANUP_UNCERTAIN"); }
+            catch (Exception) { /* Failed or canceled startup may still own files and a process. */ }
+        }
+        // Startup is now finished and cannot create new resources behind the cleanup operation.
         if (_started && _process is not null)
         {
             try
@@ -131,14 +181,14 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
                 if (!_process.HasExited) throw new IOException("CORE_CLEANUP_UNCERTAIN");
             }
             catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or OperationCanceledException)
-            { throw new IOException("CORE_CLEANUP_UNCERTAIN", ex); }
+            { throw new IOException("CORE_CLEANUP_UNCERTAIN"); }
             try
             {
                 await Task.WhenAll(_stdout ?? Task.CompletedTask, _stderr ?? Task.CompletedTask)
                     .WaitAsync(deadline.Token).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or OperationCanceledException)
-            { throw new IOException("CORE_OUTPUT_CLEANUP_UNCERTAIN", ex); }
+            { throw new IOException("CORE_OUTPUT_CLEANUP_UNCERTAIN"); }
         }
         // Do not erase configuration or release the binary if process exit is unconfirmed.
         if (_directory is not null && Directory.Exists(_directory.FullName))
@@ -149,13 +199,25 @@ public sealed class MihomoRuntimeProcess : IOwnedCoreProcess
         }
         if (_binary is not null) await _binary.DisposeAsync().ConfigureAwait(false);
         _process?.Dispose();
+        _startCancellation?.Dispose();
         Volatile.Write(ref _stopped, 1);
     }
 
-    private static async Task DrainAsync(StreamReader reader)
+    internal static async Task ReadOutputAsync(StreamReader reader)
     {
-        var buffer = new char[4096];
-        while (await reader.ReadAsync(buffer).ConfigureAwait(false) != 0) { }
+        ArgumentNullException.ThrowIfNull(reader);
+        try
+        {
+            // A canceled startup must not stop draining output before its owned child exits.
+            var result = await ProbeOutputDrain.ReadAsync(reader, CancellationToken.None).ConfigureAwait(false);
+            if (result.End != ProbeOutputEnd.Eof) throw new IOException("CORE_OUTPUT_READ_FAILED");
+        }
+        catch (Exception ex) when (ex is IOException or OperationCanceledException or
+            ObjectDisposedException or InvalidOperationException or DecoderFallbackException)
+        {
+            // Keep the failure, but not potentially secret child output or exception text.
+            throw new IOException("CORE_OUTPUT_READ_FAILED");
+        }
     }
 
     private static async Task<bool> ControllerReadyAsync(RuntimeProfileContract profile, CancellationToken token)

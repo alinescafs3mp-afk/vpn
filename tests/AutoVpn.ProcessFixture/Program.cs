@@ -1,8 +1,9 @@
 // Finite synthetic owned child. No network or file input. Markers use only its test-owned working directory.
 using System.Diagnostics;
+using AutoVpn.Infrastructure.Core;
 using AutoVpn.Infrastructure.Probe;
 if (args.Length != 1) return 2;
-if (args[0] is "pool-legacy" or "pool-available") return PoolControl(args[0]);
+if (args[0] is "pool-legacy" or "pool-available" or "pool-runtime") return PoolControl(args[0]);
 if (args[0] == "sleep") { await Task.Delay(TimeSpan.FromSeconds(30)); return 0; }
 if (args[0] == "exit") return 0;
 if (args[0] == "exit259") return 259;
@@ -36,8 +37,9 @@ static int PoolControl(string mode)
     using var stop = new CancellationTokenSource();
     using var marker = new ManualResetEventSlim();
     var legacy = mode == "pool-legacy";
-    Task<ProbeOutputResult> Read(StreamReader reader) => legacy
-        ? ProbeOutputDrain.ReadCoreAsync(reader, stop.Token) : ProbeOutputDrain.ReadAsync(reader, stop.Token);
+    Task Read(StreamReader reader) => mode == "pool-runtime"
+        ? MihomoRuntimeProcess.ReadOutputAsync(reader)
+        : legacy ? ProbeOutputDrain.ReadCoreAsync(reader, stop.Token) : ProbeOutputDrain.ReadAsync(reader, stop.Token);
     var stdout = Read(child.StandardOutput); var stderr = Read(child.StandardError);
     var outcome = false;
     try
