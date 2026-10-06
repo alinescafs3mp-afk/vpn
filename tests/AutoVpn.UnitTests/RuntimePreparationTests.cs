@@ -189,13 +189,16 @@ public sealed class RuntimePreparationTests
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "process-fixture", "AutoVpn.ProcessFixture.dll"));
         start.ArgumentList.Add("pool-runtime");
         using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
+        var output = new StringBuilder(); var errors = new StringBuilder();
+        var stdout = ProbeOutputDrain.ReadAsync(process.StandardOutput, CancellationToken.None, output);
+        var stderr = ProbeOutputDrain.ReadAsync(process.StandardError, CancellationToken.None, errors);
         try
         {
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
-            Assert.True(process.ExitCode == 0, await stdout + await stderr);
-            Assert.Contains("CONTROL_PASSED:pool-runtime", await stdout, StringComparison.Ordinal);
+            var drains = await Task.WhenAll(stdout, stderr).WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.All(drains, result => Assert.Equal(ProbeOutputEnd.Eof, result.End));
+            Assert.True(process.ExitCode == 0, output.ToString() + errors);
+            Assert.Contains("CONTROL_PASSED:pool-runtime", output.ToString(), StringComparison.Ordinal);
         }
         finally
         {

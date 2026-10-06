@@ -4,7 +4,8 @@ using AutoVpn.Infrastructure.Core;
 using AutoVpn.Infrastructure.Probe;
 if (args.Length != 1) return 2;
 if (args[0] == "node-runtime") return await RuntimeNodeSmoke.RunAsync();
-if (args[0] is "pool-legacy" or "pool-available" or "pool-runtime") return PoolControl(args[0]);
+if (args[0] is "pool-cancel-stream" or "pool-cancel-drain" or "pool-cancel-native" or "pool-cancel-delay-control") return PipeCancellationControl.Run(args[0]);
+if (args[0] is "pool-legacy" or "pool-available" or "pool-runtime" or "pool-validator") return PoolControl(args[0]);
 if (args[0] == "sleep") { await Task.Delay(TimeSpan.FromSeconds(30)); return 0; }
 if (args[0] == "exit") return 0;
 if (args[0] == "exit259") return 259;
@@ -40,6 +41,7 @@ static int PoolControl(string mode)
     var legacy = mode == "pool-legacy";
     Task Read(StreamReader reader) => mode == "pool-runtime"
         ? MihomoRuntimeProcess.ReadOutputAsync(reader)
+        : mode == "pool-validator" ? MihomoProcessController.DrainAsync(reader)
         : legacy ? ProbeOutputDrain.ReadCoreAsync(reader, stop.Token) : ProbeOutputDrain.ReadAsync(reader, stop.Token);
     var stdout = Read(child.StandardOutput); var stderr = Read(child.StandardError);
     var outcome = false;

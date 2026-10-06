@@ -45,10 +45,25 @@ internal sealed class AvailablePipeReadStream(IAvailablePipeReader source) : Str
                 }
                 // Not a remote probe retry and not an added shutdown budget.
                 // No OS read is outstanding while the pipe is empty.
-                await Task.Delay(10, token).ConfigureAwait(false);
+                await WaitForPollAsync(token).ConfigureAwait(false);
             }
         }
         finally { Volatile.Write(ref _reading, 0); }
+    }
+
+    private static async Task WaitForPollAsync(CancellationToken token)
+    {
+        // Task.Delay deliberately queues its cancellation continuation. An owned
+        // idle read must also unwind when unrelated work occupies every worker.
+        // Cancellation deliberately permits inline continuations. Owned callers
+        // cancel outside lifecycle locks; this reader then unwinds without another
+        // native read. A late timer can touch only this completed signal.
+        var signal = new TaskCompletionSource();
+        using var timer = new Timer(static state => ((TaskCompletionSource)state!).TrySetResult(),
+            signal, 10, Timeout.Infinite);
+        using var registration = token.UnsafeRegister(static (state, canceled) =>
+            ((TaskCompletionSource)state!).TrySetCanceled(canceled), signal);
+        await signal.Task.ConfigureAwait(false);
     }
 
     [SupportedOSPlatform("windows")]

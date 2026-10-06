@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using AutoVpn.Domain;
 using AutoVpn.Infrastructure.Broker;
 using AutoVpn.Infrastructure.Core;
+using AutoVpn.Infrastructure.Probe;
 
 namespace AutoVpn.UnitTests;
 
@@ -185,13 +187,17 @@ public sealed class RuntimeNodeEntryTests
         start.Environment["R6_CORE_HASH"] = TestCorePins.ExpectedHash;
         start.Environment.Remove("AUTOVPN_RUNTIME_LAB_START_GATE");
         using var child = Process.Start(start)!;
-        var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
+        var output = new StringBuilder(); var errors = new StringBuilder();
+        var stdout = ProbeOutputDrain.ReadAsync(child.StandardOutput, CancellationToken.None, output);
+        var stderr = ProbeOutputDrain.ReadAsync(child.StandardError, CancellationToken.None, errors);
         try
         {
             await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(45));
-            var output = await stdout;
-            Assert.True(child.ExitCode == 0, output + await stderr);
-            using var json = JsonDocument.Parse(output);
+            var drains = await Task.WhenAll(stdout, stderr).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.All(drains, result => Assert.Equal(ProbeOutputEnd.Eof, result.End));
+            Assert.Equal(output.Length, drains[0].Characters);
+            Assert.True(child.ExitCode == 0, output.ToString() + errors);
+            using var json = JsonDocument.Parse(output.ToString());
             Assert.True(json.RootElement.GetProperty("passed").GetBoolean());
             var cases = json.RootElement.GetProperty("cases"); Assert.Equal(1, cases.GetArrayLength());
             var result = cases[0]; Assert.Equal(protocol, result.GetProperty("protocol").GetString());

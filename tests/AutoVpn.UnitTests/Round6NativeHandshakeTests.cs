@@ -89,17 +89,24 @@ public sealed class Round6NativeHandshakeTests
             listener.Dispose();socksListener.Dispose();
             if(server is not null)
             {
-                try{if(!server.HasExited)server.Kill(entireProcessTree:true);await server.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));}
+                try
+                {
+                    if(!server.HasExited)server.Kill(entireProcessTree:true);
+                    await server.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                    if(stdout is not null&&stderr is not null)
+                        await Task.WhenAll(stdout,stderr).WaitAsync(TimeSpan.FromSeconds(5));
+                }
                 finally{server.Dispose();}
             }
-            if(stdout is not null&&stderr is not null)await Task.WhenAll(stdout,stderr).WaitAsync(TimeSpan.FromSeconds(5));
             directory.Delete(true);
         }
         string Tail(){lock(outputGate)return tail.ToString();}
         async Task Drain(StreamReader reader)
         {
+            using var adapted = ProbeOutputDrain.AdaptOwnedProcessReader(reader);
+            var decoded = adapted ?? reader;
             var chars=new char[2048];
-            while(true){var count=await reader.ReadAsync(chars.AsMemory());if(count==0)break;lock(outputGate){tail.Append(chars,0,count);if(tail.Length>4096)tail.Remove(0,tail.Length-4096);}}
+            while(true){var count=await decoded.ReadAsync(chars.AsMemory());if(count==0)break;lock(outputGate){tail.Append(chars,0,count);if(tail.Length>4096)tail.Remove(0,tail.Length-4096);}}
         }
     }
 

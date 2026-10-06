@@ -156,11 +156,39 @@ public sealed class AstraV3FOutputTests
         Assert.Equal(worker.OutputCharacters, worker.OutputBytes);
     }
 
-    private static ProbeWorker SyntheticWorker(Task<ProbeOutputResult> stdout, string directory)
+    [Fact]
+    public async Task ReentrantCleanupJoinsThePublishedAttemptBeforeOutputCancellationReturns()
+    {
+        var directory = Directory.CreateTempSubdirectory("autovpn-pipe-reentrant-");
+        using var stop = new CancellationTokenSource();
+        var worker = SyntheticWorker(Task.FromResult(new ProbeOutputResult(0, ProbeOutputEnd.Eof)),
+            directory.FullName, stop);
+        Task? rejoined = null;
+        var completedInsideCallback = true;
+        using var registration = stop.Token.Register(() =>
+        {
+            rejoined = worker.DisposeAsync().AsTask();
+            completedInsideCallback = rejoined.IsCompleted;
+        });
+        try
+        {
+            var cleanup = worker.DisposeAsync().AsTask();
+            await cleanup;
+            Assert.Same(cleanup, rejoined);
+            Assert.False(completedInsideCallback);
+            Assert.Equal("COMPLETED", worker.CleanupReport!.Phase);
+            Assert.True(worker.CleanupReport.ResourcesReleased);
+            Assert.False(Directory.Exists(directory.FullName));
+        }
+        finally { await worker.DisposeAsync(); }
+    }
+
+    private static ProbeWorker SyntheticWorker(Task<ProbeOutputResult> stdout, string directory,
+        CancellationTokenSource? output = null)
     {
         // Exercise the real cleanup state machine with a controlled reader result, not an OS claim.
         var constructor = typeof(ProbeWorker).GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Single();
-        return (ProbeWorker)constructor.Invoke(new object?[] { null, new CancellationTokenSource(), stdout,
+        return (ProbeWorker)constructor.Invoke(new object?[] { null, output ?? new CancellationTokenSource(), stdout,
             Task.FromResult(new ProbeOutputResult(0, ProbeOutputEnd.Eof)), directory, false, "", new StringBuilder() });
     }
     private static StreamReader Reader(string text) => new(new MemoryStream(Encoding.UTF8.GetBytes(text)), Encoding.UTF8);

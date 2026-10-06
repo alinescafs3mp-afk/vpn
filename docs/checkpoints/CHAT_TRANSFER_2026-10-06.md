@@ -207,3 +207,18 @@ Production SYSTEM core execution, TUN, WFP, system DNS/IPv6 protection, recovery
 the normal installer and Windows 11 acceptance remain OPEN/NOT_RUN. Keep feature
 implementation, a successful build, status-service acceptance and an actual
 protected connection distinct in every report.
+
+## Third continuation increment: Windows pipe completion and port diagnostics
+
+The next bounded implementation is prepared from `8b12e709777c352c384cbb8ea76b266d7e70c00d`.
+See `docs/checkpoints/WINDOWS_PIPE_COMPLETION.md`. It addresses the demonstrable
+worker-queue dependency in idle cancellation, removes remaining normal-path
+blocking process readers, publishes cleanup ownership before callbacks, and
+records bounded port role/phase/native errors. The existing deadlines and
+32-attempt port budget remain unchanged. Four isolated controls include the
+frozen previous delay mechanism, without changing the runner or product pool.
+
+The suite now expects 892 cases (26 added), with 17 exact Linux skips and the
+same 14 Windows skips. Exact-source CI is PENDING; the three preceding Windows
+findings are not declared resolved merely because code has changed. Preserve
+the previous failed results and record the new source, full TRX and control JSON.

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using AutoVpn.Domain;
+using AutoVpn.Infrastructure.Probe;
 
 namespace AutoVpn.Infrastructure.Core;
 
@@ -76,12 +77,14 @@ public static class MihomoProcessController
         }
     }
 
-    private static async Task<long> DrainAsync(StreamReader reader)
+    internal static async Task<long> DrainAsync(StreamReader reader)
     {
+        using var adapted = ProbeOutputDrain.AdaptOwnedProcessReader(reader);
+        var decoded = adapted ?? reader;
         var buffer = new char[4096]; long total = 0;
         while (true)
         {
-            var read = await reader.ReadAsync(buffer).ConfigureAwait(false);
+            var read = await decoded.ReadAsync(buffer).ConfigureAwait(false);
             if (read == 0) return total;
             total = total > long.MaxValue - read ? long.MaxValue : total + read;
         }

@@ -16,14 +16,19 @@ public static class ProbeOutputDrain
     public static async Task<ProbeOutputResult> ReadAsync(StreamReader reader, CancellationToken token,
         StringBuilder? retainedPrefix = null)
     {
+        using var adapted = AdaptOwnedProcessReader(reader);
+        return await ReadCoreAsync(adapted ?? reader, token, retainedPrefix).ConfigureAwait(false);
+    }
+
+    // The returned reader owns only its adapter; the original Process reader and
+    // handle must remain alive until this reader has finished. Never mix reads.
+    internal static StreamReader? AdaptOwnedProcessReader(StreamReader reader)
+    {
         ArgumentNullException.ThrowIfNull(reader);
-        if (OperatingSystem.IsWindows() && reader.BaseStream is FileStream { IsAsync: false } file)
-        {
-            using var stream = AvailablePipeReadStream.ForOwnedHandle(file.SafeFileHandle);
-            using var decoded = new StreamReader(stream, reader.CurrentEncoding, true, 1024);
-            return await ReadCoreAsync(decoded, token, retainedPrefix).ConfigureAwait(false);
-        }
-        return await ReadCoreAsync(reader, token, retainedPrefix).ConfigureAwait(false);
+        return OperatingSystem.IsWindows() && reader.BaseStream is FileStream { IsAsync: false } file
+            ? new StreamReader(AvailablePipeReadStream.ForOwnedHandle(file.SafeFileHandle),
+                reader.CurrentEncoding, true, 1024)
+            : null;
     }
 
     internal static async Task<ProbeOutputResult> ReadCoreAsync(StreamReader reader, CancellationToken token,

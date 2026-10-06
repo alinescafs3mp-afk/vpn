@@ -123,8 +123,8 @@ public sealed class MihomoRuntimeProcess : IOwnedNodeCoreProcess
             ? "CORE_START_TIMEOUT" : endpoint.ReasonCode);
         try
         {
-            using var controller = CorePortLease.Reserve();
-            using var socks = CorePortLease.Reserve();
+            using var controller = CorePortLease.Reserve(CorePortRole.Controller);
+            using var socks = CorePortLease.Reserve(CorePortRole.Socks);
             token.ThrowIfCancellationRequested();
             var yaml = RuntimeNodeProfile.Build(selection, endpoint.ExecutionNode!, controller.Port, socks.Port,
                 Convert.ToHexString(RandomNumberGenerator.GetBytes(32)));

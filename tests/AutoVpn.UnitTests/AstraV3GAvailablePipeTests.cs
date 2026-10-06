@@ -110,6 +110,9 @@ public sealed class AstraV3GAvailablePipeTests
     [WindowsHandleFact]
     public Task AvailableQuietPipesLeaveTheBoundedPoolUsable() => RunControlAsync("pool-available");
 
+    [WindowsHandleFact]
+    public Task ValidatorQuietPipesLeaveTheBoundedPoolUsable() => RunControlAsync("pool-validator");
+
     private static async Task RunControlAsync(string mode)
     {
         var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet")
@@ -117,17 +120,22 @@ public sealed class AstraV3GAvailablePipeTests
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "process-fixture", "AutoVpn.ProcessFixture.dll"));
         start.ArgumentList.Add(mode);
         using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+        var output = new StringBuilder(); var errors = new StringBuilder();
+        var stdout = ProbeOutputDrain.ReadAsync(process.StandardOutput, CancellationToken.None, output);
+        var stderr = ProbeOutputDrain.ReadAsync(process.StandardError, CancellationToken.None, errors);
         try
         {
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
-            Assert.True(process.ExitCode == 0, await stdout + await stderr);
-            Assert.Contains("CONTROL_PASSED", await stdout, StringComparison.Ordinal);
+            var drains = await Task.WhenAll(stdout, stderr).WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.All(drains, result => Assert.Equal(ProbeOutputEnd.Eof, result.End));
+            Assert.True(process.ExitCode == 0, output.ToString() + errors);
+            Assert.Contains("CONTROL_PASSED", output.ToString(), StringComparison.Ordinal);
         }
         finally
         {
             if (!process.HasExited) process.Kill(true);
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            await Task.WhenAll(stdout, stderr).WaitAsync(TimeSpan.FromSeconds(3));
         }
     }
 

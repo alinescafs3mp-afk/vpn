@@ -178,8 +178,8 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
             // Declared before the core session so the local endpoint remains
             // bound until that session's cleanup completes.
             await using var readiness = new LoopbackCoreReadiness();
-            var controllerPort = ReservePort(listeners);
-            var socksPort = ReservePort(listeners);
+            var controllerPort = ReservePort(listeners, CorePortRole.Controller);
+            var socksPort = ReservePort(listeners, CorePortRole.Socks);
             string yaml;
             try
             {
@@ -279,10 +279,12 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
         {
             return Fail(ProbeClass.Canceled, ReasonCodes.Canceled, digest, target);
         }
-        catch (CorePortReservationException)
+        catch (CorePortReservationException ex)
         {
-            LastDiagnostic = "CORE_PORT_UNAVAILABLE";
-            return Fail(ProbeClass.CoreFailure, LastDiagnostic, digest, target);
+            LastDiagnostic = ex.Report is { } report
+                ? "CORE_PORT_UNAVAILABLE:" + report.Summary
+                : "CORE_PORT_UNAVAILABLE";
+            return Fail(ProbeClass.CoreFailure, "CORE_PORT_UNAVAILABLE", digest, target);
         }
         catch (ProbeCleanupException ex)
         {
@@ -318,9 +320,9 @@ public sealed class NonTunCoreProbeTransport : IProbeTransport
         return new ProbeObservation(false, null, false, reason, 0, kind, target.AbsoluteUri, digest, worker);
     }
 
-    private static int ReservePort(List<CorePortLease> held)
+    private static int ReservePort(List<CorePortLease> held, CorePortRole role)
     {
-        var listener = CorePortLease.Reserve();
+        var listener = CorePortLease.Reserve(role);
         held.Add(listener);
         return listener.Port;
     }
@@ -909,14 +911,35 @@ public sealed class ProbeWorker : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
+        TaskCompletionSource? owner = null;
+        Task cleanup;
         lock (_cleanupGate)
         {
             // Concurrent callers join one attempt. A failed attempt remains
             // observable and can be retried after the cause has been removed.
             if (_cleanupTask is null || _cleanupTask.IsFaulted || _cleanupTask.IsCanceled)
-                _cleanupTask = CleanupAsync();
-            return new ValueTask(_cleanupTask);
+            {
+                owner = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _cleanupTask = owner.Task;
+                Interlocked.Exchange(ref _disposed, 1);
+            }
+            cleanup = _cleanupTask;
         }
+        // Publish ownership before invoking cancellation callbacks, even when
+        // process exit and the rest of cleanup can complete synchronously.
+        if (owner is not null) _ = CompleteCleanupAsync(owner);
+        return new ValueTask(cleanup);
+    }
+
+    private async Task CompleteCleanupAsync(TaskCompletionSource owner)
+    {
+        try
+        {
+            await CleanupAsync().ConfigureAwait(false);
+            owner.TrySetResult();
+        }
+        catch (OperationCanceledException ex) { owner.TrySetCanceled(ex.CancellationToken); }
+        catch (Exception ex) { owner.TrySetException(ex); }
     }
 
     private async Task CleanupAsync()
