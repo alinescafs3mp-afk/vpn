@@ -11,7 +11,10 @@ internal sealed record FileUseProgressReport(string State, string ErrorKind, int
 internal sealed record FileUseAttemptReport(string ParentPhase, FileUseParentPhaseReport ParentAtAttemptEnd,
     string ExceptionKind, int HResult,
     long ElapsedMilliseconds, bool BudgetExpired, FileUseProgressReport HelperBeforeDeadline,
-    FileUseProgressReport HelperAtAttemptEnd);
+    FileUseProgressReport HelperAtAttemptEnd)
+{
+    public bool BudgetCancellationRequested { get; init; }
+}
 
 internal enum FileUseParentPhase
 {
@@ -21,7 +24,7 @@ internal enum FileUseParentPhase
 
 internal sealed record FileUseParentPhaseReport(string Phase, long ObservedMilliseconds);
 
-internal sealed class FileUseParentProgress(Func<long> elapsed)
+internal sealed class FileUseParentProgress(Func<long> elapsed, Func<bool>? cancellationRequested = null)
 {
     private readonly object _gate = new();
     private FileUseParentPhaseReport _latest = new("NOT_STARTED", 0);
@@ -32,7 +35,8 @@ internal sealed class FileUseParentProgress(Func<long> elapsed)
         {
             var time = Math.Max(0, elapsed());
             _latest = new(phase.ToString(), time);
-            if (time < FileUseProgressCapture.BudgetMilliseconds) _before = _latest;
+            if (time < FileUseProgressCapture.BudgetMilliseconds && cancellationRequested?.Invoke() != true)
+                _before = _latest;
         }
     }
     internal FileUseParentPhaseReport Latest { get { lock (_gate) return _latest; } }
@@ -44,6 +48,7 @@ internal sealed class FileUseProgressCapture
     internal const long BudgetMilliseconds = 2000;
     private readonly object _gate = new();
     private readonly Func<long> _elapsed;
+    private readonly Func<bool>? _cancellationRequested;
     private readonly byte[] _bytes = new byte[FileUseDiagnosticProtocol.MaximumOutputBytes];
     private readonly TaskCompletionSource _inputClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _kept, _lineStart, _frames;
@@ -56,9 +61,10 @@ internal sealed class FileUseProgressCapture
     private FileUseSnapshot? _result;
     private FileUseProgressReport _before;
 
-    internal FileUseProgressCapture(Func<long> elapsed)
+    internal FileUseProgressCapture(Func<long> elapsed, Func<bool>? cancellationRequested = null)
     {
         _elapsed = elapsed;
+        _cancellationRequested = cancellationRequested;
         _before = Current();
     }
 
@@ -191,8 +197,10 @@ internal sealed class FileUseProgressCapture
     private void Invalid(string kind) { if (_error == "NONE") _error = kind; }
     private void RememberBeforeDeadline()
     {
-        // Read time at every update. A late timer callback cannot admit late frames.
-        if (_elapsed() < BudgetMilliseconds) _before = Current();
+        // Either observed budget boundary freezes the prefix. Cancellation may
+        // be observed while Stopwatch still reports 1999 whole milliseconds;
+        // delayed cancellation must not admit observations at/after 2000 either.
+        if (_elapsed() < BudgetMilliseconds && _cancellationRequested?.Invoke() != true) _before = Current();
     }
     private FileUseProgressReport Current() => new(
         _error != "NONE" ? "INVALID" : _result is not null ? "RESULT" : _frames == 0 ? "NO_FRAME" : "PREFIX",

@@ -68,6 +68,28 @@ public sealed class FileUseProgressCaptureTests
         Assert.Equal(2000, capture.Latest.ObservedMilliseconds);
         Assert.Equal(EmptySnapshot(), capture.RequireResult());
         Assert.True(capture.Latest.BytesObserved > before.BytesObserved);
+
+        // The actual budget token can cancel while the separate stopwatch still
+        // reports 1999 whole milliseconds. Freeze on that signal too, without
+        // inventing 2000 ms or changing the existing nominal clock boundary.
+        elapsed = 1999;
+        var canceled = false;
+        var signaled = new FileUseProgressCapture(() => elapsed, () => canceled);
+        var parent = new FileUseParentProgress(() => elapsed, () => canceled);
+        signaled.Append(Encode(frames[..8]));
+        parent.Advance(FileUseParentPhase.PROCESS_WAIT);
+        var signaledBefore = signaled.BeforeDeadline;
+        var parentBefore = parent.BeforeDeadline;
+        canceled = true;
+        signaled.Append(Encode(frames[8..]));
+        signaled.Finish();
+        parent.Advance(FileUseParentPhase.OUTPUT_JOIN);
+        Assert.Same(signaledBefore, signaled.BeforeDeadline);
+        Assert.Same(parentBefore, parent.BeforeDeadline);
+        Assert.Equal(1999, signaled.Latest.ObservedMilliseconds);
+        Assert.Equal(new FileUseParentPhaseReport("OUTPUT_JOIN", 1999), parent.Latest);
+        Assert.Equal("RESULT", signaled.Latest.State);
+        Assert.True(signaled.Latest.Eof);
     }
 
     [Fact]

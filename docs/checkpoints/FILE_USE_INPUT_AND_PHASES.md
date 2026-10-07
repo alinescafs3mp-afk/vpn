@@ -72,3 +72,35 @@ The implementation is verified through existing disposable CI only; no local
 routes, DNS, firewall, TUN or service state is changed. SYSTEM core operation,
 selected-node service handoff, network recovery, TUN/WFP/DNS/IPv6 protection,
 installer and Windows 11 user journeys remain unaccepted. V3H remains separate.
+
+## First-source observation and narrow correction
+
+Implementation source `7e3dfdc48908085f5b3f85d41e0135db144a8e51`, tree
+`8a10906874e1680a1c0567967f6804bbd6ca989c`, passed all twelve main regressions:
+Windows 5670 passed / 0 failed / 90 skipped; Linux 5598 / 0 / 162. All 960
+identities, including the previous 940, and both 388-blob source archives were
+independently checked. Its three Windows runtime labs passed as well.
+
+A distinct additional Windows package-stage execution in V3 run `37595318409`,
+job `112706416136`, failed the new BeforeInput control at its BudgetExpired
+assertion. The actual report was QUERY_TIMEOUT/CANCELED with stopwatch 1999 whole
+milliseconds and BudgetExpired=false. HELPER_STARTED had been received at255ms,
+and complete cleanup took12ms. Two older after-input controls in the main Windows
+series also recorded cancellation at1999ms; their original assertions passed.
+All these records are retained, separately from the much older R1 RM timeout.
+This is an observed disagreement between cancellation and whole-millisecond
+elapsed reporting, not evidence of a native RM hang or failed resource cleanup.
+
+The narrow correction records BudgetCancellationRequested from the actual owned
+CTS before disposal. BudgetExpired means that this signal was observed OR the
+local monotonic elapsed reached2000ms. Elapsed remains exactly measured; it is
+never rounded up or replaced. Both parent and helper collectors read the captured
+live token on every update, so a cancellation observed at1999ms also freezes the
+prefix against later frames and EOF at that same millisecond. Conversely, the
+existing2000ms clock cutoff still works if cancellation delivery is delayed.
+The token itself is captured before its source is disposed because original I/O
+may settle during later cleanup. The timer, two-second duration, all native
+control assertions, test names and counts are unchanged. The existing managed
+deadline case gains assertions for the1999ms cancellation-signal boundary.
+
+Corrected-source execution and evidence verification: PENDING.

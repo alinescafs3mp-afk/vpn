@@ -70,6 +70,7 @@ internal static class WindowsFileUseDiagnostics
         FileUseProgressCapture? progress = null;
         FileUseParentProgress? parent = null;
         CancellationTokenSource? budget = null;
+        var budgetCancellationRequested = false;
         Exception? failure = null;
         try
         {
@@ -103,9 +104,12 @@ internal static class WindowsFileUseDiagnostics
             });
             resources.Process = new Process { StartInfo = start };
             clock = Stopwatch.StartNew();
-            progress = new(() => clock.ElapsedMilliseconds);
-            parent = new(() => clock.ElapsedMilliseconds);
             budget = new(TimeSpan.FromSeconds(2));
+            var queryToken = budget.Token;
+            // Capture the token itself: original I/O may observe it after the
+            // source is disposed while cleanup still owns the pending operation.
+            progress = new(() => clock.ElapsedMilliseconds, () => queryToken.IsCancellationRequested);
+            parent = new(() => clock.ElapsedMilliseconds, () => queryToken.IsCancellationRequested);
             parent.Advance(FileUseParentPhase.PROCESS_START);
             resources.Started = resources.Process.Start();
             if (!resources.Started) throw new InvalidOperationException();
@@ -153,7 +157,11 @@ internal static class WindowsFileUseDiagnostics
         catch (OperationCanceledException error) { failure = error; report = new() { State = "QUERY_TIMEOUT" }; }
         catch (InvalidDataException error) { failure = error; report = new() { State = "OUTPUT_INVALID" }; }
         catch (Exception error) { failure = error; report = new() { State = "DIAGNOSTIC_ERROR" }; }
-        finally { budget?.Dispose(); }
+        finally
+        {
+            budgetCancellationRequested = budget?.IsCancellationRequested == true;
+            budget?.Dispose();
+        }
 
         // Freeze before cleanup. Later I/O observations never rewrite the original
         // state or the last phases actually observed before the two-second boundary.
@@ -165,10 +173,11 @@ internal static class WindowsFileUseDiagnostics
             var helperBefore = progress.BeforeDeadline;
             var helperEnd = progress.Latest;
             var elapsed = clock.ElapsedMilliseconds;
-            var expired = elapsed >= FileUseProgressCapture.BudgetMilliseconds;
+            var expired = budgetCancellationRequested || elapsed >= FileUseProgressCapture.BudgetMilliseconds;
             attempt = new(expired ? parentBefore.Phase : parentEnd.Phase,
                 parentEnd, OwnedProcessCleanup.Kind(failure), failure?.HResult ?? 0,
-                elapsed, expired, helperBefore, helperEnd);
+                elapsed, expired, helperBefore, helperEnd)
+            { BudgetCancellationRequested = budgetCancellationRequested };
         }
         var inputBefore = resources.ReleaseObservation.StdinWriter;
         var cleanup = new OwnedProcessCleanup(resources, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(5));
