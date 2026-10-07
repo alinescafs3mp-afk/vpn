@@ -1,0 +1,86 @@
+name: Throne subscription source audit
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/throne-source-audit.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Inspect source snapshots; never connect to proxy nodes
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          import base64, collections, datetime, hashlib, itertools, json, os, pathlib, re, urllib.parse, urllib.request
+          candidates = [
+            ('igareck', 'igareck/vpn-configs-for-russia', 'BLACK_VLESS_RUS.txt'),
+            ('zieng2-wl', 'zieng2/wl', 'vless_universal.txt'),
+            ('openproxylist', 'roosterkid/openproxylist', 'V2RAY_RAW.txt'),
+            ('proxycollector', 'Mahdi0024/ProxyCollector', 'sub/proxies.txt'),
+            ('epodonios', 'Epodonios/v2ray-configs', 'All_Configs_Sub.txt'),
+            ('matin-super', 'MatinGhanbari/v2ray-configs', 'subscriptions/v2ray/super-sub.txt'),
+          ]
+          now = datetime.datetime.now(datetime.timezone.utc)
+          rows, identities = [], {}
+          def get(url, api=False):
+              headers = {'User-Agent': 'AutoVPN-source-audit/1'}
+              if api: headers.update({'Accept':'application/vnd.github+json', 'Authorization':'Bearer '+os.environ['GH_TOKEN']})
+              with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=25) as response:
+                  body = response.read(16 * 1024 * 1024 + 1)
+              if len(body) > 16 * 1024 * 1024: raise ValueError('source exceeds 16 MiB audit bound')
+              return body
+          def decode64(text):
+              data = text.encode('ascii'); return base64.urlsafe_b64decode(data + b'=' * (-len(data) % 4))
+          def identity(line):
+              scheme, payload = line.split('://', 1)
+              if scheme.lower() == 'vmess':
+                  obj = json.loads(decode64(payload.split('#',1)[0])); obj.pop('ps', None)
+                  return 'vmess://' + json.dumps(obj, sort_keys=True, separators=(',',':'))
+              parsed = urllib.parse.urlsplit(line)
+              query = urllib.parse.urlencode(sorted(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)))
+              return urllib.parse.urlunsplit((parsed.scheme.lower(), parsed.netloc, parsed.path, query, ''))
+          supported = {'vless','vmess','trojan','ss','hysteria','hysteria2','hy2','tuic','socks','socks5','http','https','anytls','wireguard','ssh','mieru','snell','naive','shadowtls'}
+          for key, repo, path in candidates:
+              row = {'key':key, 'repository':repo, 'path':path}
+              try:
+                  commits = json.loads(get('https://api.github.com/repos/'+repo+'/commits?'+urllib.parse.urlencode({'path':path,'per_page':1}), True))
+                  if not isinstance(commits,list) or not commits: raise ValueError('no source commit')
+                  commit = commits[0]; sha = commit['sha']; date = commit['commit']['committer']['date']
+                  stamp = datetime.datetime.fromisoformat(date.replace('Z','+00:00'))
+                  body = get('https://raw.githubusercontent.com/'+repo+'/'+sha+'/'+urllib.parse.quote(path))
+                  text = body.decode('utf-8-sig').strip()
+                  encoding = 'plain'
+                  if '://' not in text:
+                      text = decode64(''.join(text.split())).decode('utf-8-sig'); encoding = 'base64'
+                  lines = [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith('#')]
+                  schemes = collections.Counter(); unique = set(); malformed=0; insecure=0
+                  for line in lines:
+                      match = re.match(r'^([A-Za-z0-9+.-]+)://',line)
+                      if not match: malformed+=1; continue
+                      schemes[match[1].lower()]+=1
+                      if re.search(r'(allowinsecure|insecure|skip-cert-verify)=(1|true)(?:&|#|$)',line,re.I): insecure+=1
+                      try: canonical=identity(line)
+                      except (ValueError, UnicodeError, TypeError, AttributeError): malformed+=1; continue
+                      unique.add(hashlib.sha256(canonical.encode()).hexdigest())
+                  identities[key]=unique
+                  row.update(status='INSPECTED', source_commit=sha, source_commit_date=date, age_hours=round((now-stamp).total_seconds()/3600,2), bytes=len(body), sha256=hashlib.sha256(body).hexdigest(), encoding=encoding, non_comment_lines=len(lines), schemes=dict(schemes), normalized_unique=len(unique), normalized_duplicates=sum(schemes.values())-malformed-len(unique), malformed_or_non_uri_lines=malformed, unknown_to_audit_schemes=sorted(set(schemes)-supported), explicit_insecure_query_flags=insecure)
+              except Exception as exc:
+                  # Never print subscription bodies, credentials or raw exception response bodies.
+                  row.update(status='ERROR', error_type=type(exc).__name__)
+              rows.append(row)
+          overlaps=[{'left':a,'right':b,'shared_normalized_entries':len(identities[a]&identities[b])} for a,b in itertools.combinations(identities,2)]
+          result={'observed_at':now.isoformat(), 'method':'bounded HTTPS source inspection at the latest commit touching each subscription file; no proxy connections', 'limitations':['Not a Throne import test','Not a connectivity or speed test','Not evidence from the owner ISP','Identity normalization is heuristic; insecure flag count covers URI query flags only'], 'sources':rows,'overlaps':overlaps}
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'audit';out.mkdir()
+          (out/'source-audit.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: throne-source-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/audit/
+          if-no-files-found: error
+          retention-days: 30
