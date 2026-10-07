@@ -170,3 +170,15 @@ networking, Windows 11 and the normal installer remain unaccepted.
 - [SafeHandle.IsClosed](https://learn.microsoft.com/en-us/dotnet/api/system.runtime.interopservices.safehandle.isclosed?view=net-10.0): closed and invalid are distinct observations.
 - [RmGetList](https://learn.microsoft.com/en-us/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist): bounded application/service observation and `ERROR_MORE_DATA`.
 - [RM_UNIQUE_PROCESS](https://learn.microsoft.com/en-us/windows/win32/api/restartmanager/ns-restartmanager-rm_unique_process): PID and `GetProcessTimes` creation FILETIME.
+
+
+## Follow-up: native signal and original-reader ownership, 7 October 2026
+
+The historical results above are unchanged. The next implementation is recorded in
+[NATIVE_PROCESS_EXIT_OWNERSHIP.md](NATIVE_PROCESS_EXIT_OWNERSHIP.md) and its complete
+evidence file. It fixes a directly observed managed/native exit gap and explicitly
+releases original stdout/stderr readers. Corrected source `19196ebafa8d5a9697f465a275afb4a350d47098`
+passes six full 940-case series per OS and both independent observer-handle arms.
+The first new source has retained Linux assertion failures and a distinct R1 Windows
+RM query timeout. That timeout and the older file-sharing cause remain open; later
+passes do not rewrite this checkpoint's failed observations.

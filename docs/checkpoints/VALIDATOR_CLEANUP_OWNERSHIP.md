@@ -218,3 +218,15 @@ The original Windows cancellation sharing failure reproduced in main run
 SafeFileHandle reporting IsClosed=true before the operation. The later empty RM
 snapshot does not identify a holder; fixture directory deletion then succeeds.
 The historical evidence above remains unchanged and the lifetime gate stays open.
+
+
+## Follow-up: native signal and original-reader ownership, 7 October 2026
+
+The historical results above are unchanged. The next implementation is recorded in
+[NATIVE_PROCESS_EXIT_OWNERSHIP.md](NATIVE_PROCESS_EXIT_OWNERSHIP.md) and its complete
+evidence file. It fixes a directly observed managed/native exit gap and explicitly
+releases original stdout/stderr readers. Corrected source `19196ebafa8d5a9697f465a275afb4a350d47098`
+passes six full 940-case series per OS and both independent observer-handle arms.
+The first new source has retained Linux assertion failures and a distinct R1 Windows
+RM query timeout. That timeout and the older file-sharing cause remain open; later
+passes do not rewrite this checkpoint's failed observations.

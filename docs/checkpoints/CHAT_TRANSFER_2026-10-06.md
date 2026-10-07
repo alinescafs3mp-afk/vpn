@@ -351,3 +351,67 @@ Then continue selected-node service handoff as a separate reviewed increment.
 Production SYSTEM core/TUN/network protection/recovery/installer/Windows11 remain
 unaccepted. This fifth increment supersedes the fourth increment's next-step list
 without erasing its failed evidence.
+
+
+## Sixth continuation increment: native process signal and original output readers — 7 October
+
+Implementation `463048597a73977c43ba425b829a5bcb0e69f4bc` strengthens the exact Windows
+process-handle exit gate and explicit ownership of the original stdout/stderr
+readers. Corrected test/source `19196ebafa8d5a9697f465a275afb4a350d47098` changes only
+a new Linux handle-observation expectation and its checkpoint; all production
+blobs between the two revisions are identical. Continue from remote main, whose
+final documentation commit follows this tested source.
+
+Details: `docs/checkpoints/NATIVE_PROCESS_EXIT_OWNERSHIP.md` and
+`docs/evidence/NATIVE_PROCESS_EXIT_OWNERSHIP_VALIDATION.json`.
+
+The exact .NET 10.0.12 source shows that managed HasExited can return by exit code
+before native signal, and Process.Close leaves externally accessed SyncMode
+readers to their caller. Both are now handled explicitly. Native cleanup accepts
+only WAIT_OBJECT_0 from the same owned SafeProcessHandle within the existing
+remaining exit budget. A finite dedicated native wait does not occupy a managed
+pool worker; normal managed continuation scheduling remains. Original readers
+are released only after original tasks settle and input-directory cleanup succeeds.
+
+Corrected main run `37561949766`, attempt 1: six times 940 unique cases per OS.
+Windows Server 2025 totals 5550 passed / 0 failed / 90 skipped; Linux totals
+5496 passed / 0 failed / 144 skipped. All previous 920 identities remain. Twenty
+new cases yield 222 passes / 0 failures / 18 platform skips per source. All six
+triggered workflows passed. Four primary archives from both revisions, all
+24 TRX and every 380-blob source manifest were independently checked.
+
+Each source directly observes 18 actual validator cancellations where managed
+HasExited is true before native signal, plus six timed-out-helper controls with
+the same gap. The new gate waits for signal. Independent held/disposed observer
+arms both pass six times; their same SafeProcessHandle states are recorded before
+one unchanged Write/None probe each. All 42 Windows writes and 24 Linux reads
+per source, plus all 66 fixture-directory deletions, succeed. No file-operation
+retry or timer padding was added.
+
+Keep two first-source failures distinct. The main Linux series has 24 new
+assertion failures because Unix uses AnonymousPipeClientStream and FileStream
+handle observations are correctly null. That expectation is corrected. First R1
+Windows run `37561704390` has one separate QUERY_TIMEOUT in the no-holder RM
+control; cleanup succeeds, but no query return codes were observed. Its full
+record and two-second budget remain, and its cause is OPEN. Later passing CI is
+not an explanation. The older 0x80070020 sharing failure remains preserved with
+cause UNPROVEN; the observed native exit gap does not uniquely prove causation.
+
+Corrected secondary evidence includes 28 distinct raw TRX (11978 passed / 0 failed /
+304 skipped), V2 TLS repetitions, V3 lifecycle repetitions on both OSes, and
+V2/V3/R1 WPF eight-PNG smoke. Actual Server 2025 node runtime and installed-service
+labs pass on both sources; Server 2022 passes on implementation source only and is
+NOT_RUN_ON_CORRECTED because the two changed paths do not trigger that workflow.
+The relevant source blobs are unchanged. Large package archives have API/log
+checks only. Runtime uses a real standard-user primary process token, service
+client authorization uses impersonation; runner housekeeping remains separate
+from owned-job forcedJobTermination=false.
+
+Next bounded work: explicitly own the diagnostic helper stdin writer on failed
+write/close paths and add phase observations distinguishing helper start/input/RM
+query/response inside the same total two-second budget. Retain the failing R1
+control, all original assertions and every outcome. Then continue selected-node
+service handoff from the existing runtime entry; the unpublished V3H remains
+separate. SYSTEM runtime, owned network recovery, TUN/WFP/DNS/IPv6, the installer
+and Windows 11 user journeys remain unaccepted. Do not spend further identical
+reruns merely to accumulate green executions.
