@@ -6,6 +6,8 @@ This slice follows `8fd20b6a3c3bebfffd71b37b04c06c31f7368387` and its retained W
 
 At source publication, compilation and Windows/Linux execution are **PENDING**. The implementation host has no .NET SDK; no local build or native acceptance is claimed. This document will be completed with the actual first CI attempt and exact artifact accounting.
 
+The first compiled candidate is `463048597a73977c43ba425b829a5bcb0e69f4bc` (tree `1b49157278ba1bc366923acc7ba6db1b5c849036`). Its Linux executions exposed an error in the newly added observation assertion: .NET uses `AnonymousPipeClientStream` for Unix redirected stdout/stderr, so no FileStream handle is captured and both handle observations correctly remain null. The follow-up changes only this platform expectation, requiring null on Linux and closed on Windows. Both platforms still require original reader presence and successful disposal; all existing file probes and cleanup assertions remain. The original candidate's failures are retained, and the changed source receives its own automatic CI run rather than rerunning the failed source until green. Exact upstream: [.NET 10.0.12 Process.Unix.cs](https://github.com/dotnet/runtime/blob/v10.0.12/src/libraries/System.Diagnostics.Process/src/System/Diagnostics/Process.Unix.cs), blob `2dde9eb778cdc9daa24746a0691656fdcba05de6`.
+
 ## Why the cleanup contract needed correction
 
 The pinned .NET 10.0.12 implementation has two relevant behaviors:

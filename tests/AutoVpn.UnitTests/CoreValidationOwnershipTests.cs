@@ -346,7 +346,15 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
             {
                 Assert.True(reader.Present);
                 Assert.True(reader.DisposeReturned);
-                Assert.True(reader.SafeHandleClosed);
+                if (OperatingSystem.IsWindows()) Assert.True(reader.SafeHandleClosed);
+                else
+                {
+                    // .NET 10.0.12 Unix Process redirects through an
+                    // AnonymousPipeClientStream, not a FileStream. The original
+                    // reader was disposed; no FileStream handle was captured.
+                    Assert.Null(reader.SafeHandleClosed);
+                    Assert.Null(reader.SafeHandleInvalid);
+                }
             }
             var exit = Assert.IsType<OwnedProcessExitReport>(
                 (_result?.PendingCleanup?.LastReport ?? _result?.CleanupReport)?.ExitObservation);
