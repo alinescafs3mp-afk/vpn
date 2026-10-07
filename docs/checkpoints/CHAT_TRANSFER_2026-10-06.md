@@ -415,3 +415,74 @@ service handoff from the existing runtime entry; the unpublished V3H remains
 separate. SYSTEM runtime, owned network recovery, TUN/WFP/DNS/IPv6, the installer
 and Windows 11 user journeys remain unaccepted. Do not spend further identical
 reruns merely to accumulate green executions.
+
+
+## Seventh continuation increment: helper stdin ownership and observed budget phases — 7 October
+
+Implementation `7e3dfdc48908085f5b3f85d41e0135db144a8e51`, tree
+`8a10906874e1680a1c0567967f6804bbd6ca989c`, explicitly adopts the diagnostic helper's
+accessed stdin writer and original write+flush task. Input joins within the same
+existing cleanup budget. Failed write/flush/Dispose state remains independently
+recorded; a writer Dispose may close its handle and still require explicit retry.
+Normal EOF close is not repeated. Original stdout/stderr/native-exit ownership
+from the sixth increment remains intact.
+
+Corrected tested source `9906848ddedd7ef33b6003c9c08ec596496f98ac`, tree
+`d54393e8da76def55e3fd788625b8d83637c7d52`, changes only three test-helper files
+and the new checkpoint. All production blobs and native control assertions are
+identical. Continue from remote main; the final evidence/docs commit follows
+this tested source without changing executable/test/config/workflow bytes.
+
+A shared closed NDJSON protocol keeps4096 bytes / 16 frames maximum and reports
+helper start/input/RM boundaries/result. Parent write/flush/close/wait/join phases,
+pre-budget prefix, attempt-end and after-cleanup snapshots are distinct. Unknown
+fields/enums, duplicate keys, invalid order/counts and partial frames are refused;
+raw request/output, paths, PIDs and exception messages are not exposed.
+
+Both source heads passed12 main TRX each: six times 960 per OS, Windows 5670/0/90,
+Linux 5598/0/162. All previous 940 IDs and 20 new IDs are stable. New 20 yield 222
+passes and18 platform skips per source. Four primary ZIPs/all 388sourceblobs and
+all 24 raw TRX were independently verified, with zero build warnings/errors.
+Each source retains 42 pipe JSON, 66 validator JSON, 330 lifetime stages and 42 helper
+controls; all 42 Windows write probes, 24 Linux read probes and 66 directory deletions pass.
+
+Preserve the first V3 package-stage failure (run 37595318409,job 112706416136):
+new BeforeInput assertion expected BudgetExpired=true, but the owned CTS was
+already canceled while the separate stopwatch reported1999 whole milliseconds.
+The helper-start phase was received and cleanup completed. Two older main
+AfterInput controls similarly reported1999 ms but passed their original assertions.
+The correction records the own CTS cancellation explicitly. Both collectors
+freeze on that signal OR elapsed>=2000; elapsed remains measured and never padded.
+The live token itself is captured before CTS disposal. The existing managed
+cutoff test also proves late frames/EOF at the same 1999 ms cannot amend the prefix.
+Corrected secondary additionally repeats three real 1999 ms cancellations, all
+Passed with both cancellation/expired flags true, including that same BeforeInput
+control (V3 normal artifact 11469789610); exact measured times remain unchanged.
+No query timer, native assertion, count, budget or ThreadPool setting changed.
+
+Corrected main run 37596171441 and all six triggered workflows passed attempt 1,
+without reruns. First-source seven workflows include the retained V3 failure.
+V2/V3/R1 additional raw tests, TLS/lifecycle and WPF actual PNG/reopen/settings/
+DPAPI checks are preserved. The new cause is not retroactively assigned to the
+sixth increment's R1 RM timeout, whose phase data were unavailable; that remains
+OPEN. The older 0x80070020 sharing violation also remains cause UNPROVEN.
+
+Server 2025 service/node labs pass on both heads. Node runtime uses an actual
+ordinary-user primary token and six protocols, natural process/job exit and
+forcedJobTermination=false. Service client authorization uses impersonation.
+Server 2022 passed on the first source only; all four corrected paths are outside
+its workflow filters and eight critical sources match, so it is explicitly
+NOT_RUN_ON_CORRECTED. Large package ZIPs above32 MiB have API/log evidence only.
+
+Details: `docs/checkpoints/FILE_USE_INPUT_AND_PHASES.md` and
+`docs/evidence/FILE_USE_INPUT_AND_PHASES_VALIDATION.json`. Eight input reports are
+losslessly normalized with round-trip verification; previous evidence hashes
+are unchanged. Current full suite 960; skips Windows 15 / Linux 27. Normal suite 936;
+skips Windows 19 / Linux 40. .NET SDK 10.0.112/runtime 10.0.12/Mihomo 1.19.32 unchanged.
+
+Next bounded work: return to selected-node service handoff from the verified
+owned runtime entry. Review user input, launch/cancel/status ownership and
+network-state journal/recovery before privileged network acceptance. Preserve
+V3H separately. Production SYSTEM runtime, TUN/WFP/DNS/IPv6 protection, recovery,
+installer and Windows 11 journeys remain unaccepted. Do not repeat unchanged
+runs merely to accumulate green executions.

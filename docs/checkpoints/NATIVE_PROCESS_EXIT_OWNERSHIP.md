@@ -1,5 +1,9 @@
 # Native process-exit and original-reader ownership — 2026-10-07
 
+Follow-up completed in `docs/checkpoints/FILE_USE_INPUT_AND_PHASES.md`, tested
+source `9906848ddedd7ef33b6003c9c08ec596496f98ac`. Its960-case evidence preserves
+this checkpoint and its failures. The historical R1 timeout remains OPEN.
+
 ## Scope and current status
 
 This slice follows `8fd20b6a3c3bebfffd71b37b04c06c31f7368387` and its retained Windows sharing-violation evidence. It strengthens two concrete cleanup obligations and adds an independent held/disposed fixture-observer comparison. The earlier failed execution is preserved in [WINDOWS_FILE_LIFETIME_DIAGNOSTICS.md](WINDOWS_FILE_LIFETIME_DIAGNOSTICS.md) and its evidence file. A new successful run, if obtained, does not identify that earlier failure's cause by itself.

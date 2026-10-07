@@ -1,7 +1,7 @@
 # Diagnostic helper input ownership and observed phases
 
-Status: implementation prepared; compilation, regression, artifact verification and
-Windows runtime evidence are PENDING. This increment follows main
+Status: corrected source verified in existing CI; the first additional Windows
+assertion failure and all historical evidence remain preserved. This increment follows main
 `caecbc6b35f5cb682670ae620e5571b9f9148ce3`; no historical evidence is replaced.
 
 ## Scope and reasoning
@@ -84,23 +84,93 @@ independently checked. Its three Windows runtime labs passed as well.
 A distinct additional Windows package-stage execution in V3 run `37595318409`,
 job `112706416136`, failed the new BeforeInput control at its BudgetExpired
 assertion. The actual report was QUERY_TIMEOUT/CANCELED with stopwatch 1999 whole
-milliseconds and BudgetExpired=false. HELPER_STARTED had been received at255ms,
-and complete cleanup took12ms. Two older after-input controls in the main Windows
-series also recorded cancellation at1999ms; their original assertions passed.
+milliseconds and BudgetExpired=false. HELPER_STARTED had been received at 255 ms,
+and complete cleanup took 12 ms. Two older after-input controls in the main Windows
+series also recorded cancellation at 1999 ms; their original assertions passed.
 All these records are retained, separately from the much older R1 RM timeout.
 This is an observed disagreement between cancellation and whole-millisecond
 elapsed reporting, not evidence of a native RM hang or failed resource cleanup.
 
 The narrow correction records BudgetCancellationRequested from the actual owned
 CTS before disposal. BudgetExpired means that this signal was observed OR the
-local monotonic elapsed reached2000ms. Elapsed remains exactly measured; it is
+local monotonic elapsed reached 2000 ms. Elapsed remains exactly measured; it is
 never rounded up or replaced. Both parent and helper collectors read the captured
-live token on every update, so a cancellation observed at1999ms also freezes the
+live token on every update, so a cancellation observed at 1999 ms also freezes the
 prefix against later frames and EOF at that same millisecond. Conversely, the
-existing2000ms clock cutoff still works if cancellation delivery is delayed.
+existing 2000 ms clock cutoff still works if cancellation delivery is delayed.
 The token itself is captured before its source is disposed because original I/O
 may settle during later cleanup. The timer, two-second duration, all native
 control assertions, test names and counts are unchanged. The existing managed
-deadline case gains assertions for the1999ms cancellation-signal boundary.
+deadline case gains assertions for the1999 ms cancellation-signal boundary.
 
-Corrected-source execution and evidence verification: PENDING.
+## Corrected source and final validation
+
+Corrected source `9906848ddedd7ef33b6003c9c08ec596496f98ac`, tree
+`d54393e8da76def55e3fd788625b8d83637c7d52`, changes only three test-helper files
+and this checkpoint. All production blobs and native control assertions are
+identical to the first source. All six triggered workflows passed, attempt 1,
+without reruns. Main run: `37596171441`.
+
+| Source / platform | Runs | Unique cases per run | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| First / Windows Server 2025 | 6 | 960 | 5670 | 0 | 90 |
+| First / Linux | 6 | 960 | 5598 | 0 | 162 |
+| Corrected / Windows Server 2025 | 6 | 960 | 5670 | 0 | 90 |
+| Corrected / Linux | 6 | 960 | 5598 | 0 | 162 |
+
+All four primary ZIPs match API size/SHA256 and CRC. Every 388-file source archive
+matches its exact source manifest and tree. All 24 raw TRX were independently
+recounted; the previous 940 identities, all 20 new identities and exact platform
+skips are stable. New controls yield 222 passes / 0 failures / 18 platform skips per
+source. Both OS builds per source have zero reported warnings and errors and
+retain SDK 10.0.112/runtime 10.0.12 and exact pinned core hashes.
+
+Each source keeps 42 pipe-control JSON records, 66 validator result records,
+330 file-lifetime observations and 42 helper-control records. All 42 Windows
+exclusive Write/None probes, 24 Linux Read/None probes and 66 fixture-directory
+deletions per source pass. Each new timeout stage is observed six times on
+Windows, followed by owned helper exit, I/O settlement and EOF. The input-closed
+controls preserve the actual original IO failure; successful native first cleanup
+must not be described as a reproduced native Dispose-retry branch. Managed
+controls separately exercise a real stream Dispose failure with closed handle
+and explicit retry of the retained capability.
+
+First-source secondary: 28 distinct raw TRX,
+12219 passed / 1 failed / 322 skipped.
+The one failure above remains. Corrected secondary: 28
+distinct raw TRX, 12220 passed / 0 failed /
+322 skipped. Three byte-identical earlier-stage copies per
+source are verified and excluded from repeated execution counting. Normal mode
+has 936 cases (Windows 917/0/19, Linux 896/0/40); native mode has 960
+(Windows 945/0/15, Linux 933/0/27). V2 TLS 5 × 6, V3 lifecycle 5 × 20 on both OSes,
+and V2/V3/R1 WPF 8 PNG/reopen/settings/DPAPI smoke are retained separately.
+Large development-package archives use API metadata and job-log evidence only.
+
+Actual Server 2025 service and node runtime labs under a standard-user primary token pass
+on both sources. Six protocols exit naturally with owned Job Object empty and
+forcedJobTermination=false. Service SCM/authorization/recovery checks use client
+impersonation and are not substituted for the separate primary-token runtime
+proof. Server 2022 passed on the first source; the four corrected test/doc paths
+are outside its workflow filters. It is explicitly NOT_RUN_ON_CORRECTED, with
+all eight relevant source blobs confirmed unchanged.
+
+The corrected secondary series also directly repeats the boundary condition:
+three actual cancellations still report 1999 ms, with BudgetCancellationRequested
+and BudgetExpired both true, and all three pass. One is the same BeforeInput
+control in V3 Windows normal, artifact 11469789610; the other two are older R1
+timeout controls. These observed reports retain the measured 1999 ms and successful
+cleanup. The evidence includes a separate index of all three original TRX hashes.
+
+The full durable result is `docs/evidence/FILE_USE_INPUT_AND_PHASES_VALIDATION.json`.
+Its eight parsed evidence inputs are losslessly normalized with immutable cleanup
+reports deduplicated by canonical SHA256. Every input round-trips by value and
+canonical digest. Earlier evidence files are hashed and unchanged.
+
+## Next bounded work
+
+This closes the planned exceptional stdin-ownership and diagnostic-phase slice.
+Return to selected-node service handoff from the existing owned runtime entry,
+with reviewed input boundaries, launch/cancel/status ownership and network-state
+journaling before privileged network acceptance. Keep V3H separate. Do not use
+new passing runs to close the historical R1 timeout or sharing-failure cause.
+
