@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "upstream_repository": "throneproj/Throne",
+  "upstream_tag": "1.3.2",
+  "upstream_commit": "9dd4fe9606185c147e46f218cf038b254fbcdc9c",
+  "upstream_tree": "2b922916bb002ba650e061820bb8c2781c559a25",
+  "previous_autovpn_commit": "2199f7ebafae3b6b8009b227f590f521863749cd",
+  "preservation_tag": "autovpn-pre-throne-2026-10-07",
+  "bootstrap_commit": "4813467bc12feb937370e2d20928254997358d51",
+  "upstream_file_count": 1092,
+  "copied_upstream_files": 1091,
+  "excluded_upstream_files": [
+    ".github/workflows/build.yml"
+  ],
+  "workflow_policy": "Owner workflows retained during import; replace with fork CI in next reviewed increment.",
+  "validation": {
+    "exact_source_copy": "PASS",
+    "windows_build": "NOT_RUN",
+    "gui_smoke": "NOT_RUN",
+    "tun_dns_ipv6_recovery": "NOT_RUN"
+  }
+}

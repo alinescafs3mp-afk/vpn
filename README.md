@@ -1,118 +1,92 @@
-# AutoVPN
+# Throne
 
-Разработка ведётся только в `main`. Текущий срез: **V3G / 0.1.7** —
-типизированный запуск выбранного узла, проверка DNS-ответов, отмена чтения
-дочерних процессов и явное владение ресурсами при очистке.
-Единая точка продолжения — `docs/checkpoints/CHAT_TRANSFER_2026-10-06.md`.
+Qt based Desktop cross-platform GUI proxy utility, empowered by [Sing-box](https://github.com/SagerNet/sing-box)
 
-**Добавлены владение stdin диагностического helper и фиксация наблюдённых этапов.**
-Исходная запись вместе с flush остаётся у владельца до завершения; ошибка записи
-или закрытия не теряет обязательство очистки. Отчёт различает успешный возврат
-Dispose и фактическое закрытие дескриптора. Снимок до границы бюджета сохраняется
-отдельно от поздних данных и результата очистки.
+Supports Windows 11/10/8/7 / Linux / MacOS out of the box.
 
-Первый дополнительный Windows-прогон выявил ошибку новой метки: токен бюджета
-уже отменён, а часы показывают 1999 целых мс. Исправленный исходник отдельно
-учитывает сигнал отмены и измеренное время. Длительность 2 с, прежние assertions
-и счётчики сохранены. Исправленная регрессия прошла по шесть полных серий
-из 960 случаев на каждой ОС; все шесть вызванных workflow успешны, attempt 1.
-Первый отказ сохранён вместе с остальными результатами. В исправленной серии
-три настоящие отмены снова произошли при 1999 мс и были правильно отражены;
-среди них — тот же Windows-контроль, который выявил ошибку.
+<img width="1002" height="789" alt="image" src="https://github.com/user-attachments/assets/af4a8e32-7e55-430c-9402-ec2d665cf71a" />
 
-Приложение остаётся в разработке. Передача узла службе, системный TUN, защита
-DNS/IPv6, восстановление сети и установщик ещё не приняты. Работающий канал
-состояния сам по себе не означает подключение VPN. Причины исторического
-`0x80070020` и прежнего R1 RM-таймаута не объявляются установленными.
+### Note on MacOS releases
+Apple platforms have a very strict security policy and since Throne does not have a signed certificate, you will have to remove the quarantine using `xattr -d com.apple.quarantine /path/to/throne.app`. Move `Throne.app` to `/Applications` before the first launch — the built-in privilege escalation opens `Terminal` to make the core setuid-root, and that step can fail while the app is still inside `~/Downloads`.
 
-## Точки входа
+### GitHub Releases (Portable ZIP)
 
-- `docs/checkpoints/FILE_USE_INPUT_AND_PHASES.md`: текущий срез, владение stdin, фазовые снимки, сохранённый отказ и результаты исправления.
-- `docs/evidence/FILE_USE_INPUT_AND_PHASES_VALIDATION.json`: все 24 основных TRX обеих версий, secondary CI, Windows labs, исходники и сохранённые ошибки.
-- `docs/checkpoints/NATIVE_PROCESS_EXIT_OWNERSHIP.md`: предыдущий срез, наблюдённый native signal gap, точные результаты двух ревизий и следующий шаг.
-- `docs/evidence/NATIVE_PROCESS_EXIT_OWNERSHIP_VALIDATION.json`: 24 основных TRX, все новые наблюдения, обе серии secondary CI/labs, сохранённые ошибки и точные source manifests.
-- `docs/checkpoints/CHAT_TRANSFER_2026-10-06.md`: правила работы, история переноса, сохранённый V3H и порядок продолжения.
-- `docs/checkpoints/WINDOWS_FILE_LIFETIME_DIAGNOSTICS.md` и одноимённый `docs/evidence/WINDOWS_FILE_LIFETIME_DIAGNOSTICS_VALIDATION.json`: прежний Windows-отказ, снимок до него и неполная поздняя RM-диагностика.
-- `docs/checkpoints/VALIDATOR_CLEANUP_OWNERSHIP.md` и `docs/evidence/VALIDATOR_CLEANUP_OWNERSHIP_VALIDATION.json`: владение ресурсами при аварийной очистке и история прежних отказов.
-- `docs/checkpoints/WINDOWS_PIPE_COMPLETION.md` и `docs/evidence/WINDOWS_PIPE_COMPLETION_VALIDATION.json`: отмена pipe-read при занятых рабочих потоках и диагностика резервирования портов.
-- `docs/checkpoints/NODE_RUNTIME_ENTRY.md` и `docs/evidence/NODE_RUNTIME_ENTRY_VALIDATION.json`: запуск выбранного узла шести протоколов, Unicode и настоящие Windows runtime labs.
-- `docs/evidence/CHAT_TRANSFER_VALIDATION.json`: первый проверенный срез переноса.
-- `README_RUNTIME_PREPARATION_RU.md`, `docs/checkpoints/ENDPOINT_PREPARATION.md`, `README_V3G_RU.md`, `docs/checkpoints/V3G.md`, `docs/evidence/V3G_VALIDATION.json`: прежние реализованные этапы и их границы.
-- `docs/branch-archive/inventory.json`: сохранённая история веток; архивные прототипы не включены в продукт.
+[![GitHub All Releases](https://img.shields.io/github/downloads/throneproj/Throne/total?label=downloads-total&logo=github&style=flat-square)](https://github.com/throneproj/Throne/releases)
 
-Источник узлов: публичный каталог `igareck/vpn-configs-for-russia`.
-Данные подписки недоверенные: это не готовый исполняемый профиль и не
-свидетельство работоспособности узла. Пользовательский каталог не открывается
-от SYSTEM; установленная служба пока предоставляет только статус.
-
-## Сборка и проверка
-
-SDK закреплён в `global.json`: .NET `10.0.112`; исследованный runtime — `10.0.12`.
-
-```powershell
-dotnet build AutoVpn.slnx -c Release '-p:Platform=Any CPU'
-./scripts/test-v3f.ps1
+# Linux CLI installer
+```bash
+curl -fsSL https://raw.githubusercontent.com/throneproj/Throne/dev/script/install_linux.py | sudo python3
 ```
 
-Скрипт полной регрессии сохранён под именем V3F: он проверяет **960 случаев**
-в шести сериях на каждой ОС, получает закреплённое ядро, проверяет хеш,
-сохраняет каждый TRX и возвращает ошибку при любом непройденном прогоне.
-TLS-диагностика включена; пропуски допускаются только по точному списку ОС.
+### RPM repository
+[Throne RPM repository](https://parhelia512.github.io/) for Fedora/RHEL and openSUSE/SLE.
 
-Реализация: `7e3dfdc48908085f5b3f85d41e0135db144a8e51`.
-Исправленный проверенный исходник: `9906848ddedd7ef33b6003c9c08ec596496f98ac`,
-основной [run 37596171441](https://github.com/alinescafs3mp-afk/vpn/actions/runs/37596171441).
-Между ними меняются только три test-helper файла и checkpoint;
-все production-файлы и native assertions идентичны.
+## Supported protocols
 
-| ОС | Шесть полных серий: passed / failed / skipped |
-| --- | ---: |
-| Linux | 5598 / 0 / 162 |
-| Windows Server 2025 | 5670 / 0 / 90 |
+- SOCKS
+- HTTP(S)
+- Shadowsocks
+- Trojan
+- VMess
+- VLESS
+- TUIC
+- Hysteria
+- Hysteria2
+- AnyTLS
+- Mieru
+- Snell
+- NaïveProxy
+- Juicity
+- TrustTunnel
+- ShadowTLS
+- Wireguard
+- AmneziaWG
+- MASQUE
+- SSH
+- Xray VLESS
+- OpenVPN/OpenConnect
+- Custom Outbound (Both Sing-box and Xray)
+- Custom Config (Both Sing-box and Xray)
+- Chaining outbounds
+- Extra Core
 
-Все прежние 940 идентификаторов сохранены. Добавлено 20 случаев:
-6 проверок владельца stdin, 3 передачи данных, 8 протокола/границы бюджета,
-3 Windows-контроля. Новые случаи дают 222 passed / 0 failed / 18 platform skips
-в двенадцати сериях каждого исходника. Сборки обеих ОС и версий имеют ноль
-предупреждений и ошибок. Все 388 файлов в каждом из четырёх основных
-source archives сверены по размеру, SHA256 и Git blob.
+## Subscription Formats
 
-Сохранённые контрольные сценарии отмены pipe при занятом ThreadPool,
-однократные файловые проверки и наблюдение native process signal проходят.
-Сроки 20/5/3 с, 32 попытки портов, TLS/negative assertions и настройки
-параллелизма не изменены. Диагностический helper сохраняет двухсекундный
-query-бюджет; синхронные Start/Dispose и последующая очистка не объявляются
-операциями с гарантированным общим временем возврата 2 с.
+Various formats are supported, including share links, various JSON representation of Sing-box configs, and v2rayN link format as well as limited support for Shadowsocks and Clash formats.
 
-Первый V3 run 37595318409 содержит один отказ новой метки BudgetExpired
-при фактической отмене и измеренных 1999 мс. Он не заменён результатом исправления.
-Прежний R1 run 37561704390 сохраняет отдельный RM QUERY_TIMEOUT с открытой причиной.
-Пустой RM-снимок и поздний успех не доказывают отсутствие владельца файла в прошлом.
+Deeplinks are also supported, read the [documentation](https://throneproj.github.io/advanced/deeplinks/) for more information.
 
-V2/V3/R1 дополнительно проверили normal/native режимы, TLS/lifecycle и WPF smoke.
-На обоих исходниках прошли актуальные Server 2025 service/node labs, включая
-настоящий standard-user primary token и шесть протоколов. Server 2022 прошёл
-на первом исходнике; четыре исправленных test/doc пути не вызывают его workflow,
-и для исправленного исходника он помечен NOT_RUN_ON_CORRECTED.
+## Credits
 
-Следующий ограниченный шаг — передача выбранного узла службе с явным владением
-запуском, отменой и состоянием. Журналирование и восстановление сетевого состояния
-предшествуют привилегированной приёмке. V3H остаётся отдельным кандидатом.
+- [SagerNet/sing-box](https://github.com/SagerNet/sing-box)
+- [XTLS/Xray-core](https://github.com/xtls/xray-core)
+- [Qv2ray](https://github.com/Qv2ray/Qv2ray)
+- [Qt](https://www.qt.io/)
+- [simple-protobuf](https://github.com/tonda-kriz/simple-protobuf)
+- [fkYAML](https://github.com/fktn-k/fkYAML)
+- [quirc](https://github.com/dlbeer/quirc)
+- [QHotkey](https://github.com/Skycoder42/QHotkey)
+- [srombauts/sqlitecpp](https://github.com/srombauts/sqlitecpp)
 
-## Windows-пакет
+## FAQ
+**How does this project differ from the original Nekoray?** <br/>
+Nekoray's developer partially abandoned the project on December of 2023, some minor updates were done recently but the project is now officially archived. This project was meant to continue the way of the original project, with lots of improvements, tons of new features and also, removal of obsolete features and simplifications.
 
-В отдельной разработческой поставке запускается `desktop/AutoVpn.Desktop.exe`.
-Архив самодостаточный, но не является установщиком или готовым VPN.
-Текущие R1/V3 workflow собрали development-пакеты на `9906848`; V2/V3/R1
-проверили WPF на Windows Server. Сохранены API metadata и журналы проверки
-идентичности файлов поставки. Большие бинарные архивы здесь не скачивались;
-распакованный пакет отдельную приёмку не проходил.
-Не запускайте лабораторную установку службы на рабочем компьютере,
-не отключайте антивирус и проверку подписи драйверов.
+**Why does my Anti-Virus detect Throne and/or its Core as malware?** <br/>
+Throne's built-in update functionallity downloads the new release, removes the old files and replaces them with the new ones, which is quite simliar to what malwares do, remove your files and replace them with an encrypted version of your files.
+Also the `System DNS` feature will change your system's DNS settings, which is also considered a dangerous action by some Anti-Virus applications.
 
-Не повторяйте исторические одноразовые скрипты интеграции и консолидации.
-Гроку остаются сборка/проверка, не незавершённая реализация.
+**Is setting the `SUID` bit really needed on Linux?** <br/>
+To create and manage a system TUN interface, root access is required, without it, you will have to grant the Core some `Cap_xxx_admin` and still, need to enter your password 3 to 4 times per TUN activation. You can also opt to disable the automatic privilege escalation in `Basic Settings`->`Security`, but note that features that require root access will stop working unless you manually grant the needed permissions.
 
-Лицензия AutoVPN: GPL-3.0-or-later, `LICENSE`.
-Сторонние компоненты: `THIRD_PARTY_NOTICES.md`.
-Ограничения восстановления: `docs/RECOVERY.ru.md`.
+**Why does my internet stop working after I force quit Throne?** <br/>
+If Throne is force-quit while `System proxy` is enabled, the process ends immediately and Throne cannot reset the proxy. <br/>
+Solution:
+- Always close Throne normally.
+- If you force quit by accident, open Throne again, enable `System proxy`, then disable it- this will reset the settings.
+
+**Where are the downloadable route profiles/rulesets coming from?**<br/>
+They are located at the [routeprofiles](https://github.com/throneproj/routeprofiles) repository.
+
+**How does "Throne-\<version\>-debian-system-qt-x64.deb" differ from "Throne-\<version\>-debian-x64.deb" and why is the latter 3 times heavier then the former?**<br/>
+The first one does not pack the Qt libraries and relies on those installed on the host. The second one packs everything needed with itself, thus being heavier. The reason the first one exists is that on legacy systems provided Qt libraries use unsupported system features. If a graphical interface fails to load for your system, you may try to download the system-qt version and install fitting Qt libraries from your package manager or compile them from source.
