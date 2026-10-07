@@ -1,0 +1,126 @@
+name: Import exact Throne 1.3.2
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/throne-bootstrap.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: autovpn-throne-bootstrap
+  cancel-in-progress: false
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: owner
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: throneproj/Throne
+          ref: 9dd4fe9606185c147e46f218cf038b254fbcdc9c
+          path: upstream
+          persist-credentials: false
+      - name: Preserve the former product and import verified upstream files
+        shell: python
+        run: |
+          import hashlib, json, os, pathlib, shutil, subprocess
+          repo = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "owner"
+          source = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "upstream"
+          def git(*args, cwd=repo):
+              return subprocess.check_output(["git", *args], cwd=cwd, text=True).strip()
+          def run(*args, cwd=repo):
+              subprocess.run(["git", *args], cwd=cwd, check=True)
+          expected = "2199f7ebafae3b6b8009b227f590f521863749cd"
+          upstream = "9dd4fe9606185c147e46f218cf038b254fbcdc9c"
+          upstream_tree = "2b922916bb002ba650e061820bb8c2781c559a25"
+          event_head = os.environ["GITHUB_SHA"]
+          if git("rev-parse", "HEAD") != event_head or git("rev-parse", "HEAD^") != expected:
+              raise SystemExit("The owner head changed: refuse an unreviewed migration.")
+          if git("rev-parse", "HEAD", cwd=source) != upstream or git("rev-parse", "HEAD^{tree}", cwd=source) != upstream_tree:
+              raise SystemExit("Exact upstream source verification failed.")
+          if git("ls-remote", "origin", "refs/heads/main").split()[0] != event_head:
+              raise SystemExit("Main moved: preserve it and reconcile before import.")
+          tag = "autovpn-pre-throne-2026-10-07"
+          tag_ref = "refs/tags/" + tag
+          existing = git("ls-remote", "origin", tag_ref)
+          if existing and existing.split()[0] != expected:
+              raise SystemExit("The preservation tag already names a different commit.")
+          if not existing:
+              run("tag", tag, expected)
+              run("push", "origin", tag_ref)
+          if git("ls-remote", "origin", tag_ref).split()[0] != expected:
+              raise SystemExit("Preservation tag was not verified.")
+          rows = subprocess.check_output(["git", "ls-tree", "-rz", "HEAD"], cwd=source).split(b"\0")
+          files = []
+          for row in rows:
+              if not row: continue
+              meta, raw_name = row.split(b"\t", 1)
+              mode, kind, oid = meta.decode("ascii").split()
+              name = raw_name.decode("utf-8")
+              if kind != "blob" or mode not in ("100644", "100755"):
+                  raise SystemExit("Unexpected upstream entry: " + name)
+              rel = pathlib.PurePosixPath(name)
+              if rel.is_absolute() or ".." in rel.parts or ".git" in rel.parts:
+                  raise SystemExit("Unexpected source path")
+              files.append((name, mode, oid))
+          if len(files) != 1092:
+              raise SystemExit("Unexpected upstream file count")
+          tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=repo).split(b"\0")
+          for raw_name in tracked:
+              if not raw_name: continue
+              name = raw_name.decode("utf-8")
+              if name.startswith(".github/workflows/"): continue
+              (repo / name).unlink()
+          copied = []
+          excluded = []
+          for name, mode, oid in files:
+              if name.startswith(".github/workflows/"):
+                  excluded.append(name)
+                  continue
+              target = repo / name
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(source / name, target)
+              data = target.read_bytes()
+              actual = hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+              if actual != oid:
+                  raise SystemExit("Imported blob mismatch: " + name)
+              copied.append({"path": name, "mode": mode, "git_blob": oid, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+          (repo / "AGENTS.md").write_text("# AutoVPN / Throne fork instructions\n\n## Owner and approved scope\n\nCommunicate with the owner entirely in Russian. Keep code identifiers and commands in English. The default application language is Russian.\n\nOn 7 October 2026 the owner explicitly approved replacing the former C#/.NET/WPF/Mihomo implementation with a fork of EXACT Throne 1.3.2, adding protected built-in subscription groups and an Update button to the right of TUN. See docs/adr/0001-throne-base.md. Do not resume the superseded .NET implementation as the active product.\n\nDelivery repository: https://github.com/alinescafs3mp-afk/vpn. Work on main, preserve owner history, and never force-push. The complete former implementation is preserved at commit 2199f7ebafae3b6b8009b227f590f521863749cd and tag autovpn-pre-throne-2026-10-07. Check the current remote head before publishing and reconcile concurrent owner changes.\n\n## Product baseline\n\nUpstream: https://github.com/throneproj/Throne, tag 1.3.2, commit 9dd4fe9606185c147e46f218cf038b254fbcdc9c. Keep upstream networking/core behavior unless a specific change is approved and verified. The fork uses C++/Qt and the upstream Go core; it does not use Mihomo or the former privileged broker.\n\nThe first increment contains Default and four built-in groups: igareck, zieng2-wl, openproxylist, proxycollector. Treat subscription data as untrusted. Do not add telemetry, a silent application updater, unrelated branding, or a new direct-traffic fallback. Preserve GPL and third-party notices.\n\n## Source and state\n\nDo not commit live subscription bodies, node credentials, runtime profiles, databases, private diagnostics, packet captures, downloaded executables or build artifacts. Synthetic loopback-only test fixtures are permitted. Preserve user data and custom groups. Built-in identity must not depend on a translated name, tab position or an assumed free numeric ID.\n\n## Verification boundaries\n\nBuilds and tests do not by themselves prove Windows TUN, DNS/IPv6 protection, crash recovery, installer behavior, or actual connectivity from the owner's network. Report observed results and mark unexecuted gates NOT_RUN. Never fabricate working nodes, speed, latency, geography or a Connected state.\n\nThe implementation host is Linux. Do not change its routes, firewall, TUN or DNS and do not start a real proxy/TUN core here. Use disposable test directories and synthetic localhost data for automation. Privileged networking tests require an authorized disposable Windows environment and a recovery path. Normal GUI smoke tests must disable automatic elevation, network downloads and automatic connection.\n\nCommit coherent verified increments, publish through an authorized GitHub path, and verify the remote commit. A pushed commit is not deployment or release readiness. Do not repeat unchanged tests solely to accumulate successful runs.\n", encoding="utf-8")
+          adr = repo / "docs/adr/0001-throne-base.md"
+          adr.parent.mkdir(parents=True, exist_ok=True)
+          adr.write_text("# ADR 0001: Base AutoVPN on Throne 1.3.2\n\nDate: 2026-10-07\n\nStatus: Accepted by the owner in the current conversation.\n\n## Decision and reason\n\nThe owner already finds Throne 1.3.2 suitable and approved a fork with protected preset subscription groups and a visible Update button for the current group. Reusing its existing GUI, subscription pipeline and networking core avoids completing a second implementation of those facilities before the requested workflow can be used.\n\nThis explicit owner decision supersedes the former C#/.NET 10/WPF/Mihomo baseline. It is a change of product foundation and acceptance scope, not a claim that the former language or core is incompatible.\n\nThe exact upstream source is throneproj/Throne tag 1.3.2, commit 9dd4fe9606185c147e46f218cf038b254fbcdc9c. Preserve upstream provenance and GPL notices. Do not silently substitute the moving upstream development branch or 1.4 beta.\n\n## Preservation\n\nThe previous AutoVPN main is 2199f7ebafae3b6b8009b227f590f521863749cd. Preserve that commit, its full ancestry and the autovpn-pre-throne-2026-10-07 tag. The new main continues that history. Prior evidence and unresolved findings remain available in that snapshot; they are not evidence for this different implementation.\n\n## First increment\n\n- Default plus igareck, zieng2-wl, openproxylist and proxycollector groups, persisted without duplication and protected from deletion.\n- An Update button immediately after the TUN controls, operating on the group ID captured at click time, with truthful busy/result state.\n- A separately identified Windows build with Russian defaults and no upstream binary self-replacement.\n- Bounded tests for migration, group identity/protection, error handling, tab switching and a normal Windows GUI launch.\n\nEach group initially uses one ordinary URI subscription URL. The selected catalogue contains links and attribution only, never a bundled live node list. Source research records publication metadata; it does not certify nodes from the owner's ISP.\n\n## Acceptance boundaries\n\nThe existing Throne refresh applies subscription data before its optional URL test. Retaining previously working profiles is not equivalent to the former AutoVPN contract of locally testing every candidate before promotion. Full protected failover, crash-safe network restoration, Windows 11 TUN/DNS/IPv6 and installer acceptance require separate observed tests and remain unaccepted until performed.\n\nThe inherited networking implementation is preserved. This increment does not add a kill switch or change transport security based on a third-party subscription README.\n", encoding="utf-8")
+          provenance = {"schema_version": 1, "upstream_repository": "throneproj/Throne", "upstream_tag": "1.3.2", "upstream_commit": upstream, "upstream_tree": upstream_tree, "previous_autovpn_commit": expected, "preservation_tag": tag, "bootstrap_commit": event_head, "upstream_file_count": len(files), "copied_upstream_files": len(copied), "excluded_upstream_files": excluded, "workflow_policy": "Owner workflows retained during import; replace with fork CI in next reviewed increment.", "validation": {"exact_source_copy": "PASS", "windows_build": "NOT_RUN", "gui_smoke": "NOT_RUN", "tun_dns_ipv6_recovery": "NOT_RUN"}}
+          record = repo / "docs/provenance/THRONE_1_3_2.json"
+          record.parent.mkdir(parents=True, exist_ok=True)
+          record.write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+          run("add", "--all")
+          run("diff", "--cached", "--exit-code", "--", ".github/workflows")
+          run("config", "user.name", "github-actions[bot]")
+          run("config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com")
+          run("commit", "-m", "Base AutoVPN on Throne 1.3.2; preserve previous implementation")
+          new_head = git("rev-parse", "HEAD")
+          if git("rev-parse", "HEAD^") != event_head:
+              raise SystemExit("Unexpected import ancestry")
+          if git("ls-remote", "origin", "refs/heads/main").split()[0] != event_head:
+              raise SystemExit("Main moved while preparing import; no branch update performed.")
+          run("push", "origin", "HEAD:refs/heads/main")
+          if git("ls-remote", "origin", "refs/heads/main").split()[0] != new_head:
+              raise SystemExit("Remote import head verification failed.")
+          evidence = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "import-evidence"
+          evidence.mkdir(exist_ok=True)
+          provenance["import_commit"] = new_head
+          (evidence / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+          (evidence / "source-manifest.json").write_text(json.dumps(copied, indent=2) + "\n", encoding="utf-8")
+          print("Preserved:", tag, expected)
+          print("Imported:", new_head, "from exact source", upstream)
+          print("Verified copied upstream files:", len(copied))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: throne-import-evidence
+          path: import-evidence/
+          if-no-files-found: error
+          retention-days: 30
