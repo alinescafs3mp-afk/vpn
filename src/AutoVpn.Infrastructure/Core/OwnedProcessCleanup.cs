@@ -18,10 +18,22 @@ public enum OwnedOutputState { NotStarted, Pending, Eof, Canceled, Failed }
 
 public sealed record OwnedOutputReport(OwnedOutputState State, string ExceptionKind, int HResult);
 
+/// <summary>Observation of the exact original reader and, when available, its captured file handle.</summary>
+public sealed record OwnedReaderReleaseReport(bool Present, bool DisposeReturned,
+    bool? SafeHandleClosed, bool? SafeHandleInvalid);
+
+/// <summary>A native Windows signal is independent of the managed cached exit code.</summary>
+public sealed record OwnedProcessExitReport(bool NativeWaitRequired,
+    bool? ManagedHasExitedBeforeNativeWait, bool? NativeSignaledInitially, bool NativeSignalConfirmed);
+
 /// <summary>Values from the same owned wrappers, not proof that no other file user exists.</summary>
 public sealed record OwnedResourceReleaseReport(bool ProcessPresent, bool BinaryPresent,
     bool ProcessDisposeReturned, bool BinaryDisposeReturned, bool? BinarySafeHandleClosed,
-    bool? BinarySafeHandleInvalid);
+    bool? BinarySafeHandleInvalid)
+{
+    public OwnedReaderReleaseReport StdoutReader { get; init; } = new(false, false, null, null);
+    public OwnedReaderReleaseReport StderrReader { get; init; } = new(false, false, null, null);
+}
 
 /// <summary>Immutable, bounded metadata. Never includes child output or native exception text.</summary>
 public sealed record OwnedProcessCleanupReport(string Phase, bool ProcessExitConfirmed,
@@ -30,6 +42,7 @@ public sealed record OwnedProcessCleanupReport(string Phase, bool ProcessExitCon
     long ElapsedMilliseconds)
 {
     public OwnedResourceReleaseReport? ReleaseObservation { get; init; }
+    public OwnedProcessExitReport? ExitObservation { get; init; }
     public bool Complete => ProcessExitConfirmed && ReadersJoined && DirectoryRemoved && ResourcesReleased;
     public string Summary => $"{Phase};EXIT={ProcessExitConfirmed};JOINED={ReadersJoined};" +
         $"DIR={DirectoryRemoved};RELEASED={ResourcesReleased};OUTPUT_OK={OutputHealthy};" +
@@ -53,7 +66,9 @@ internal interface IOwnedProcessCleanupResources
     Task? Stdout { get; }
     Task? Stderr { get; }
     OwnedResourceReleaseReport? ReleaseObservation => null;
+    OwnedProcessExitReport? ExitObservation => null;
     Task StopAndWaitAsync();
+    Task StopAndWaitAsync(TimeSpan budget) => StopAndWaitAsync();
     void DeleteDirectory();
     void Release();
 }
@@ -117,7 +132,7 @@ internal sealed class OwnedProcessCleanup : IOwnedProcessCleanup
         {
             if (!_exitConfirmed)
             {
-                await _resources.StopAndWaitAsync().WaitAsync(_exitTimeout).ConfigureAwait(false);
+                await _resources.StopAndWaitAsync(_exitTimeout).WaitAsync(_exitTimeout).ConfigureAwait(false);
                 _exitConfirmed = true;
             }
             phase = "OUTPUT_JOIN";
@@ -159,7 +174,7 @@ internal sealed class OwnedProcessCleanup : IOwnedProcessCleanup
             : stdout.State == OwnedOutputState.NotStarted && stderr.State == OwnedOutputState.NotStarted;
         return new(phase, _exitConfirmed, _readersJoined, _directoryRemoved, _resourcesReleased,
             healthy, stdout, stderr, Kind(error), error?.HResult ?? 0, milliseconds)
-        { ReleaseObservation = _resources.ReleaseObservation };
+        { ReleaseObservation = _resources.ReleaseObservation, ExitObservation = _resources.ExitObservation };
     }
 
     private static OwnedOutputReport Output(Task? task)
@@ -206,6 +221,31 @@ internal sealed class NativeProcessCleanupResources : IOwnedProcessCleanupResour
     private SafeFileHandle? _binaryHandle;
     private bool _processDisposeReturned;
     private bool _binaryDisposeReturned;
+    private StreamReader? _stdoutReader;
+    private StreamReader? _stderrReader;
+    private SafeFileHandle? _stdoutReaderHandle;
+    private SafeFileHandle? _stderrReaderHandle;
+    private bool _stdoutReaderDisposeReturned;
+    private bool _stderrReaderDisposeReturned;
+    internal StreamReader? StdoutReader
+    {
+        get => _stdoutReader;
+        set => CaptureReader(value, ref _stdoutReader, ref _stdoutReaderHandle);
+    }
+    internal StreamReader? StderrReader
+    {
+        get => _stderrReader;
+        set => CaptureReader(value, ref _stderrReader, ref _stderrReaderHandle);
+    }
+
+    private static void CaptureReader(StreamReader? value, ref StreamReader? reader, ref SafeFileHandle? handle)
+    {
+        if (reader is not null) throw new InvalidOperationException("OWNED_READER_ALREADY_CAPTURED");
+        // Adopt first so even a failing handle getter leaves the reader owned.
+        // Before any drain: no duplicate handle or native reference is created.
+        reader = value;
+        handle = value?.BaseStream is FileStream file ? file.SafeFileHandle : null;
+    }
     internal FileStream? Binary
     {
         get => _binary;
@@ -223,13 +263,30 @@ internal sealed class NativeProcessCleanupResources : IOwnedProcessCleanupResour
     public Task? Stdout { get; internal set; }
     public Task? Stderr { get; internal set; }
     private Task? _exit;
+    private bool? _managedHasExitedBeforeNativeWait;
+    private bool? _nativeSignaledInitially;
+
+    public OwnedProcessExitReport ExitObservation => new(Started && OperatingSystem.IsWindows(),
+        _managedHasExitedBeforeNativeWait, _nativeSignaledInitially,
+        Started && OperatingSystem.IsWindows() && _exit?.IsCompletedSuccessfully == true);
 
     public OwnedResourceReleaseReport ReleaseObservation => new(Process is not null, _binary is not null,
-        _processDisposeReturned, _binaryDisposeReturned, _binaryHandle?.IsClosed, _binaryHandle?.IsInvalid);
+        _processDisposeReturned, _binaryDisposeReturned, _binaryHandle?.IsClosed, _binaryHandle?.IsInvalid)
+    {
+        StdoutReader = new(_stdoutReader is not null, _stdoutReaderDisposeReturned,
+            _stdoutReaderHandle?.IsClosed, _stdoutReaderHandle?.IsInvalid),
+        StderrReader = new(_stderrReader is not null, _stderrReaderDisposeReturned,
+            _stderrReaderHandle?.IsClosed, _stderrReaderHandle?.IsInvalid),
+    };
 
-    public Task StopAndWaitAsync()
+    public Task StopAndWaitAsync() => StopAndWaitAsync(TimeSpan.FromSeconds(5));
+
+    public Task StopAndWaitAsync(TimeSpan budget)
     {
         if (!Started) return Task.CompletedTask;
+        if (budget <= TimeSpan.Zero || budget > TimeSpan.FromSeconds(5))
+            throw new ArgumentOutOfRangeException(nameof(budget));
+        var clock = Stopwatch.StartNew();
         var process = Process ?? throw new InvalidOperationException("OWNED_PROCESS_MISSING");
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         catch (Exception error) when ((error is InvalidOperationException or Win32Exception) && process.HasExited)
@@ -239,7 +296,23 @@ internal sealed class NativeProcessCleanupResources : IOwnedProcessCleanupResour
         if (_exit is null || _exit.IsFaulted || _exit.IsCanceled)
         {
             if (_exit?.IsFaulted == true) _ = _exit.Exception;
-            _exit = process.WaitForExitAsync(CancellationToken.None);
+            if (OperatingSystem.IsWindows())
+            {
+                _managedHasExitedBeforeNativeWait = process.HasExited;
+                _nativeSignaledInitially = null;
+                var remaining = budget - clock.Elapsed;
+                if (remaining <= TimeSpan.Zero)
+                    _exit = Task.FromException(new TimeoutException("OWNED_PROCESS_EXIT_BUDGET_EXPIRED"));
+                else
+                {
+                    // WaitForExitAsync can return through HasExited's cached exit
+                    // code. Only WAIT_OBJECT_0 on this exact owned handle confirms
+                    // native termination; no PID reopen or second wait budget.
+                    _exit = WindowsProcessExitWaiter.WaitAsync(process.SafeHandle, remaining, out var signaled);
+                    _nativeSignaledInitially = signaled;
+                }
+            }
+            else _exit = process.WaitForExitAsync(CancellationToken.None);
         }
         return _exit;
     }
@@ -259,12 +332,24 @@ internal sealed class NativeProcessCleanupResources : IOwnedProcessCleanupResour
 
     public void Release()
     {
-        if (Process is not null)
+        // The owner reaches this only after exit, reader settlement and directory
+        // removal. Process.Dispose does not own externally accessed sync readers.
+        if (_stdoutReader is not null && !_stdoutReaderDisposeReturned)
+        {
+            _stdoutReader.Dispose();
+            _stdoutReaderDisposeReturned = true;
+        }
+        if (_stderrReader is not null && !_stderrReaderDisposeReturned)
+        {
+            _stderrReader.Dispose();
+            _stderrReaderDisposeReturned = true;
+        }
+        if (Process is not null && !_processDisposeReturned)
         {
             Process.Dispose();
             _processDisposeReturned = true;
         }
-        if (_binary is not null)
+        if (_binary is not null && !_binaryDisposeReturned)
         {
             _binary.Dispose();
             _binaryDisposeReturned = true;

@@ -84,8 +84,12 @@ internal static class WindowsFileUseDiagnostics
             using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             resources.Started = resources.Process.Start();
             if (!resources.Started) throw new InvalidOperationException();
-            resources.Stdout = stdout = DrainAsync(resources.Process.StandardOutput);
-            resources.Stderr = stderr = DrainAsync(resources.Process.StandardError);
+            var stdoutReader = resources.Process.StandardOutput;
+            resources.StdoutReader = stdoutReader;
+            var stderrReader = resources.Process.StandardError;
+            resources.StderrReader = stderrReader;
+            resources.Stdout = stdout = DrainAsync(stdoutReader);
+            resources.Stderr = stderr = DrainAsync(stderrReader);
             await resources.Process.StandardInput.BaseStream.WriteAsync(input, budget.Token).ConfigureAwait(false);
             resources.Process.StandardInput.Close();
             await resources.Process.WaitForExitAsync(budget.Token).ConfigureAwait(false);

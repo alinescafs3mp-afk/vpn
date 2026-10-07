@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using AutoVpn.Domain;
 using AutoVpn.Infrastructure.Core;
+using Microsoft.Win32.SafeHandles;
 using Xunit.Abstractions;
 
 namespace AutoVpn.UnitTests;
@@ -73,6 +74,50 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
             await fixture.AssertBinaryReleasedAsync();
             fixture.AssertSanitized(result);
             Evidence("canceled-after-ready", result, child.HasExited, binaryExclusiveOpen: true);
+        });
+    }
+
+    [WindowsHandleFact]
+    public Task CanceledValidatorBinaryIsWritableWithFixtureProcessHandleHeld() =>
+        CompareCanceledFixtureHandleAsync(disposeObserver: false);
+
+    [WindowsHandleFact]
+    public Task CanceledValidatorBinaryIsWritableWithFixtureProcessHandleDisposed() =>
+        CompareCanceledFixtureHandleAsync(disposeObserver: true);
+
+    private async Task CompareCanceledFixtureHandleAsync(bool disposeObserver)
+    {
+        if (!OperatingSystem.IsWindows()) throw new InvalidOperationException("Windows-only test was not skipped.");
+        var scenario = disposeObserver ? "canceled-observer-disposed" : "canceled-observer-held";
+        // Each arm owns a fresh executable and child. There is exactly one
+        // Write/None attempt, never a failed-open/dispose/retry sequence.
+        var fixture = new ValidatorFixture(trace, scenario);
+        await OwnedFixtureExecution.RunAsync(fixture, async () =>
+        {
+            using var stop = new CancellationTokenSource();
+            fixture.Start(0, stop.Token);
+            await fixture.WaitReadyAsync();
+            var child = Assert.IsType<Process>(fixture.Child);
+            stop.Cancel();
+            var result = await fixture.ResultAsync();
+            var processExited = child.HasExited;
+            Assert.True(processExited);
+            Assert.False(result.Ok);
+            Assert.Equal(ReasonCodes.Canceled, result.ValidationReasonCode);
+            Assert.Equal(ReasonCodes.Canceled, result.ReasonCode);
+            Assert.Null(result.PendingCleanup);
+            var report = Assert.IsType<OwnedProcessCleanupReport>(result.CleanupReport);
+            Assert.True(report.Complete, report.Summary);
+            Assert.True(report.OutputHealthy, report.Summary);
+            var exit = Assert.IsType<OwnedProcessExitReport>(report.ExitObservation);
+            Assert.True(exit.NativeWaitRequired);
+            Assert.True(exit.NativeSignalConfirmed);
+            if (disposeObserver) fixture.DisposeJoinedChildForComparison();
+            fixture.AssertObserverDisposition(disposeObserver);
+            Assert.False(Directory.Exists(fixture.ValidatorDirectory));
+            await fixture.AssertBinaryReleasedAsync();
+            fixture.AssertSanitized(result);
+            Evidence(scenario, result, processExited, binaryExclusiveOpen: true);
         });
     }
 
@@ -192,6 +237,9 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
         private Task<CoreValidationResult>? _validation;
         private CoreValidationResult? _result;
         private FileUseProcessIdentity? _childIdentity;
+        private SafeProcessHandle? _childHandle;
+        private bool _childDisposeAttempted;
+        private bool _childDisposeReturned;
         internal string BinaryPath { get; }
         internal string? ConfigPath { get; private set; }
         internal string? ValidatorDirectory { get; private set; }
@@ -255,7 +303,7 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
             ConfigPath = json.RootElement.GetProperty("configPath").GetString()!;
             ValidatorDirectory = json.RootElement.GetProperty("directoryPath").GetString()!;
             Child = Process.GetProcessById(json.RootElement.GetProperty("processId").GetInt32());
-            _ = Child.Handle;
+            _childHandle = Child.SafeHandle;
             _childIdentity = WindowsFileUseDiagnostics.CaptureIdentity(Child);
             Assert.False(Child.HasExited);
             Assert.Equal(Path.Combine(ValidatorDirectory!, "config.yaml"), ConfigPath);
@@ -294,7 +342,42 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
             Assert.True(release.ProcessDisposeReturned);
             Assert.True(release.BinaryDisposeReturned);
             Assert.True(release.BinarySafeHandleClosed);
+            foreach (var reader in new[] { release.StdoutReader, release.StderrReader })
+            {
+                Assert.True(reader.Present);
+                Assert.True(reader.DisposeReturned);
+                Assert.True(reader.SafeHandleClosed);
+            }
+            var exit = Assert.IsType<OwnedProcessExitReport>(
+                (_result?.PendingCleanup?.LastReport ?? _result?.CleanupReport)?.ExitObservation);
+            Assert.Equal(OperatingSystem.IsWindows(), exit.NativeWaitRequired);
+            Assert.Equal(OperatingSystem.IsWindows(), exit.NativeSignalConfirmed);
             // IsInvalid is independent of closed: do not require a sentinel value.
+        }
+
+        internal void DisposeJoinedChildForComparison()
+        {
+            var report = Assert.IsType<OwnedProcessCleanupReport>(_result?.CleanupReport);
+            Assert.True(report.Complete, report.Summary);
+            Assert.True(Assert.IsType<OwnedProcessExitReport>(report.ExitObservation).NativeSignalConfirmed);
+            Assert.True(Child!.HasExited);
+            DisposeChild();
+        }
+
+        internal void AssertObserverDisposition(bool disposed)
+        {
+            Assert.NotNull(_childHandle);
+            Assert.Equal(disposed, _childDisposeAttempted);
+            Assert.Equal(disposed, _childDisposeReturned);
+            Assert.Equal(disposed, _childHandle.IsClosed);
+        }
+
+        private void DisposeChild()
+        {
+            if (Child is null || _childDisposeReturned) return;
+            _childDisposeAttempted = true;
+            Child.Dispose();
+            _childDisposeReturned = true;
         }
 
         private void Observation(string stage, Exception? error = null, FileUseDiagnosticReport? fileUse = null) =>
@@ -306,6 +389,12 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
                 originalCleanup = _result?.CleanupReport,
                 latestCleanup = _result?.PendingCleanup?.LastReport ?? _result?.CleanupReport,
                 exceptionKind = OwnedProcessCleanup.Kind(error), hResult = error?.HResult ?? 0,
+                fixtureChild = new
+                {
+                    present = Child is not null, handleCaptured = _childHandle is not null,
+                    disposeAttempted = _childDisposeAttempted, disposeReturned = _childDisposeReturned,
+                    safeHandleClosed = _childHandle?.IsClosed, safeHandleInvalid = _childHandle?.IsInvalid,
+                },
                 fileUse,
             }));
 
@@ -360,10 +449,11 @@ public sealed class CoreValidationOwnershipTests(ITestOutputHelper trace)
                 }
                 if (!report.Complete) throw new OwnedProcessCleanupException(pending, report);
             }
-            if (Child is not null) await Child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            if (Child is not null && !_childDisposeReturned)
+                await Child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
             // No destructive finally: a timeout or incomplete retry keeps these
             // fixture resources intact along with the returned cleanup capability.
-            Child?.Dispose();
+            DisposeChild();
             Observation("BEFORE_FIXTURE_DIRECTORY_DELETE");
             try { _root.Delete(recursive: true); }
             catch (Exception original)

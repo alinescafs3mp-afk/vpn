@@ -71,8 +71,12 @@ public static class MihomoProcessController
                 {
                     phase = "OUTPUT_START";
                     // Drain actual EOF without retaining raw, possibly secret, output.
-                    resources.Stdout = stdout = DrainAsync(process.StandardOutput);
-                    resources.Stderr = stderr = DrainAsync(process.StandardError);
+                    var stdoutReader = process.StandardOutput;
+                    resources.StdoutReader = stdoutReader;
+                    var stderrReader = process.StandardError;
+                    resources.StderrReader = stderrReader;
+                    resources.Stdout = stdout = DrainAsync(stdoutReader);
+                    resources.Stderr = stderr = DrainAsync(stderrReader);
                     phase = "VALIDATION_WAIT";
                     using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     deadline.CancelAfter(TimeSpan.FromSeconds(20));

@@ -77,7 +77,11 @@ public sealed class Round6NativeHandshakeTests
                 resources.Process = server = new Process { StartInfo = start };
                 resources.Started = server.Start();
                 if (!resources.Started) throw new InvalidOperationException("Controlled native server did not start.");
-                resources.Stdout=Drain(server.StandardOutput);resources.Stderr=Drain(server.StandardError);
+                var stdoutReader = server.StandardOutput;
+                resources.StdoutReader = stdoutReader;
+                var stderrReader = server.StandardError;
+                resources.StderrReader = stderrReader;
+                resources.Stdout=Drain(stdoutReader);resources.Stderr=Drain(stderrReader);
                 var ready=false;var watch=Stopwatch.StartNew();
                 bool Owns() => !server.HasExited && ProbeWorker.ProcessOwnsLoopbackPort(server.Id, socksPort);
                 while(watch.Elapsed<TimeSpan.FromSeconds(10)&&!server.HasExited)
