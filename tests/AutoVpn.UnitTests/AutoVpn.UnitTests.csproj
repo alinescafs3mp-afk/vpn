@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
+    <Compile Include="../Shared/FileUseDiagnosticProtocol.cs" Link="Shared/FileUseDiagnosticProtocol.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\AutoVpn.Domain\AutoVpn.Domain.csproj" />

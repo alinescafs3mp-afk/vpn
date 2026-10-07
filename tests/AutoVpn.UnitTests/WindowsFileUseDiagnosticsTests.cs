@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AutoVpn.Infrastructure.Core;
+using AutoVpn.TestSupport;
 using Xunit.Abstractions;
 
 namespace AutoVpn.UnitTests;
@@ -80,6 +81,136 @@ public sealed class WindowsFileUseDiagnosticsTests(ITestOutputHelper trace)
         });
     }
 
+    [WindowsHandleFact]
+    public async Task TimeoutBeforeInputPreservesStartedPhaseAndJoinsOwnedHelper()
+    {
+        var copy = new OwnedCopy();
+        await OwnedFixtureExecution.RunAsync(copy, async () =>
+        {
+            var report = copy.Report = await WindowsFileUseDiagnostics.CaptureControlAsync(
+                copy.BinaryPath, FileUseControlMode.TimeoutBeforeInput);
+            Trace("timeout-before-input", report);
+            Assert.Equal("QUERY_TIMEOUT", report.State);
+            Assert.Equal("TimeoutBeforeInput", report.ControlMode);
+            Assert.True(report.Incomplete);
+            Assert.Equal(0, report.QueryCalls);
+            Assert.Null(report.QueryCode);
+            var attempt = Assert.IsType<FileUseAttemptReport>(report.Attempt);
+            Assert.True(attempt.BudgetExpired);
+            Assert.Equal("CANCELED", attempt.ExceptionKind);
+            Assert.Equal("PREFIX", attempt.HelperBeforeDeadline.State);
+            Assert.Equal("HELPER_STARTED", attempt.HelperBeforeDeadline.LastPhase);
+            Assert.Null(attempt.HelperBeforeDeadline.QueryOrdinal);
+            Assert.Equal(1, attempt.HelperBeforeDeadline.Frames);
+            Assert.False(attempt.HelperBeforeDeadline.Eof);
+            var after = Assert.IsType<FileUseProgressReport>(report.HelperAfterCleanup);
+            Assert.Equal("HELPER_STARTED", after.LastPhase);
+            Assert.Equal("PREFIX", after.State);
+            Assert.True(after.Eof);
+            RequireJoined(report);
+        });
+    }
+
+    [WindowsHandleFact]
+    public async Task TimeoutBeforeQueryPreservesQueryBoundaryAndJoinsOwnedHelper()
+    {
+        var copy = new OwnedCopy();
+        await OwnedFixtureExecution.RunAsync(copy, async () =>
+        {
+            var report = copy.Report = await WindowsFileUseDiagnostics.CaptureControlAsync(
+                copy.BinaryPath, FileUseControlMode.TimeoutBeforeQuery);
+            Trace("timeout-before-query", report);
+            Assert.Equal("QUERY_TIMEOUT", report.State);
+            Assert.Equal("TimeoutBeforeQuery", report.ControlMode);
+            Assert.True(report.Incomplete);
+            // This deliberate stop is before the native RM call. A QUERY_BEGIN
+            // observation never claims that the native call itself has stalled.
+            Assert.Equal(0, report.QueryCalls);
+            Assert.Null(report.QueryCode);
+            var attempt = Assert.IsType<FileUseAttemptReport>(report.Attempt);
+            Assert.True(attempt.BudgetExpired);
+            Assert.Equal("CANCELED", attempt.ExceptionKind);
+            Assert.Equal("PREFIX", attempt.HelperBeforeDeadline.State);
+            Assert.Equal("QUERY_BEGIN", attempt.HelperBeforeDeadline.LastPhase);
+            Assert.Equal(1, attempt.HelperBeforeDeadline.QueryOrdinal);
+            Assert.False(attempt.HelperBeforeDeadline.Eof);
+            var after = Assert.IsType<FileUseProgressReport>(report.HelperAfterCleanup);
+            Assert.Equal("QUERY_BEGIN", after.LastPhase);
+            Assert.Equal(1, after.QueryOrdinal);
+            Assert.Equal("PREFIX", after.State);
+            Assert.True(after.Eof);
+            RequireJoined(report);
+        });
+    }
+
+    [WindowsHandleFact]
+    public async Task ClosedChildInputPreservesBrokenPipeAndRetainsCleanupUntilExplicitRetry()
+    {
+        var copy = new OwnedCopy();
+        await OwnedFixtureExecution.RunAsync(copy, async () =>
+        {
+            var report = copy.Report = await WindowsFileUseDiagnostics.CaptureControlAsync(
+                copy.BinaryPath, FileUseControlMode.InputClosed);
+            Trace("input-closed", report);
+            Assert.Equal("DIAGNOSTIC_ERROR", report.State);
+            Assert.Equal("InputClosed", report.ControlMode);
+            Assert.True(report.Incomplete);
+            Assert.Equal(0, report.QueryCalls);
+            var attempt = Assert.IsType<FileUseAttemptReport>(report.Attempt);
+            Assert.Contains(attempt.ParentPhase, new[] { "INPUT_WRITE", "INPUT_FLUSH" });
+            Assert.Equal("IO", attempt.ExceptionKind);
+            Assert.Contains(attempt.HResult, new[] { unchecked((int)0x8007006D), unchecked((int)0x800700E8) });
+            Assert.Equal("INPUT_CLOSED", attempt.HelperBeforeDeadline.LastPhase);
+            var inputBefore = Assert.IsType<OwnedWriterReleaseReport>(report.InputBeforeCleanup);
+            Assert.True(inputBefore.Present);
+            Assert.False(inputBefore.DisposeReturned);
+            var initial = Assert.IsType<OwnedProcessCleanupReport>(report.Cleanup);
+            Assert.True(initial.ProcessExitConfirmed, initial.Summary);
+            Assert.True(initial.InputJoined, initial.Summary);
+            Assert.True(initial.ReadersJoined, initial.Summary);
+            Assert.True(initial.OutputHealthy, initial.Summary);
+            Assert.Equal(OwnedInputState.Failed, initial.Stdin.State);
+            Assert.Equal("IO", initial.Stdin.ExceptionKind);
+            Assert.Equal(attempt.HResult, initial.Stdin.HResult);
+            Assert.Equal(OwnedOutputState.Eof, initial.Stdout.State);
+            Assert.Equal(OwnedOutputState.Eof, initial.Stderr.State);
+            RequireNativeExit(initial);
+            var originalJson = JsonSerializer.Serialize(report);
+            var settled = initial;
+            if (!initial.Complete)
+            {
+                // FileStream can retry its buffered flush during Dispose and
+                // still close its handle in finally. Preserve that first failure.
+                Assert.Equal("RESOURCE_RELEASE_FAILED", initial.Phase);
+                Assert.Equal("IO", initial.ExceptionKind);
+                Assert.False(initial.ResourcesReleased);
+                var partial = Assert.IsType<OwnedResourceReleaseReport>(initial.ReleaseObservation);
+                Assert.False(partial.StdinWriter.DisposeReturned);
+                Assert.True(partial.StdinWriter.SafeHandleClosed);
+                Assert.False(partial.ProcessDisposeReturned);
+                var retained = Assert.IsType<OwnedProcessCleanupException>(report.RetainedCleanupFailure);
+                Assert.Same(initial, retained.Report);
+                settled = await retained.PendingCleanup.RetryAsync();
+                trace.WriteLine(JsonSerializer.Serialize(new
+                {
+                    evidence = "windows-file-use-input-retry-v1", scenario = "input-closed",
+                    initial, retry = settled,
+                }));
+            }
+            else Assert.Null(report.RetainedCleanupFailure);
+            Assert.True(settled.Complete, settled.Summary);
+            Assert.True(settled.InputJoined, settled.Summary);
+            Assert.Equal(OwnedInputState.Failed, settled.Stdin.State);
+            Assert.Equal(attempt.HResult, settled.Stdin.HResult);
+            var released = Assert.IsType<OwnedResourceReleaseReport>(settled.ReleaseObservation).StdinWriter;
+            Assert.True(released.Present);
+            Assert.True(released.DisposeReturned);
+            Assert.True(released.SafeHandleClosed);
+            Assert.Equal(originalJson, JsonSerializer.Serialize(report));
+            Assert.Same(report, copy.Report);
+        });
+    }
+
     [LinuxOnlyFact]
     public async Task NonWindowsPlatformRefusesWithoutStartingHelper()
     {
@@ -100,10 +231,24 @@ public sealed class WindowsFileUseDiagnosticsTests(ITestOutputHelper trace)
     {
         var cleanup = Assert.IsType<OwnedProcessCleanupReport>(report.Cleanup);
         Assert.True(cleanup.Complete, cleanup.Summary);
+        Assert.True(cleanup.InputJoined, cleanup.Summary);
+        Assert.Equal(OwnedInputState.Completed, cleanup.Stdin.State);
         Assert.True(cleanup.OutputHealthy, cleanup.Summary);
         Assert.Equal(OwnedOutputState.Eof, cleanup.Stdout.State);
         Assert.Equal(OwnedOutputState.Eof, cleanup.Stderr.State);
+        var input = Assert.IsType<OwnedResourceReleaseReport>(cleanup.ReleaseObservation).StdinWriter;
+        Assert.True(input.Present);
+        Assert.True(input.DisposeReturned);
+        Assert.True(input.SafeHandleClosed);
+        RequireNativeExit(cleanup);
         Assert.Null(report.RetainedCleanupFailure);
+    }
+
+    private static void RequireNativeExit(OwnedProcessCleanupReport cleanup)
+    {
+        var exit = Assert.IsType<OwnedProcessExitReport>(cleanup.ExitObservation);
+        Assert.True(exit.NativeWaitRequired);
+        Assert.True(exit.NativeSignalConfirmed);
     }
 
     private sealed class OwnedCopy : IAsyncDisposable

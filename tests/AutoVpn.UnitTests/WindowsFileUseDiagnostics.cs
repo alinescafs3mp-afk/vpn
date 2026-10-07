@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using AutoVpn.Infrastructure.Core;
 using AutoVpn.Infrastructure.Probe;
+using AutoVpn.TestSupport;
 using Microsoft.Win32.SafeHandles;
 
 namespace AutoVpn.UnitTests;
@@ -33,13 +34,17 @@ internal sealed record FileUseDiagnosticReport
     public bool Truncated { get; init; }
     public bool Incomplete { get; init; } = true;
     public OwnedProcessCleanupReport? Cleanup { get; init; }
+    public string ControlMode { get; init; } = "Normal";
+    public FileUseAttemptReport? Attempt { get; init; }
+    public OwnedWriterReleaseReport? InputBeforeCleanup { get; init; }
+    public FileUseProgressReport? HelperAfterCleanup { get; init; }
     [JsonIgnore] public OwnedProcessCleanupException? RetainedCleanupFailure { get; init; }
 }
 
 internal static class WindowsFileUseDiagnostics
 {
     internal static Task<FileUseDiagnosticReport> CaptureAsync(string ownedBinaryPath, Process? ownedChild,
-        FileUseProcessIdentity? knownChildIdentity = null) => CaptureCoreAsync(ownedBinaryPath, ownedChild, knownChildIdentity, false);
+        FileUseProcessIdentity? knownChildIdentity = null) => CaptureCoreAsync(ownedBinaryPath, ownedChild, knownChildIdentity, FileUseControlMode.Normal);
 
     internal static FileUseProcessIdentity? CaptureIdentity(Process? process)
     {
@@ -49,15 +54,23 @@ internal static class WindowsFileUseDiagnostics
     }
 
     internal static Task<FileUseDiagnosticReport> CaptureTimeoutControlAsync(string ownedBinaryPath) =>
-        CaptureCoreAsync(ownedBinaryPath, null, null, true);
+        CaptureCoreAsync(ownedBinaryPath, null, null, FileUseControlMode.TimeoutAfterInput);
+
+    internal static Task<FileUseDiagnosticReport> CaptureControlAsync(string ownedBinaryPath, FileUseControlMode mode) =>
+        CaptureCoreAsync(ownedBinaryPath, null, null, mode);
 
     private static async Task<FileUseDiagnosticReport> CaptureCoreAsync(string ownedBinaryPath, Process? ownedChild,
-        FileUseProcessIdentity? knownChildIdentity, bool timeoutControl)
+        FileUseProcessIdentity? knownChildIdentity, FileUseControlMode mode)
     {
         if (!OperatingSystem.IsWindows()) return new() { State = "PLATFORM_REFUSED" };
         var resources = new NativeProcessCleanupResources();
         var report = new FileUseDiagnosticReport();
         Task<Output>? stdout = null; Task<Output>? stderr = null;
+        Stopwatch? clock = null;
+        FileUseProgressCapture? progress = null;
+        FileUseParentProgress? parent = null;
+        CancellationTokenSource? budget = null;
+        Exception? failure = null;
         try
         {
             var original = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "process-fixture", "AutoVpn.ProcessFixture.exe"));
@@ -79,56 +92,123 @@ internal static class WindowsFileUseDiagnostics
                 UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
             };
-            start.ArgumentList.Add(timeoutControl ? "windows-file-use-timeout" : "windows-file-use");
+            start.ArgumentList.Add(mode switch
+            {
+                FileUseControlMode.Normal => "windows-file-use",
+                FileUseControlMode.TimeoutAfterInput => "windows-file-use-timeout",
+                FileUseControlMode.TimeoutBeforeInput => "windows-file-use-input-timeout",
+                FileUseControlMode.TimeoutBeforeQuery => "windows-file-use-query-timeout",
+                FileUseControlMode.InputClosed => "windows-file-use-input-closed",
+                _ => throw new ArgumentOutOfRangeException(nameof(mode)),
+            });
             resources.Process = new Process { StartInfo = start };
-            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            clock = Stopwatch.StartNew();
+            progress = new(() => clock.ElapsedMilliseconds);
+            parent = new(() => clock.ElapsedMilliseconds);
+            budget = new(TimeSpan.FromSeconds(2));
+            parent.Advance(FileUseParentPhase.PROCESS_START);
             resources.Started = resources.Process.Start();
             if (!resources.Started) throw new InvalidOperationException();
+            CheckBudget(clock, budget.Token);
+            parent.Advance(FileUseParentPhase.OUTPUT_CAPTURE);
             var stdoutReader = resources.Process.StandardOutput;
             resources.StdoutReader = stdoutReader;
             var stderrReader = resources.Process.StandardError;
             resources.StderrReader = stderrReader;
-            resources.Stdout = stdout = DrainAsync(stdoutReader);
+            resources.StdinWriter = resources.Process.StandardInput;
+            resources.Stdout = stdout = DrainAsync(stdoutReader, progress);
             resources.Stderr = stderr = DrainAsync(stderrReader);
-            await resources.Process.StandardInput.BaseStream.WriteAsync(input, budget.Token).ConfigureAwait(false);
-            resources.Process.StandardInput.Close();
+            if (mode == FileUseControlMode.InputClosed)
+            {
+                parent.Advance(FileUseParentPhase.INPUT_CONTROL_WAIT);
+                await progress.InputClosed.WaitAsync(budget.Token).ConfigureAwait(false);
+                CheckBudget(clock, budget.Token);
+            }
+            await FileUseInputTransfer.WriteAndCloseAsync(resources, input, parent.Advance, budget.Token).ConfigureAwait(false);
+            CheckBudget(clock, budget.Token);
+            parent.Advance(FileUseParentPhase.PROCESS_WAIT);
             await resources.Process.WaitForExitAsync(budget.Token).ConfigureAwait(false);
+            CheckBudget(clock, budget.Token);
+            parent.Advance(FileUseParentPhase.OUTPUT_JOIN);
             await Task.WhenAll(stdout, stderr).WaitAsync(budget.Token).ConfigureAwait(false);
+            CheckBudget(clock, budget.Token);
+            parent.Advance(FileUseParentPhase.RESULT_PARSE);
             if (resources.Process.ExitCode != 0 || stdout.Result.Truncated || stderr.Result.Total != 0)
                 report = new() { State = "OUTPUT_INVALID", Truncated = stdout.Result.Truncated };
             else
             {
-                var parsed = JsonSerializer.Deserialize<FileUseDiagnosticReport>(stdout.Result.Bytes) ?? throw new InvalidDataException();
-                if (parsed.State is not ("OBSERVED" or "NO_HOLDER_OR_INCOMPLETE" or "QUERY_INCOMPLETE" or "HELPER_ERROR" or "TIMEOUT_CONTROL_FINISHED") ||
-                    parsed.QueryCalls is < 0 or > 2 || parsed.TotalOwners is < 0 or > 32 ||
-                    parsed.TestHostOwners < 0 || parsed.OwnedChildOwners < 0 || parsed.OtherOwners < 0 ||
-                    (long)parsed.TestHostOwners + parsed.OwnedChildOwners + parsed.OtherOwners != parsed.TotalOwners)
-                    throw new InvalidDataException();
-                report = parsed;
+                var parsed = progress.RequireResult();
+                report = new()
+                {
+                    State = parsed.State, StartCode = parsed.StartCode, RegisterCode = parsed.RegisterCode,
+                    QueryCode = parsed.QueryCode, EndCode = parsed.EndCode, QueryCalls = parsed.QueryCalls,
+                    TotalOwners = parsed.TotalOwners, TestHostOwners = parsed.TestHostOwners,
+                    OwnedChildOwners = parsed.OwnedChildOwners, OtherOwners = parsed.OtherOwners,
+                    Truncated = parsed.Truncated, Incomplete = parsed.Incomplete,
+                };
             }
+            CheckBudget(clock, budget.Token);
+            parent.Advance(FileUseParentPhase.COMPLETED);
         }
-        catch (OperationCanceledException) { report = new() { State = "QUERY_TIMEOUT" }; }
-        catch (Exception) { report = new() { State = "DIAGNOSTIC_ERROR" }; }
+        catch (OperationCanceledException error) { failure = error; report = new() { State = "QUERY_TIMEOUT" }; }
+        catch (InvalidDataException error) { failure = error; report = new() { State = "OUTPUT_INVALID" }; }
+        catch (Exception error) { failure = error; report = new() { State = "DIAGNOSTIC_ERROR" }; }
+        finally { budget?.Dispose(); }
+
+        // Freeze before cleanup. Later I/O observations never rewrite the original
+        // state or the last phases actually observed before the two-second boundary.
+        FileUseAttemptReport? attempt = null;
+        if (clock is not null && parent is not null && progress is not null)
+        {
+            var parentBefore = parent.BeforeDeadline;
+            var parentEnd = parent.Latest;
+            var helperBefore = progress.BeforeDeadline;
+            var helperEnd = progress.Latest;
+            var elapsed = clock.ElapsedMilliseconds;
+            var expired = elapsed >= FileUseProgressCapture.BudgetMilliseconds;
+            attempt = new(expired ? parentBefore.Phase : parentEnd.Phase,
+                parentEnd, OwnedProcessCleanup.Kind(failure), failure?.HResult ?? 0,
+                elapsed, expired, helperBefore, helperEnd);
+        }
+        var inputBefore = resources.ReleaseObservation.StdinWriter;
         var cleanup = new OwnedProcessCleanup(resources, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(5));
         var joined = await cleanup.RetryAsync().ConfigureAwait(false);
-        return report with { Cleanup = joined, RetainedCleanupFailure = joined.Complete ? null : new(cleanup, joined) };
+        return report with
+        {
+            Cleanup = joined, ControlMode = mode.ToString(), Attempt = attempt, InputBeforeCleanup = inputBefore,
+            HelperAfterCleanup = progress?.Latest,
+            RetainedCleanupFailure = joined.Complete ? null : new(cleanup, joined),
+        };
     }
 
-    // Fresh original reader only. Retain at most 4096 bytes, but always drain real EOF.
+    // Timer callbacks may be delivered late. The observed monotonic boundary also
+    // governs success; synchronous Process.Start/Dispose themselves are not preempted.
+    private static void CheckBudget(Stopwatch clock, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (clock.ElapsedMilliseconds >= FileUseProgressCapture.BudgetMilliseconds)
+            throw new OperationCanceledException("FILE_USE_BUDGET_EXPIRED", cancellationToken);
+    }
+
+    // Fresh original reader only. Keep at most 4096 stdout bytes in the phase
+    // collector; stderr is counted without retaining private text. Always drain EOF.
     [SupportedOSPlatform("windows")]
-    private static async Task<Output> DrainAsync(StreamReader reader)
+    private static async Task<Output> DrainAsync(StreamReader reader, FileUseProgressCapture? progress = null)
     {
         using var adapter = reader.BaseStream is FileStream { IsAsync: false } file
             ? AvailablePipeReadStream.ForOwnedHandle(file.SafeFileHandle) : null;
         Stream stream = adapter is null ? reader.BaseStream : adapter;
-        var buffer = new byte[1024]; using var retained = new MemoryStream(); long total = 0;
+        var buffer = new byte[1024]; long total = 0;
         while (true)
         {
             var count = await stream.ReadAsync(buffer).ConfigureAwait(false);
-            if (count == 0) return new(retained.ToArray(), total, total > 4096);
+            if (count == 0)
+            {
+                progress?.Finish();
+                return new(total, total > 4096);
+            }
             total = total > long.MaxValue - count ? long.MaxValue : total + count;
-            var keep = Math.Min(count, 4096 - (int)retained.Length);
-            if (keep > 0) retained.Write(buffer, 0, keep);
+            progress?.Append(buffer.AsSpan(0, count));
         }
     }
 
@@ -142,7 +222,7 @@ internal static class WindowsFileUseDiagnostics
         return value;
     }
 
-    private sealed record Output(byte[] Bytes, long Total, bool Truncated);
+    private sealed record Output(long Total, bool Truncated);
     [StructLayout(LayoutKind.Sequential)] private struct FileTime { public uint Low, High; }
     // https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]

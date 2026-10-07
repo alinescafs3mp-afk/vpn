@@ -18,6 +18,14 @@ public enum OwnedOutputState { NotStarted, Pending, Eof, Canceled, Failed }
 
 public sealed record OwnedOutputReport(OwnedOutputState State, string ExceptionKind, int HResult);
 
+public enum OwnedInputState { NotStarted, Pending, Completed, Canceled, Failed }
+
+public sealed record OwnedInputReport(OwnedInputState State, string ExceptionKind, int HResult);
+
+/// <summary>Observation of the exact original writer; a pipe need not expose a file handle.</summary>
+public sealed record OwnedWriterReleaseReport(bool Present, bool DisposeReturned,
+    bool? SafeHandleClosed, bool? SafeHandleInvalid);
+
 /// <summary>Observation of the exact original reader and, when available, its captured file handle.</summary>
 public sealed record OwnedReaderReleaseReport(bool Present, bool DisposeReturned,
     bool? SafeHandleClosed, bool? SafeHandleInvalid);
@@ -31,6 +39,7 @@ public sealed record OwnedResourceReleaseReport(bool ProcessPresent, bool Binary
     bool ProcessDisposeReturned, bool BinaryDisposeReturned, bool? BinarySafeHandleClosed,
     bool? BinarySafeHandleInvalid)
 {
+    public OwnedWriterReleaseReport StdinWriter { get; init; } = new(false, false, null, null);
     public OwnedReaderReleaseReport StdoutReader { get; init; } = new(false, false, null, null);
     public OwnedReaderReleaseReport StderrReader { get; init; } = new(false, false, null, null);
 }
@@ -43,9 +52,14 @@ public sealed record OwnedProcessCleanupReport(string Phase, bool ProcessExitCon
 {
     public OwnedResourceReleaseReport? ReleaseObservation { get; init; }
     public OwnedProcessExitReport? ExitObservation { get; init; }
-    public bool Complete => ProcessExitConfirmed && ReadersJoined && DirectoryRemoved && ResourcesReleased;
+    public OwnedInputReport Stdin { get; init; } = new(OwnedInputState.NotStarted, "NONE", 0);
+    // Old callers have no input operation. Populated reports record the same
+    // bounded join as stdout/stderr without adding another sequential timeout.
+    public bool InputJoined { get; init; } = true;
+    public bool Complete => ProcessExitConfirmed && ReadersJoined && InputJoined && DirectoryRemoved && ResourcesReleased;
     public string Summary => $"{Phase};EXIT={ProcessExitConfirmed};JOINED={ReadersJoined};" +
         $"DIR={DirectoryRemoved};RELEASED={ResourcesReleased};OUTPUT_OK={OutputHealthy};" +
+        $"IN_JOINED={InputJoined};IN={Stdin.State}/{Stdin.ExceptionKind}/{Stdin.HResult:X8};" +
         $"OUT={Stdout.State}/{Stdout.ExceptionKind}/{Stdout.HResult:X8};" +
         $"ERR={Stderr.State}/{Stderr.ExceptionKind}/{Stderr.HResult:X8};" +
         $"ERROR={ExceptionKind}:{HResult:X8};MS={ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture)}";
@@ -63,6 +77,7 @@ public sealed class OwnedProcessCleanupException : IOException
 internal interface IOwnedProcessCleanupResources
 {
     bool Started { get; }
+    Task? Stdin => null;
     Task? Stdout { get; }
     Task? Stderr { get; }
     OwnedResourceReleaseReport? ReleaseObservation => null;
@@ -77,6 +92,7 @@ internal interface IOwnedProcessCleanupResources
 internal sealed class OwnedProcessCleanup : IOwnedProcessCleanup
 {
     private readonly IOwnedProcessCleanupResources _resources;
+    private readonly Task? _stdin;
     private readonly Task? _stdout;
     private readonly Task? _stderr;
     private readonly Task _settled;
@@ -97,10 +113,11 @@ internal sealed class OwnedProcessCleanup : IOwnedProcessCleanup
         _outputTimeout = Bounded(outputTimeout, nameof(outputTimeout));
         _exitTimeout = Bounded(exitTimeout ?? TimeSpan.FromSeconds(5), nameof(exitTimeout));
         _resources = resources;
-        _stdout = resources.Stdout; _stderr = resources.Stderr;
-        // Observe failures without mistaking them for EOF. The join itself only
-        // measures settlement, so a reader's TimeoutException is not a wait timeout.
-        _settled = Task.WhenAll(SettleAsync(_stdout), SettleAsync(_stderr));
+        _stdin = resources.Stdin; _stdout = resources.Stdout; _stderr = resources.Stderr;
+        // Observe failures without mistaking them for successful I/O. All three
+        // original operations share the existing join budget; a task's own
+        // TimeoutException is a terminal fault, not a timeout of this join.
+        _settled = Task.WhenAll(SettleAsync(_stdin), SettleAsync(_stdout), SettleAsync(_stderr));
     }
 
     public OwnedProcessCleanupReport? LastReport => Volatile.Read(ref _report);
@@ -174,7 +191,20 @@ internal sealed class OwnedProcessCleanup : IOwnedProcessCleanup
             : stdout.State == OwnedOutputState.NotStarted && stderr.State == OwnedOutputState.NotStarted;
         return new(phase, _exitConfirmed, _readersJoined, _directoryRemoved, _resourcesReleased,
             healthy, stdout, stderr, Kind(error), error?.HResult ?? 0, milliseconds)
-        { ReleaseObservation = _resources.ReleaseObservation, ExitObservation = _resources.ExitObservation };
+        {
+            Stdin = Input(_stdin), InputJoined = _stdin is null || _readersJoined,
+            ReleaseObservation = _resources.ReleaseObservation, ExitObservation = _resources.ExitObservation,
+        };
+    }
+
+    private static OwnedInputReport Input(Task? task)
+    {
+        if (task is null) return new(OwnedInputState.NotStarted, "NONE", 0);
+        if (!task.IsCompleted) return new(OwnedInputState.Pending, "NONE", 0);
+        if (task.IsCanceled) return new(OwnedInputState.Canceled, "CANCELED", 0);
+        if (!task.IsFaulted) return new(OwnedInputState.Completed, "NONE", 0);
+        var error = task.Exception!.GetBaseException();
+        return new(OwnedInputState.Failed, Kind(error), error.HResult);
     }
 
     private static OwnedOutputReport Output(Task? task)
@@ -221,12 +251,27 @@ internal sealed class NativeProcessCleanupResources : IOwnedProcessCleanupResour
     private SafeFileHandle? _binaryHandle;
     private bool _processDisposeReturned;
     private bool _binaryDisposeReturned;
+    private StreamWriter? _stdinWriter;
+    private SafeFileHandle? _stdinWriterHandle;
+    private bool _stdinWriterDisposeReturned;
     private StreamReader? _stdoutReader;
     private StreamReader? _stderrReader;
     private SafeFileHandle? _stdoutReaderHandle;
     private SafeFileHandle? _stderrReaderHandle;
     private bool _stdoutReaderDisposeReturned;
     private bool _stderrReaderDisposeReturned;
+    internal StreamWriter? StdinWriter
+    {
+        get => _stdinWriter;
+        set
+        {
+            if (_stdinWriter is not null) throw new InvalidOperationException("OWNED_STDIN_ALREADY_CAPTURED");
+            // Adopt before querying BaseStream or SafeFileHandle so a failing
+            // getter cannot leave the original writer without its owner.
+            _stdinWriter = value;
+            _stdinWriterHandle = value?.BaseStream is FileStream file ? file.SafeFileHandle : null;
+        }
+    }
     internal StreamReader? StdoutReader
     {
         get => _stdoutReader;
@@ -260,6 +305,7 @@ internal sealed class NativeProcessCleanupResources : IOwnedProcessCleanupResour
     }
     internal DirectoryInfo? Directory;
     public bool Started { get; internal set; }
+    public Task? Stdin { get; internal set; }
     public Task? Stdout { get; internal set; }
     public Task? Stderr { get; internal set; }
     private Task? _exit;
@@ -273,6 +319,8 @@ internal sealed class NativeProcessCleanupResources : IOwnedProcessCleanupResour
     public OwnedResourceReleaseReport ReleaseObservation => new(Process is not null, _binary is not null,
         _processDisposeReturned, _binaryDisposeReturned, _binaryHandle?.IsClosed, _binaryHandle?.IsInvalid)
     {
+        StdinWriter = new(_stdinWriter is not null, _stdinWriterDisposeReturned,
+            _stdinWriterHandle?.IsClosed, _stdinWriterHandle?.IsInvalid),
         StdoutReader = new(_stdoutReader is not null, _stdoutReaderDisposeReturned,
             _stdoutReaderHandle?.IsClosed, _stdoutReaderHandle?.IsInvalid),
         StderrReader = new(_stderrReader is not null, _stderrReaderDisposeReturned,
@@ -330,10 +378,25 @@ internal sealed class NativeProcessCleanupResources : IOwnedProcessCleanupResour
         catch (FileNotFoundException) { }
     }
 
+    internal void CloseStdin()
+    {
+        // Normal EOF may close input before process exit, but never while its
+        // original write is using the writer. A failed Dispose retains ownership.
+        if (Stdin is { IsCompleted: false })
+            throw new InvalidOperationException("OWNED_STDIN_WRITE_PENDING");
+        if (_stdinWriter is not null && !_stdinWriterDisposeReturned)
+        {
+            _stdinWriter.Dispose();
+            _stdinWriterDisposeReturned = true;
+        }
+    }
+
     public void Release()
     {
-        // The owner reaches this only after exit, reader settlement and directory
-        // removal. Process.Dispose does not own externally accessed sync readers.
+        // The owner reaches this only after exit, all original I/O settlement and
+        // directory removal. Normal EOF's successful close is not repeated.
+        CloseStdin();
+        // Process.Dispose does not own externally accessed sync readers.
         if (_stdoutReader is not null && !_stdoutReaderDisposeReturned)
         {
             _stdoutReader.Dispose();
